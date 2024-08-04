@@ -1,0 +1,18 @@
+//
+//  App_StoreApp.swift
+//  App Store
+//
+//  Created by Nayan Bhut on 18/08/23.
+//
+
+import SwiftUI
+
+@main
+struct App_StoreApp: App {
+    var body: some Scene {
+        WindowGroup {
+//            ContentView(viewModel: ContentViewModel())
+            ContentViewSpine(viewModelSpine: SideBarViewSpineModel(getVersion: {_,_,_,_ in}))
+        }
+    }
+}
