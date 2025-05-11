@@ -85,5 +85,5 @@ struct SideBarViewSpine: View {
 }
 
 #Preview {
-    SideBarViewSpine(viewModel: SideBarViewSpineModel(getVersion: {_,_,_,_ in}))
+    SideBarViewSpine(viewModel: SideBarViewSpineModel())
 }

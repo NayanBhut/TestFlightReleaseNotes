@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		462DFD6ABCEBD716877BDDB1 /* Pods_App_Store.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D39AEBC5F43692E9C43F6A3F /* Pods_App_Store.framework */; };
+		8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D00F61D2DCB34BC004CCA36 /* Extensions.swift */; };
 		CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */; };
 		CD5C44592B7DD20C00DD38B4 /* ContentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5C44582B7DD20C00DD38B4 /* ContentModel.swift */; };
 		CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */; };
@@ -39,6 +40,7 @@
 
 /* Begin PBXFileReference section */
 		208824DC94F9CF8308F2CEE5 /* Pods-App Store.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App Store.debug.xcconfig"; path = "Target Support Files/Pods-App Store/Pods-App Store.debug.xcconfig"; sourceTree = "<group>"; };
+		8D00F61D2DCB34BC004CCA36 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		945891DB9524DCE6B496B1DD /* Pods-App Store.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App Store.release.xcconfig"; path = "Target Support Files/Pods-App Store/Pods-App Store.release.xcconfig"; sourceTree = "<group>"; };
 		CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigs.swift; sourceTree = "<group>"; };
 		CD5C44582B7DD20C00DD38B4 /* ContentModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentModel.swift; sourceTree = "<group>"; };
@@ -93,9 +95,18 @@
 			path = Pods;
 			sourceTree = "<group>";
 		};
+		8D00F61C2DCB34A7004CCA36 /* Helper */ = {
+			isa = PBXGroup;
+			children = (
+				8D00F61D2DCB34BC004CCA36 /* Extensions.swift */,
+			);
+			path = Helper;
+			sourceTree = "<group>";
+		};
 		CD616D792A8F62A4004ADF44 = {
 			isa = PBXGroup;
 			children = (
+				8D00F61C2DCB34A7004CCA36 /* Helper */,
 				CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */,
 				CD616D872A8F62A4004ADF44 /* ContentView.swift */,
 				CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */,
@@ -373,6 +384,7 @@
 				CDB769482BD2102F00DAC138 /* BuildDetailView.swift in Sources */,
 				CDC9F4932BE5F91400AEF643 /* DetailViewSpine.swift in Sources */,
 				CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */,
+				8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */,
 				CDB7694C2BD2106300DAC138 /* SideBarView.swift in Sources */,
 				CD616D982A8F637A004ADF44 /* ContentViewModel.swift in Sources */,
 				CD6E67342BDB74D2007332D1 /* AppModel.swift in Sources */,

@@ -16,13 +16,13 @@ class SideBarViewSpineModel: ObservableObject {
     var getVersion: ( (AppStoreApp?, [PreReleaseVersions], Team, CurrentAppState) -> Void )?
     
     @Published var arrVersion: [PreReleaseVersions] = []
-    var selectedApp: AppStoreApp?
+    @Published var selectedApp: AppStoreApp?
     
     @Published var isAppListLoaded = false
     
-    init(getVersion: ((AppStoreApp?, [PreReleaseVersions], Team, CurrentAppState) -> Void)?) {
-        self.getVersion = getVersion
-    }
+//    init(getVersion: ((AppStoreApp?, [PreReleaseVersions], Team, CurrentAppState) -> Void)?) {
+//        self.getVersion = getVersion
+//    }
     
     func getAllApps(for team: Team) {
         isAppListLoaded = false
@@ -30,7 +30,7 @@ class SideBarViewSpineModel: ObservableObject {
         self.selectedApp = nil
         self.arrVersion = []
         self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
-        SpineManager().getAllApps(for: team) { result in
+        SpineManager().getAllApps(for: team) { result, nextPageURL, meta  in
             self.currentAppState = ._none
             self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
             switch result {
@@ -97,9 +97,9 @@ class SideBarViewSpineModel: ObservableObject {
         
         currentAppState = .appVersionLoading
         self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
-        SpineManager().getTestFlightVersions(for: app, for: currentTeam) { versionData in
-            if (versionData.value?.count ?? 0) > 5 {
-                self.arrVersion = Array((versionData.value as? [PreReleaseVersions] ?? [])[0...4])
+        SpineManager().getTestFlightVersions(for: app, for: currentTeam) { versionData, nextPageURL, meta in
+            if (versionData.value?.count ?? 0) > 10 {
+                self.arrVersion = Array((versionData.value as? [PreReleaseVersions] ?? [])[0...9])
             } else {
                 self.arrVersion = versionData.value as? [PreReleaseVersions] ?? []
             }

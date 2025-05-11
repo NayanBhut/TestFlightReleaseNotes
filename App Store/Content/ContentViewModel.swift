@@ -38,28 +38,6 @@ final class ContentViewModel: ObservableObject {
         provider = APIProvider(configuration: configuration)
     }
     
-    private func getApps() {
-        SpineManager().getAllApps(for: currentTeam) { result in
-            switch result {
-            case .success(let success):
-                print("Success Data is ", success)
-            case .failure(let failure):
-                print("Failure Data is ", failure)
-            }
-        }
-    }
-    
-    private func getAppVersion(appID: String) {
-        SpineManager().getAllApps(for: currentTeam) { result in
-            switch result {
-            case .success(let success):
-                print("Success Data is ", success)
-            case .failure(let failure):
-                print("Failure Data is ", failure)
-            }
-        }
-    }
-    
     func updateTeam() {
         configuration = APIConfiguration(issuerID: currentTeam.getIssuerId(), privateKeyID: currentTeam.getPrivateKeyID(), privateKey: currentTeam.getPrivateKey())
         provider = APIProvider(configuration: configuration)

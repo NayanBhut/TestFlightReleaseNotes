@@ -11,8 +11,7 @@ import SwiftUI
 struct App_StoreApp: App {
     var body: some Scene {
         WindowGroup {
-//            ContentView(viewModel: ContentViewModel())
-            ContentViewSpine(viewModelSpine: SideBarViewSpineModel(getVersion: {_,_,_,_ in}))
+            ContentViewSpine()
         }
     }
 }

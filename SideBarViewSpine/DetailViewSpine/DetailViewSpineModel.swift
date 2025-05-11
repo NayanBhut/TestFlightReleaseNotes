@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import Combine
+import Spine
 
 class DetailViewSpineModel: ObservableObject {
     @Published var currentAppState: CurrentAppState = .appListLoading
@@ -17,17 +19,49 @@ class DetailViewSpineModel: ObservableObject {
     var selectedApp: AppStoreApp?
     @Published var isBuildsLoaded = false
     
-    init(selectedApp: AppStoreApp?, arrVersions: [PreReleaseVersions], currentTeam: Team, currentAppState: CurrentAppState) {
-        self.selectedApp = selectedApp
-        self.arrVersions = arrVersions
-        self.currentTeam = currentTeam
-        self.currentAppState = currentAppState
+    @Published var nextPageCursor: String?
+    @Published var meta: Metadata?
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    
+    init(sidebarViewModel: SideBarViewSpineModel) {
+        // Subscribe to sidebarViewModel's selectedItem changes
+        sidebarViewModel.$currentTeam
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] currentTeam in
+                self?.currentTeam = currentTeam
+            }
+            .store(in: &cancellables)
+        
+        sidebarViewModel.$arrVersion
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] arrVersion in
+                self?.arrVersions = arrVersion
+            }
+            .store(in: &cancellables)
+        
+        sidebarViewModel.$currentAppState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] currentAppState in
+                self?.currentAppState = currentAppState
+            }
+            .store(in: &cancellables)
+        
+        sidebarViewModel.$selectedApp
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] selectedApp in
+                self?.selectedApp = selectedApp
+            }
+            .store(in: &cancellables)
+        
     }
 }
 
 extension DetailViewSpineModel {
-    func setSelectedVersionAndGetBuilds(selectedVersion: PreReleaseVersions) {
+    func setSelectedVersionAndGetBuilds(selectedVersion: PreReleaseVersions, cursor: String? = nil) {
         isBuildsLoaded = false
+        self.nextPageCursor = cursor
         arrVersions = arrVersions.map { version in
             let tempVersion = version
             tempVersion.isSelected = tempVersion.id == selectedVersion.id
@@ -35,24 +69,36 @@ extension DetailViewSpineModel {
         }
         
         guard let app = selectedApp else { return }
-        getBuilds(app: app, version: selectedVersion)
+        getBuilds(app: app, version: selectedVersion, cursor: cursor)
     }
     
-    func getBuilds(app: AppStoreApp, version: PreReleaseVersions) {
+    func getBuilds(app: AppStoreApp, version: PreReleaseVersions, cursor: String? = nil) {
         currentAppState = .appVersionBuildLoading
-        SpineManager().getVersionBuilds(for: app, for: version, for: currentTeam) { result in
+        SpineManager().getVersionBuilds(for: app, for: version, for: currentTeam, cursor: cursor) { result, nextPageURL, meta in
             self.isBuildsLoaded = true
             self.currentAppState = ._none
+            self.meta = nil
             switch result {
             case .success(let success):
-                print(success)
                 self.selectedVersion = version
-                self.arrBuilds = success as? [Builds] ?? []
-//                ((successData.resources as? [Builds])?[9]?.betaBuildLocalizations?[0] as? BuildLocalizations)?.whatsNew
+                
+                if self.nextPageCursor != nil {
+                    self.arrBuilds += success as? [Builds] ?? []
+                } else {
+                    self.arrBuilds = success as? [Builds] ?? []
+                }
+                self.meta = meta
             case .failure(let failure):
                 print(failure)
                 self.selectedVersion = version
                 self.arrBuilds = []
+            }
+            
+            if let nextPageURL = nextPageURL, let cursor = URLComponents(url: nextPageURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: {$0.name == "cursor"}) { // Next Page
+                print("Next Page URL is ", nextPageURL)
+                self.nextPageCursor = cursor.value
+            } else {
+                self.nextPageCursor = nil
             }
         }
     }
@@ -71,7 +117,7 @@ extension DetailViewSpineModel {
     
     func updateBuildLocalization(buildLocalization: BuildLocalizations, localization: String, buildIndex: Int) {
         currentAppState = .appLocalizationLoading
-        SpineManager().updateBuildLocalization(for: currentTeam, localize: buildLocalization) { result in
+        SpineManager().updateBuildLocalization(for: currentTeam, localize: buildLocalization) { result, meta in
             self.currentAppState = ._none
             switch result {
             case .success(let success):
@@ -89,7 +135,7 @@ extension DetailViewSpineModel {
     
     func createBuildLocalization(buildLocalization: BuildLocalizations, localization: String, buildIndex: Int) {
         currentAppState = .appLocalizationLoading
-        SpineManager().createBuildLocalization(for: currentTeam, localize: buildLocalization, build: arrBuilds[buildIndex]) { result in
+        SpineManager().createBuildLocalization(for: currentTeam, localize: buildLocalization, build: arrBuilds[buildIndex]) { result, meta in
             self.currentAppState = ._none
             switch result {
             case .success(let success):

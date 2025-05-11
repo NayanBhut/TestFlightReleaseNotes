@@ -40,7 +40,9 @@ class SpineManager {
         
         client.setHeader("Authorization", to: "Bearer \(tokenData)")
         
-        let spine = Spine(baseURL: URL(string: strBaseURL)!, networkClient: client)
+        let router = PaginationRouter()
+        router.baseURL = URL(string: strBaseURL)!
+        let spine = Spine(router: router, networkClient: client)
         spine.keyFormatter = AsIsKeyFormatter()
         spine.registerResource(AppStoreApp.self)
         spine.registerResource(AppStoreVersions.self)
@@ -52,14 +54,14 @@ class SpineManager {
         return spine
     }
 
-    func callAPI<T: Resource>(strURL: String, for team: Team, query: Query<T>, completion: @escaping (Result<(resources: [Resource], meta: Metadata?, jsonapi: JSONAPIData?), Error>) -> Void) {
+    func callAPI<T: Resource>(strURL: String, for team: Team, query: Query<T>, completion: @escaping (Result<(resources: [Resource], meta: Metadata?, jsonapi: JSONAPIData?, nextURL: URL?), Error>) -> Void) {
         let spine = getSpine(for: team, strURL: strURL)
         spine.find(query)
             .onSuccess { (resources: ResourceCollection, meta: Metadata?, jsonapi: JSONAPIData?) in
                 print(resources)
                 print(meta)
                 print(jsonapi)
-                completion(.success((resources.resources, meta, jsonapi)))
+                completion(.success((resources.resources, meta, jsonapi, resources.nextURL)))
                 //                ((resources.resources as! [AppStoreApp]).first?.appStoreVersions?.resources.first as! AppStoreVersions).appVersionState
             }.onFailure { error in
                 print("Fetching failed: \(error)")
@@ -82,7 +84,7 @@ class SpineManager {
 }
 
 extension SpineManager {
-    func getAllApps<T:Resource>(for team: Team, completion: @escaping (Result<[T], Error>) -> Void) {
+    func getAllApps<T:Resource>(for team: Team, completion: @escaping (Result<[T], Error>, URL?, Metadata?) -> Void) {
         var query = Query(resourceType: AppStoreApp.self, path: "apps")
         query.include("appStoreVersions")
 //        query.include("displayableVersions")
@@ -96,14 +98,14 @@ extension SpineManager {
         callAPI(strURL: strBaseURL, for: team, query: query) { result in
             switch result {
             case .success(let successData):
-                completion(.success(successData.resources as? [T] ?? []))
+                completion(.success(successData.resources as? [T] ?? []), successData.nextURL, successData.meta)
             case .failure(let failure):
-                completion(.failure(failure))
+                completion(.failure(failure), nil, nil)
             }
         }
     }
     
-    func getTestFlightVersions<T:Resource>(for app:AppStoreApp, for team: Team, completion: @escaping (Result<[T], Error>) -> Void) {
+    func getTestFlightVersions<T:Resource>(for app:AppStoreApp, for team: Team, completion: @escaping (Result<[T], Error>, URL?, Metadata?) -> Void) {
         var query = Query(resourceType: PreReleaseVersions.self, path: "preReleaseVersions")
         query.addDescendingOrder("version")
         query.addPredicateWithField("app", value: app.id ?? "", type: .equalTo)
@@ -111,14 +113,14 @@ extension SpineManager {
         callAPI(strURL: strBaseURL, for: team, query: query) { result in
             switch result {
             case .success(let successData):
-                completion(.success(successData.resources as? [T] ?? []))
+                completion(.success(successData.resources as? [T] ?? []), successData.nextURL, successData.meta)
             case .failure(let failure):
-                completion(.failure(failure))
+                completion(.failure(failure), nil, nil)
             }
         }
     }
     
-    func getVersionBuilds<T:Resource>(for app:AppStoreApp, for version:PreReleaseVersions, for team: Team, completion: @escaping (Result<[T], Error>) -> Void) {
+    func getVersionBuilds<T:Resource>(for app:AppStoreApp, for version:PreReleaseVersions, for team: Team, cursor: String? = nil, completion: @escaping (Result<[T], Error>, URL?, Metadata?) -> Void) {
         var query = Query(resourceType: Builds.self, path: "builds")
         query.addDescendingOrder("version")
         query.addPredicateWithField("app", value: app.id ?? "", type: .equalTo)
@@ -127,47 +129,53 @@ extension SpineManager {
         query.include("betaBuildLocalizations")
         query.include("preReleaseVersion")
         
+        if cursor != nil {
+            query.paginate(CursorBasedPagination(cursor: cursor, limit: 2))
+        }else {
+            query.paginate(CursorBasedPagination(limit: 2))
+        }
+        
         callAPI(strURL: strBaseURL, for: team, query: query) { result in
             switch result {
             case .success(let successData):
-                completion(.success(successData.resources as? [T] ?? []))
+                completion(.success(successData.resources as? [T] ?? []), successData.nextURL, successData.meta)
             case .failure(let failure):
-                completion(.failure(failure))
+                completion(.failure(failure), nil, nil)
             }
         }
     }
     
-    func updateBuildLocalization<T:Resource>(for team: Team, localize: BuildLocalizations ,completion: @escaping (Result<[T], Error>) -> Void) {
+    func updateBuildLocalization<T:Resource>(for team: Team, localize: BuildLocalizations ,completion: @escaping (Result<[T], Error>, Metadata?) -> Void) {
         let templocalize = UpdateBuildLocalizations(whatsNew: localize.whatsNew)
         templocalize.id = localize.id
         
         updateAPI(strURL: strBaseURL, for: team, resourse: templocalize) { result in
             switch result {
             case .success(let successData):
-                completion(.success(successData.resources as? [T] ?? []))
+                completion(.success(successData.resources as? [T] ?? []), successData.meta)
             case .failure(let failure):
-                completion(.failure(failure))
+                completion(.failure(failure), nil)
             }
         }
     }
     
-    func createBuildLocalization<T:Resource>(for team: Team, localize: BuildLocalizations, build: Builds ,completion: @escaping (Result<[T], Error>) -> Void) {
+    func createBuildLocalization<T:Resource>(for team: Team, localize: BuildLocalizations, build: Builds ,completion: @escaping (Result<[T], Error>, Metadata?) -> Void) {
         let templocalize = BuildLocalizations(whatsNew: localize.whatsNew, locale: "en-US")
         templocalize.build = build
         
         updateAPI(strURL: strBaseURL, for: team, resourse: templocalize) { result in
             switch result {
             case .success(let successData):
-                completion(.success(successData.resources as? [T] ?? []))
+                completion(.success(successData.resources as? [T] ?? []), successData.meta)
             case .failure(let failure):
-                completion(.failure(failure))
+                completion(.failure(failure), nil)
             }
         }
     }
 }
 
 extension SpineManager {
-    func getAppStoreVersion<T:Resource>(for team: Team, appId: String) async -> (Result<[T], Error>) {
+    func getAppStoreVersion<T:Resource>(for team: Team, appId: String) async -> (Result<[T], Error>, Metadata?) {
         var query = Query(resourceType: AppStoreVersions.self, path: "appStoreVersions/\(appId)")
         
         query.include("build")
@@ -183,9 +191,30 @@ extension SpineManager {
         
         switch result {
         case .success(let successData):
-            return .success(successData.resources as? [T] ?? [])
+            return (.success(successData.resources as? [T] ?? []), successData.meta)
         case .failure(let failure):
-            return  .failure(failure)
+            return  (.failure(failure), nil)
+        }
+    }
+}
+
+public struct CursorBasedPagination: Pagination {
+    var cursor: String?
+    var limit: Int
+}
+
+final class PaginationRouter: JSONAPIRouter {
+    override func queryItemsForPagination(_ pagination: Pagination) -> [URLQueryItem] {
+        if let cursorPagination = pagination as? CursorBasedPagination {
+            var queryItems = [URLQueryItem(name: "limit", value: String(cursorPagination.limit))]
+            
+            if let before = cursorPagination.cursor {
+                queryItems.append(URLQueryItem(name: "cursor", value: before))
+            }
+            
+            return queryItems
+        } else {
+            return super.queryItemsForPagination(pagination)
         }
     }
 }

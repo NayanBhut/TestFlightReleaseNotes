@@ -8,20 +8,22 @@
 import SwiftUI
 
 struct ContentViewSpine: View {
-    @StateObject var viewModelSpine : SideBarViewSpineModel
+    @StateObject private var viewModelSpine = SideBarViewSpineModel()
+    @StateObject private var detailViewModel: DetailViewSpineModel
+    
+    init() {
+        let sidebarVM = SideBarViewSpineModel()
+        _viewModelSpine = StateObject(wrappedValue: sidebarVM)
+        _detailViewModel = StateObject(wrappedValue: DetailViewSpineModel(sidebarViewModel: sidebarVM))
+    }
     
     var body: some View {
         let _ = Self._printChanges()
         NavigationSplitView {
-            SideBarViewSpine(viewModel: SideBarViewSpineModel(getVersion: { (selectedApp, arrVersions, currentTeam, currentAppState) in
-                self.viewModelSpine.selectedApp = selectedApp
-                self.viewModelSpine.arrVersion = arrVersions
-                self.viewModelSpine.currentTeam = currentTeam
-                self.viewModelSpine.currentAppState = currentAppState
-            }))
+            SideBarViewSpine(viewModel: viewModelSpine)
         } detail: {
             VStack(alignment: .center){
-                DetailViewSpine(viewModel: DetailViewSpineModel(selectedApp: viewModelSpine.selectedApp, arrVersions: viewModelSpine.arrVersion, currentTeam: viewModelSpine.currentTeam, currentAppState: viewModelSpine.currentAppState))
+                DetailViewSpine(viewModel: detailViewModel)
             }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -29,5 +31,5 @@ struct ContentViewSpine: View {
 }
 
 #Preview {
-    ContentViewSpine(viewModelSpine: SideBarViewSpineModel(getVersion: {_,_,_,_ in}))
+    ContentViewSpine()
 }

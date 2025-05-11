@@ -68,6 +68,9 @@ struct DetailViewSpine: View {
             BuildDetailsViewSpine(viewModel: viewModel, refreshBuildList:  {
                 guard let version = viewModel.selectedVersion else { return }
                 viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
+            }, loadMoreBuild: {
+                guard let nextPage = viewModel.nextPageCursor, let version = viewModel.selectedVersion else { return }
+                viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
             })
         } else {
             if viewModel.currentAppState == ._none {
@@ -88,5 +91,5 @@ struct DetailViewSpine: View {
 }
 
 #Preview {
-    DetailViewSpine(viewModel: DetailViewSpineModel(selectedApp: nil, arrVersions: [], currentTeam: .appName, currentAppState: .appListLoading))
+    DetailViewSpine(viewModel: DetailViewSpineModel(sidebarViewModel: SideBarViewSpineModel()))
 }

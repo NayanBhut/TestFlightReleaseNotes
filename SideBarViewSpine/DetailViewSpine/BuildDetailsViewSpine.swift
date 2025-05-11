@@ -14,6 +14,7 @@ struct BuildDetailsViewSpine: View {
     var getBuidsData:((String)-> Void)?
     var setBuidsData:((String, String, String)-> Void)?
     var refreshBuildList:(() -> Void)?
+    var loadMoreBuild:(() -> Void)?
     
     var body: some View {
         VStack {
@@ -24,7 +25,8 @@ struct BuildDetailsViewSpine: View {
             } else {
                 HStack {
                     Text("Builds").font(.title)
-                    Text("Total Buids : \(viewModel.arrBuilds.count)")
+                    Text("Total Buids : \((viewModel.meta?["paging"] as? [String: Any])?["total"] as? Int ?? 0)")
+                    
                     Button(action: {
                         self.viewModel.isBuildsLoaded = false
                         refreshBuildList?()
@@ -41,6 +43,14 @@ struct BuildDetailsViewSpine: View {
                 } else {
                     Spacer().frame(height: 100)
                     Text("Please select version above to get builds")
+                }
+            }
+            
+            if viewModel.nextPageCursor != nil {
+                Button(action: {
+                    loadMoreBuild?()
+                }) {
+                    Text("Load More")
                 }
             }
         }
@@ -169,5 +179,5 @@ struct BuildDetailsViewSpine: View {
 }
 
 #Preview {
-    BuildDetailsViewSpine(viewModel: DetailViewSpineModel(selectedApp: nil, arrVersions: [], currentTeam: .appName, currentAppState: .appListLoading))
+    BuildDetailsViewSpine(viewModel: DetailViewSpineModel(sidebarViewModel: SideBarViewSpineModel()))
 }
