@@ -45,7 +45,7 @@ struct DetailViewSpine: View {
     }
     
     private func versionList() -> some View {
-        ForEach(viewModel.arrVersions, content: { version in
+        ForEach(viewModel.arrVersions, id: \.id , content: { version in
             VStack {
                 versionsNumber(version: version)
                     .onTapGesture {
@@ -55,7 +55,7 @@ struct DetailViewSpine: View {
         })
     }
     
-    private func versionsNumber(version: PreReleaseVersions) -> some View {
+    private func versionsNumber(version: PreReleaseVersionsModel) -> some View {
         Text("\(version.version ?? "")")
             .padding(.vertical, 5)
             .padding(.horizontal, 10)

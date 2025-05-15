@@ -6,63 +6,80 @@
 //
 
 import SwiftUI
+import JSONAPI
 
 class SideBarViewSpineModel: ObservableObject {
     @Published var currentTeam: Team = .appName
     @Published var isExpanded = false
-    @Published var arrApps: [AppStoreApp] = []
+    @Published var arrApps: [AppsData] = []
     @Published var currentAppState: CurrentAppState = .appListLoading
     
-    var getVersion: ( (AppStoreApp?, [PreReleaseVersions], Team, CurrentAppState) -> Void )?
+    var getVersion: ( (AppsData?, [PreReleaseVersionsModel], Team, CurrentAppState) -> Void )?
     
-    @Published var arrVersion: [PreReleaseVersions] = []
-    @Published var selectedApp: AppStoreApp?
+    @Published var arrVersion: [PreReleaseVersionsModel] = []
+    @Published var selectedApp: AppsData?
     
     @Published var isAppListLoaded = false
     
-//    init(getVersion: ((AppStoreApp?, [PreReleaseVersions], Team, CurrentAppState) -> Void)?) {
+//    init(getVersion: ((AppsData?, [PreReleaseVersionsModel], Team, CurrentAppState) -> Void)?) {
 //        self.getVersion = getVersion
 //    }
     
     func getAllApps(for team: Team) {
+        let queryParams = ["include": "appStoreVersions",
+                           "filter[appStoreVersions.platform]": "IOS",
+                           "sort": "-name",
+                           "fields[builds]": "icons"
+            
+        ]
+        
+        guard let request = APIClient.shared.getRequest(team: team, api: .get(name: .getAllApps,queryParams: queryParams), apiVersion: .v1) else { return }
+        
         isAppListLoaded = false
         currentAppState = .appListLoading
         self.selectedApp = nil
         self.arrVersion = []
         self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
-        SpineManager().getAllApps(for: team) { result, nextPageURL, meta  in
+        
+        APIClient.shared.callAPI(with: request) { result in
             self.currentAppState = ._none
             self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
             switch result {
-            case .success(let success):
-                print("Success Data is ", success)
-                self.updateCurrentLiveVersion(responseApp: success as? [AppStoreApp] ?? [])
+            case .success(let successData):
+                print("API Model getAllApps Data is ", successData)
+                
+                do {
+                    let model = try getDecoder().decode([AppsData].self, from: successData)
+                    print("Model data is ", model)
+                    self.updateCurrentLiveVersion(responseApp: model)
+                } catch {
+                    print("API Error is ")
+                }
             case .failure(let failure):
-                print("Failure Data is ", failure)
+                print("API Error is ", failure)
                 self.updateCurrentLiveVersion(responseApp: [])
             }
             self.isAppListLoaded = true
         }
     }
     
-    func updateCurrentLiveVersion(responseApp: [AppStoreApp]) {
+    func updateCurrentLiveVersion(responseApp: [AppsData]) {
         var arrData = responseApp.map { appData in
-            let tempApp = appData
+            var tempApp = appData
             
-            let currentVersion = appData.appStoreVersions?.resources.first as? AppStoreVersions
+            let currentVersion = appData.appStoreVersions.first
             
             tempApp.currentLiveVersion = ((currentVersion?.id ?? ""),  currentVersion?.versionString ?? "Not Last Version")
             tempApp.currentState = currentVersion?.appVersionState ?? ""
             
+//            if let value = (appData.displayableVersions?.resources.first as? AppStoreVersions)?.storeIcon as? NSDictionary{
+//                let icon = IconAttributes(templateUrl: value.value(forKey: "templateUrl") as? String,
+//                               width: value.value(forKey: "width") as? NSNumber,
+//                               height: value.value(forKey: "height") as? NSNumber)
+//                print(icon)
+//            }
             
-            if let value = (appData.displayableVersions?.resources.first as? AppStoreVersions)?.storeIcon as? NSDictionary{
-                let icon = IconAttributes(templateUrl: value.value(forKey: "templateUrl") as? String,
-                               width: value.value(forKey: "width") as? NSNumber,
-                               height: value.value(forKey: "height") as? NSNumber)
-                print(icon)
-            }
-            
-            return appData
+            return tempApp
         }
         
         arrData.sort(by: {
@@ -79,15 +96,20 @@ class SideBarViewSpineModel: ObservableObject {
         getAllApps(for: currentTeam)
     }
     
-    func setSelectedAppAndGetVersions(app: AppStoreApp) {
+    func setSelectedAppAndGetVersions(app: AppsData) {
         selectedApp = app
         getTestFlightVersions(app: app)
     }
     
-    private func getTestFlightVersions(app: AppStoreApp) {
+    private func getTestFlightVersions(app: AppsData) {
+        let queryParams = ["filter[app]": app.id,
+                           "sort": "-version"]
+        
+        guard let request = APIClient.shared.getRequest(team: currentTeam, api: .get(name: .getAppVersions, queryParams: queryParams), apiVersion: .v1) else { return }
+        
         if let index = self.arrApps.firstIndex(where: { $0.id == app.id}) {
             arrApps = arrApps.map({ app in
-                let temp = app
+                var temp = app
                 temp.isSelected = false
                 return temp
             })
@@ -96,15 +118,32 @@ class SideBarViewSpineModel: ObservableObject {
         }
         
         currentAppState = .appVersionLoading
-        self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
-        SpineManager().getTestFlightVersions(for: app, for: currentTeam) { versionData, nextPageURL, meta in
-            if (versionData.value?.count ?? 0) > 10 {
-                self.arrVersion = Array((versionData.value as? [PreReleaseVersions] ?? [])[0...9])
-            } else {
-                self.arrVersion = versionData.value as? [PreReleaseVersions] ?? []
+        getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
+        
+        APIClient.shared.callAPI(with: request) { result in
+            switch result {
+            case .success(let successData):
+                print("API Model getBuildsModel Data is ", successData)
+                
+                do {
+                    let model = try getDecoder().decode([PreReleaseVersionsModel].self, from: successData)
+                    
+                    if (model.count) > 10 {
+                        self.arrVersion = Array(model[0...9])
+                    } else {
+                        self.arrVersion = model
+                    }
+                    
+                    self.currentAppState = ._none
+                    self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
+                    
+                    print("Model data is ", model)
+                } catch {
+                    print("API Error is ")
+                }
+            case .failure(let failure):
+                print("API Error is ", failure)
             }
-            self.currentAppState = ._none
-            self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
         }
     }
 }

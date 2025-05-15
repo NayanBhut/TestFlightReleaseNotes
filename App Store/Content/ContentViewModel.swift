@@ -164,7 +164,6 @@ extension ContentViewModel {
                     filterApp: [appId], sort:[.minusversion], fieldsPreReleaseVersions: [.version], limit: 5, fieldsApps: [.builds]
                 ))
             
-//        https:api.appstoreconnect.apple.com/v1/apps/1163601891?include=appStoreVersions,preReleaseVersions
             do {
                 let arrPrereleaseVersion = try await self.provider.request(request).data
                 print("PrereleaseVersion are ", arrPrereleaseVersion.count)

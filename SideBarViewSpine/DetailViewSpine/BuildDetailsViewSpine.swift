@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Spine
 
 struct BuildDetailsViewSpine: View {
     @ObservedObject var viewModel: DetailViewSpineModel
@@ -25,7 +24,7 @@ struct BuildDetailsViewSpine: View {
             } else {
                 HStack {
                     Text("Builds").font(.title)
-                    Text("Total Buids : \((viewModel.meta?["paging"] as? [String: Any])?["total"] as? Int ?? 0)")
+                    Text("Total Buids : \(viewModel.meta?.paging.total ?? 0)")
                     
                     Button(action: {
                         self.viewModel.isBuildsLoaded = false
@@ -57,7 +56,7 @@ struct BuildDetailsViewSpine: View {
         .padding()
     }
     
-    func getDate(dateString: NSDate?) -> String {
+    private func getDate(dateString: NSDate?) -> String {
         guard let dateString = dateString else { return "" }
         
         let newFormatter = ISO8601DateFormatter()
@@ -69,7 +68,23 @@ struct BuildDetailsViewSpine: View {
         return formatter.string(from: date)
     }
     
-    private func getCurrentBuildColor(processingState: String) -> (String, Color) { // PROCESSING, FAILED, INVALID, VALID
+    private func getDate(dateString: String?) -> String {
+        guard let dateString = dateString else { return "" }
+        
+        let newFormatter = ISO8601DateFormatter()
+        guard let date = newFormatter.date(from: dateString.description) else { return "" } // Get Date for UTC
+        
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter.string(from: date)
+    }
+    
+    private func getCurrentBuildColor(processingState: String, isExpired: Bool) -> (String, Color) { // PROCESSING, FAILED, INVALID, VALID
+        if isExpired {
+            return ("EXPIRED", .red)
+        }
+        
         switch processingState {
         case "PROCESSING":
             return ("PROCESSING", .yellow)
@@ -86,21 +101,21 @@ struct BuildDetailsViewSpine: View {
     
     @ViewBuilder private func getBuildsList() -> some View {
         if viewModel.isBuildsLoaded {
-            List(viewModel.arrBuilds) { build in
+            List(viewModel.arrBuilds, id: \.id) { build in
                 VStack(alignment: .leading) {
                     HStack {
                         Text("\(viewModel.selectedVersion?.version ?? "")(\(build.version ?? ""))")
                         Text("\(getDate(dateString: build.uploadedDate))")
-                        Text(getCurrentBuildColor(processingState: build.processingState ?? "").0)
-                            .foregroundColor(getCurrentBuildColor(processingState: build.processingState ?? "").1)
+                        Text(getCurrentBuildColor(processingState: build.processingState ?? "", isExpired: build.expired ?? false).0)
+                            .foregroundColor(getCurrentBuildColor(processingState: build.processingState ?? "", isExpired: build.expired ?? false).1)
                         Text("\(convertDate(string:build.uploadedDate?.description ?? "") ?? "")").foregroundColor(.green)
-                        //
+                        
                         if viewModel.currentAppState == .appLocalizationLoading {
                             SpinnerView()
                         } else {
                             Text("Update").onTapGesture {
                                 guard let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}),
-                                      let betaBuildLocalization = self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations?.resources[0] as? BuildLocalizations,
+                                      let betaBuildLocalization = self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations.first,
                                       let localization = betaBuildLocalization.whatsNew else { return }
                                 viewModel.createOrUpdate(buildLocalization: betaBuildLocalization, localization: localization, buildIndex:buildIndex)
                             }
@@ -131,20 +146,20 @@ struct BuildDetailsViewSpine: View {
                     
                     TextEditor(text: .init(
                         get: {
-                            if build.betaBuildLocalizations?.resources.count ?? 0 > 0 {
-                                return (build.betaBuildLocalizations?.resources[0] as? BuildLocalizations)?.whatsNew ?? ""
+                            if build.betaBuildLocalizations.count > 0 {
+                                return build.betaBuildLocalizations.first?.whatsNew ?? ""
                             }else {
                                 return ""
                             }
                         },
                         set: { text in
                             if let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}) {
-                                if self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations?.resources.count ?? 0 > 0 {
-                                    (self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations?.resources[0] as? BuildLocalizations)?.whatsNew = text
+                                if self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations.count > 0 {
+                                    self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations[0].whatsNew = text
                                 }else {
-                                    let betaBuildLocalization = BuildLocalizations(whatsNew: text, locale: "en-US")
-                                    let resourceColletion = ResourceCollection(resources: [betaBuildLocalization])
-                                    self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations?.appendResources(resourceColletion.resources)
+                                    let buildID = self.viewModel.arrBuilds[buildIndex].id
+                                    let betaBuildLocalization = BuildLocalizationsModel(id:buildID, locale: "en-US", whatsNew: text)
+                                    self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations.append(betaBuildLocalization)
                                 }
                             }
                         }
