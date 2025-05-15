@@ -1,5 +1,5 @@
 //
-//  SideBarViewSpineModel.swift
+//  SideBarViewModel.swift
 //  App Store
 //
 //  Created by Nayan Bhut on 02/05/24.
@@ -8,14 +8,11 @@
 import SwiftUI
 import JSONAPI
 
-class SideBarViewSpineModel: ObservableObject {
+class SideBarViewModel: ObservableObject {
     @Published var currentTeam: Team = .appName
     @Published var isExpanded = false
     @Published var arrApps: [AppsData] = []
     @Published var currentAppState: CurrentAppState = .appListLoading
-    
-    var getVersion: ( (AppsData?, [PreReleaseVersionsModel], Team, CurrentAppState) -> Void )?
-    
     @Published var arrVersion: [PreReleaseVersionsModel] = []
     @Published var selectedApp: AppsData?
     
@@ -39,11 +36,9 @@ class SideBarViewSpineModel: ObservableObject {
         currentAppState = .appListLoading
         self.selectedApp = nil
         self.arrVersion = []
-        self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
         
         APIClient.shared.callAPI(with: request) { result in
             self.currentAppState = ._none
-            self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
             switch result {
             case .success(let successData):
                 print("API Model getAllApps Data is ", successData)
@@ -89,7 +84,6 @@ class SideBarViewSpineModel: ObservableObject {
         self.arrApps = arrData
         
         currentAppState = ._none
-        self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
     }
     
     func updateTeam() {
@@ -118,7 +112,6 @@ class SideBarViewSpineModel: ObservableObject {
         }
         
         currentAppState = .appVersionLoading
-        getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
         
         APIClient.shared.callAPI(with: request) { result in
             switch result {
@@ -135,7 +128,6 @@ class SideBarViewSpineModel: ObservableObject {
                     }
                     
                     self.currentAppState = ._none
-                    self.getVersion?(self.selectedApp, self.arrVersion, self.currentTeam, self.currentAppState)
                     
                     print("Model data is ", model)
                 } catch {

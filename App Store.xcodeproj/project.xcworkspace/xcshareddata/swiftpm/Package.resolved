@@ -1,15 +1,6 @@
 {
-  "originHash" : "317cfcac95c131c050d2be2cae06b42f64b4179e3084985625771b2b04efadfe",
+  "originHash" : "25bbbbe1793200961893fbde3487a3aac7e74bf9dda244e4e4be421828c42194",
   "pins" : [
-    {
-      "identity" : "appstoreconnect-swift-sdk",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/AvdLee/appstoreconnect-swift-sdk",
-      "state" : {
-        "revision" : "23d108de618a136e71bd53ad479439b80379e2ae",
-        "version" : "2.3.0"
-      }
-    },
     {
       "identity" : "swift-jsonapi",
       "kind" : "remoteSourceControl",
@@ -26,15 +17,6 @@
       "state" : {
         "revision" : "2bc86522d115234d1f588efe2bcb4ce4be8f8b82",
         "version" : "510.0.3"
-      }
-    },
-    {
-      "identity" : "urlqueryencoder",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/CreateAPI/URLQueryEncoder.git",
-      "state" : {
-        "revision" : "4ce950479707ea109f229d7230ec074a133b15d7",
-        "version" : "0.2.1"
       }
     }
   ],

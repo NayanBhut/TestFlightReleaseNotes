@@ -1,5 +1,5 @@
 //
-//  BuildDetailsViewSpine.swift
+//  BuildDetailsView.swift
 //  App Store
 //
 //  Created by Nayan Bhut on 05/05/24.
@@ -7,8 +7,8 @@
 
 import SwiftUI
 
-struct BuildDetailsViewSpine: View {
-    @ObservedObject var viewModel: DetailViewSpineModel
+struct BuildDetailsView: View {
+    @ObservedObject var viewModel: DetailViewModel
     
     var getBuidsData:((String)-> Void)?
     var setBuidsData:((String, String, String)-> Void)?
@@ -28,6 +28,8 @@ struct BuildDetailsViewSpine: View {
                     
                     Button(action: {
                         self.viewModel.isBuildsLoaded = false
+                        self.viewModel.nextPageCursor = nil
+                        self.viewModel.meta = nil
                         refreshBuildList?()
                     }) {
                         Text("Refresh")
@@ -194,5 +196,5 @@ struct BuildDetailsViewSpine: View {
 }
 
 #Preview {
-    BuildDetailsViewSpine(viewModel: DetailViewSpineModel(sidebarViewModel: SideBarViewSpineModel()))
+    BuildDetailsView(viewModel: DetailViewModel(sidebarViewModel: SideBarViewModel()))
 }

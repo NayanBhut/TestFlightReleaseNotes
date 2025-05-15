@@ -23,3 +23,20 @@ private struct SizePreferenceKey: PreferenceKey {
   static var defaultValue: CGSize = .zero
   static func reduce(value: inout CGSize, nextValue: () -> CGSize) {}
 }
+
+extension View {
+    func readPosition(onChange: @escaping (CGPoint) -> Void) -> some View {
+        background(
+            GeometryReader { geometryProxy in
+                Color.clear
+                    .preference(key: PositionPreferenceKey.self, value: geometryProxy.frame(in: CoordinateSpace.global).origin)
+            }
+        )
+        .onPreferenceChange(PositionPreferenceKey.self, perform: onChange)
+    }
+}
+
+private struct PositionPreferenceKey: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {}
+}

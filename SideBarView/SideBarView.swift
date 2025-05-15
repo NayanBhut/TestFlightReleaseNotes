@@ -1,5 +1,5 @@
 //
-//  SideBarViewSpine.swift
+//  SideBarView.swift
 //  App Store
 //
 //  Created by Nayan Bhut on 02/05/24.
@@ -7,8 +7,8 @@
 
 import SwiftUI
 
-struct SideBarViewSpine: View {
-    @StateObject var viewModel: SideBarViewSpineModel
+struct SideBarView: View {
+    @StateObject var viewModel: SideBarViewModel
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
@@ -16,7 +16,7 @@ struct SideBarViewSpine: View {
             Text("SideBar View")
             HStack {
                 Menu("\(viewModel.currentTeam.getAppName())") {
-                    ForEach(0..<Team.allCases.count) { teams in
+                    ForEach(0..<Team.allCases.count, id: \.self) { teams in
                         Button("\(Team.allCases[teams].getAppName())", action: {
                             viewModel.currentTeam = Team.allCases[teams]
                         })
@@ -85,5 +85,5 @@ struct SideBarViewSpine: View {
 }
 
 #Preview {
-    SideBarViewSpine(viewModel: SideBarViewSpineModel())
+    SideBarView(viewModel: SideBarViewModel())
 }

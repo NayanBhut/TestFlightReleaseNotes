@@ -1,5 +1,5 @@
 //
-//  DetailViewSpine.swift
+//  DetailView.swift
 //  App Store
 //
 //  Created by Nayan Bhut on 04/05/24.
@@ -7,10 +7,10 @@
 
 import SwiftUI
 
-struct DetailViewSpine: View {
-    @ObservedObject var viewModel: DetailViewSpineModel
+struct DetailView: View {
+    @ObservedObject var viewModel: DetailViewModel
     
-    init(viewModel: DetailViewSpineModel) {
+    init(viewModel: DetailViewModel) {
         self.viewModel = viewModel
     }
     
@@ -65,7 +65,7 @@ struct DetailViewSpine: View {
     
     @ViewBuilder private func getBuildList() -> some View {
         if viewModel.selectedApp != nil {
-            BuildDetailsViewSpine(viewModel: viewModel, refreshBuildList:  {
+            BuildDetailsView(viewModel: viewModel, refreshBuildList:  {
                 guard let version = viewModel.selectedVersion else { return }
                 viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
             }, loadMoreBuild: {
@@ -91,5 +91,5 @@ struct DetailViewSpine: View {
 }
 
 #Preview {
-    DetailViewSpine(viewModel: DetailViewSpineModel(sidebarViewModel: SideBarViewSpineModel()))
+    DetailView(viewModel: DetailViewModel(sidebarViewModel: SideBarViewModel()))
 }

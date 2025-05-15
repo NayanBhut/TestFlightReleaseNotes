@@ -1,5 +1,5 @@
 //
-//  DetailViewSpineModel.swift
+//  DetailViewModel.swift
 //  App Store
 //
 //  Created by Nayan Bhut on 04/05/24.
@@ -9,7 +9,11 @@ import SwiftUI
 import Combine
 import JSONAPI
 
-class DetailViewSpineModel: ObservableObject {
+enum CurrentAppState {
+    case appListLoading, appVersionLoading, appVersionBuildLoading, appLocalizationLoading, _none
+}
+
+class DetailViewModel: ObservableObject {
     @Published var currentAppState: CurrentAppState = .appListLoading
     @Published var arrVersions: [PreReleaseVersionsModel] = []
     @Published var currentTeam: Team = .appName
@@ -25,7 +29,7 @@ class DetailViewSpineModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     
-    init(sidebarViewModel: SideBarViewSpineModel) {
+    init(sidebarViewModel: SideBarViewModel) {
         // Subscribe to sidebarViewModel's selectedItem changes
         sidebarViewModel.$currentTeam
             .receive(on: DispatchQueue.main)
@@ -52,13 +56,17 @@ class DetailViewSpineModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] selectedApp in
                 self?.selectedApp = selectedApp
+                self?.arrBuilds = []
+                self?.arrVersions = []
+                self?.nextPageCursor = nil
+                self?.meta = nil
             }
             .store(in: &cancellables)
         
     }
 }
 
-extension DetailViewSpineModel {
+extension DetailViewModel {
     func setSelectedVersionAndGetBuilds(selectedVersion: PreReleaseVersionsModel, cursor: String? = nil) {
         isBuildsLoaded = false
         arrVersions = arrVersions.map { version in
@@ -120,7 +128,7 @@ extension DetailViewSpineModel {
     }
 }
 
-extension DetailViewSpineModel {
+extension DetailViewModel {
     func createOrUpdate(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
         let arrLocalizations =  arrBuilds[buildIndex].betaBuildLocalizations
         if arrLocalizations.count == 0 {

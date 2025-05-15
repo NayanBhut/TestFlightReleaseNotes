@@ -11,7 +11,7 @@ import SwiftUI
 struct App_StoreApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentViewSpine()
+            ContentView()
         }
     }
 }
