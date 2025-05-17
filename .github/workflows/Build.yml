@@ -19,4 +19,4 @@ jobs:
       with:
         xcode-version: latest-stable
     - name: Build
-      run: xcodebuild -project "App Store.xcodeproj" -scheme "App Store" -configuration Debug -destination 'platform=macOS'
+      run: xcodebuild -project "App Store.xcodeproj" -scheme "App Store" -sdk macosx -configuration Debug CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build
