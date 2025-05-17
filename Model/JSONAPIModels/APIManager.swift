@@ -73,6 +73,17 @@ final class APIClient {
         return nil
     }
     
+    func getRequest(header: [String: String], api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
+        if let url = getURL(api: api, apiVersion: apiVersion) {
+            var request = URLRequest(url: url)
+            request.allHTTPHeaderFields = header
+            request.httpMethod = api.httpMethod.0
+            request.httpBody = getAPIBody(httpMethod: api)
+            return request
+        }
+        return nil
+    }
+    
     private func getAPIBody(httpMethod: APIMethod) -> Data? {
         switch httpMethod {
         case .post(_ ,let body, _, _), .put(_, let body, _, _), .patch(_, let body, _, _):

@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = SideBarViewModel()
     @StateObject private var detailViewModel: DetailViewModel
+    @EnvironmentObject var navigationManager: NavigationManager
     
     init() {
         let sidebarVM = SideBarViewModel()
@@ -21,6 +22,7 @@ struct ContentView: View {
         let _ = Self._printChanges()
         NavigationSplitView {
             SideBarView(viewModel: viewModel)
+                .environmentObject(navigationManager)
         } detail: {
             VStack(alignment: .center){
                 DetailView(viewModel: detailViewModel)

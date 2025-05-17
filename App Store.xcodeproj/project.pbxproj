@@ -8,8 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D00F61D2DCB34BC004CCA36 /* Extensions.swift */; };
+		8D26225B2DD8477C008B68AF /* KeychainSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 8D26225A2DD8477C008B68AF /* KeychainSwift */; };
 		8D2F23262DD06B8C00B1AB0C /* JSONAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 8D2F23252DD06B8C00B1AB0C /* JSONAPI */; };
 		8D2F23312DD06C5600B1AB0C /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2F23302DD06C4F00B1AB0C /* APIModels.swift */; };
+		8D44A3D92DD787F500903E9C /* KeyChainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D44A3D82DD787EF00903E9C /* KeyChainHelper.swift */; };
+		8D44A3DE2DD7992900903E9C /* AESHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D44A3DD2DD7992400903E9C /* AESHelper.swift */; };
+		8DB5768D2DD74301005A9CA0 /* OnBoardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DB5768C2DD74301005A9CA0 /* OnBoardingView.swift */; };
+		8DB5768F2DD746A2005A9CA0 /* OnBoardingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DB5768E2DD7469F005A9CA0 /* OnBoardingViewModel.swift */; };
+		8DB576912DD7535E005A9CA0 /* NavigationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DB576902DD7535E005A9CA0 /* NavigationManager.swift */; };
 		8DBB60852DD3865500111A9E /* APIManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBB60842DD3864F00111A9E /* APIManager.swift */; };
 		CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */; };
 		CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */; };
@@ -32,6 +38,11 @@
 /* Begin PBXFileReference section */
 		8D00F61D2DCB34BC004CCA36 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		8D2F23302DD06C4F00B1AB0C /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
+		8D44A3D82DD787EF00903E9C /* KeyChainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyChainHelper.swift; sourceTree = "<group>"; };
+		8D44A3DD2DD7992400903E9C /* AESHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AESHelper.swift; sourceTree = "<group>"; };
+		8DB5768C2DD74301005A9CA0 /* OnBoardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnBoardingView.swift; sourceTree = "<group>"; };
+		8DB5768E2DD7469F005A9CA0 /* OnBoardingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnBoardingViewModel.swift; sourceTree = "<group>"; };
+		8DB576902DD7535E005A9CA0 /* NavigationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationManager.swift; sourceTree = "<group>"; };
 		8DBB60842DD3864F00111A9E /* APIManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIManager.swift; sourceTree = "<group>"; };
 		CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigs.swift; sourceTree = "<group>"; };
 		CD616D822A8F62A4004ADF44 /* App Store.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "App Store.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -59,6 +70,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8D26225B2DD8477C008B68AF /* KeychainSwift in Frameworks */,
 				8D2F23262DD06B8C00B1AB0C /* JSONAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -70,8 +82,19 @@
 			isa = PBXGroup;
 			children = (
 				8D00F61D2DCB34BC004CCA36 /* Extensions.swift */,
+				8D44A3D82DD787EF00903E9C /* KeyChainHelper.swift */,
+				8D44A3DD2DD7992400903E9C /* AESHelper.swift */,
 			);
 			path = Helper;
+			sourceTree = "<group>";
+		};
+		8DB5768B2DD742ED005A9CA0 /* OnBoarding */ = {
+			isa = PBXGroup;
+			children = (
+				8DB5768C2DD74301005A9CA0 /* OnBoardingView.swift */,
+				8DB5768E2DD7469F005A9CA0 /* OnBoardingViewModel.swift */,
+			);
+			path = OnBoarding;
 			sourceTree = "<group>";
 		};
 		CD616D792A8F62A4004ADF44 = {
@@ -80,6 +103,7 @@
 				8D00F61C2DCB34A7004CCA36 /* Helper */,
 				CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */,
 				CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */,
+				8DB576902DD7535E005A9CA0 /* NavigationManager.swift */,
 				CD9DD4B52BE3EBC300820E2F /* JWT */,
 				CD9DD4952BE3DDE300820E2F /* ContentView */,
 				CD9DD49E2BE3DE8500820E2F /* SideBarView */,
@@ -159,6 +183,7 @@
 			isa = PBXGroup;
 			children = (
 				CDDEC3042BD7C1B400D73E95 /* SpinnerView.swift */,
+				8DB5768B2DD742ED005A9CA0 /* OnBoarding */,
 			);
 			path = View;
 			sourceTree = "<group>";
@@ -208,6 +233,7 @@
 			name = "App Store";
 			packageProductDependencies = (
 				8D2F23252DD06B8C00B1AB0C /* JSONAPI */,
+				8D26225A2DD8477C008B68AF /* KeychainSwift */,
 			);
 			productName = "App Store";
 			productReference = CD616D822A8F62A4004ADF44 /* App Store.app */;
@@ -239,6 +265,7 @@
 			mainGroup = CD616D792A8F62A4004ADF44;
 			packageReferences = (
 				8D2F23242DD06B8C00B1AB0C /* XCRemoteSwiftPackageReference "swift-jsonapi" */,
+				8D2622592DD8477C008B68AF /* XCRemoteSwiftPackageReference "keychain-swift" */,
 			);
 			productRefGroup = CD616D832A8F62A4004ADF44 /* Products */;
 			projectDirPath = "";
@@ -269,13 +296,17 @@
 				CD9DD4C32BE3ECE000820E2F /* ASN1.swift in Sources */,
 				CD9DD4C22BE3ECE000820E2F /* ECPrivateKey.swift in Sources */,
 				CD9DD4942BE3DDB400820E2F /* ContentView.swift in Sources */,
+				8DB5768D2DD74301005A9CA0 /* OnBoardingView.swift in Sources */,
 				8DBB60852DD3865500111A9E /* APIManager.swift in Sources */,
 				CD9DD4C62BE3ECE000820E2F /* JWTDecoder.swift in Sources */,
 				CD6C7C2A2BE7AB4E0004C24B /* BuildDetailsView.swift in Sources */,
 				CD9DD4C72BE3ECE000820E2F /* JWT.swift in Sources */,
 				CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */,
+				8DB576912DD7535E005A9CA0 /* NavigationManager.swift in Sources */,
 				CDDEC3052BD7C1B400D73E95 /* SpinnerView.swift in Sources */,
 				CD9DD49D2BE3DE8100820E2F /* SideBarView.swift in Sources */,
+				8D44A3D92DD787F500903E9C /* KeyChainHelper.swift in Sources */,
+				8D44A3DE2DD7992900903E9C /* AESHelper.swift in Sources */,
 				CDC9F4952BE5F96700AEF643 /* DetailViewModel.swift in Sources */,
 				CD9DD4C42BE3ECE000820E2F /* ECKeyData.swift in Sources */,
 				8D2F23312DD06C5600B1AB0C /* APIModels.swift in Sources */,
@@ -283,6 +314,7 @@
 				CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */,
 				8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */,
 				CD9DD4A02BE3DE9500820E2F /* SideBarViewModel.swift in Sources */,
+				8DB5768F2DD746A2005A9CA0 /* OnBoardingViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -321,6 +353,9 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=*]" = "-";
+				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -383,6 +418,9 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=*]" = "-";
+				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -492,6 +530,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		8D2622592DD8477C008B68AF /* XCRemoteSwiftPackageReference "keychain-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/evgenyneu/keychain-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 24.0.0;
+			};
+		};
 		8D2F23242DD06B8C00B1AB0C /* XCRemoteSwiftPackageReference "swift-jsonapi" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Datadog/swift-jsonapi";
@@ -503,6 +549,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		8D26225A2DD8477C008B68AF /* KeychainSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8D2622592DD8477C008B68AF /* XCRemoteSwiftPackageReference "keychain-swift" */;
+			productName = KeychainSwift;
+		};
 		8D2F23252DD06B8C00B1AB0C /* JSONAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 8D2F23242DD06B8C00B1AB0C /* XCRemoteSwiftPackageReference "swift-jsonapi" */;

@@ -10,10 +10,22 @@ import SwiftUI
 struct SideBarView: View {
     @StateObject var viewModel: SideBarViewModel
     @Environment(\.colorScheme) var colorScheme
+    @EnvironmentObject var navigationManager: NavigationManager
     
     var body: some View {
         VStack {
-            Text("SideBar View")
+            HStack {
+                Text("SideBar View")
+                Button(action: {
+                    UserDefaults.standard.removeObject(forKey: UserDefaultsKeys.isLoggedIn)
+                    navigationManager.isLoggedIn = false
+                    
+                }) {
+                    Text("Logout")
+                    
+                }
+            }
+            
             HStack {
                 Menu("\(viewModel.currentTeam.getAppName())") {
                     ForEach(0..<Team.allCases.count, id: \.self) { teams in
