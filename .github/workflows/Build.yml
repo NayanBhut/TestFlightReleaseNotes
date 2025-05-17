@@ -11,10 +11,12 @@ on:
 
 jobs:
   build:
-
     runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
+    - uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
     - name: Build
       run: xcodebuild -project "App Store.xcodeproj" -scheme "App Store" -configuration Debug -destination 'platform=macOS'
