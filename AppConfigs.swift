@@ -24,7 +24,7 @@ enum Team: String, CaseIterable, Identifiable {
         self.rawValue
     }
 
-#error("Update IssuerId")
+#warning("Update IssuerId")
     func getIssuerId() -> String {
         switch self {
         case .appName:
@@ -32,7 +32,7 @@ enum Team: String, CaseIterable, Identifiable {
         }
     }
 
-#error("Update Private Key ID")
+#warning("Update Private Key ID")
     func getPrivateKeyID() -> String {
         switch self {
         case .appName:
@@ -40,7 +40,7 @@ enum Team: String, CaseIterable, Identifiable {
         }
     }
 
-#error("Update Private Key")
+#warning("Update Private Key")
     func getPrivateKey() -> String {
         switch self {
         case .appName:
