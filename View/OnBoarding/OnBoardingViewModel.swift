@@ -9,9 +9,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 class OnBoardingViewModel: ObservableObject {
-    @Published var teamName: String = "UA"
-    @Published var issuerID: String = "e34e806a-b679-45ae-96c0-06baaed42c57"
-    @Published var keyId: String = "QPC7C8YQAA"
+    @Published var teamName: String = ""
+    @Published var issuerID: String = ""
+    @Published var keyId: String = ""
     @Published var privateKey: String = ""
     @Published var isShowSpinner = false
     

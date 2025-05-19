@@ -11,32 +11,80 @@ struct SideBarView: View {
     @StateObject var viewModel: SideBarViewModel
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject var navigationManager: NavigationManager
+    @Binding var isAddNewTeam: Bool
+    @Binding var isNewAccountAdded: Bool
+    @State var showTeams = false
     
     var body: some View {
         VStack {
             HStack {
                 Text("SideBar View")
+
                 Button(action: {
-                    UserDefaults.standard.removeObject(forKey: UserDefaultsKeys.isLoggedIn)
-                    navigationManager.isLoggedIn = false
-                    
+                    isAddNewTeam = true
                 }) {
-                    Text("Logout")
-                    
+                    Text("Add Team")
                 }
             }
             
-            HStack {
-                Menu("\(viewModel.currentTeam.getAppName())") {
-                    ForEach(0..<Team.allCases.count, id: \.self) { teams in
-                        Button("\(Team.allCases[teams].getAppName())", action: {
-                            viewModel.currentTeam = Team.allCases[teams]
-                        })
+            HStack(alignment: .top) {
+                VStack {
+                    Button(action: {
+                        print("Refresh Tapped")
+                        showTeams.toggle()
+                    }) {
+                        HStack {
+                            Spacer()
+                                .frame(width: 5)
+                            Text(CredentialStorage.shared.selectedTeam?.key ?? "")
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .foregroundStyle(.blue)
+                            
+                        }
+                    }
+                    if showTeams {
+                        VStack(spacing: 5) {
+                            ForEach(CredentialStorage.shared.getTeams, id: \.self) { team in
+                                HStack {
+                                    Spacer()
+                                        .frame(width: 5)
+                                    Text(team)
+                                        .background(Color.white)
+                                        .cornerRadius(10)
+                                        .padding(.leading, 5)
+                                    Spacer()
+                                    Button("Remove", action: {
+                                        CredentialStorage.shared.deleteCredential(for: team)
+                                        if CredentialStorage.shared.getTeams.count == 0 {
+                                            navigationManager.isLoggedIn = false
+                                        } else {
+                                            CredentialStorage.shared.setDefaultTeam()
+                                            viewModel.getiOSApps()
+                                            print("Remove Tapped")
+                                        }
+                                    })
+                                    .padding(.trailing, 5)
+                                }
+                                .padding(.vertical, 5)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    CredentialStorage.shared.changeTeam = team
+                                    viewModel.isTeamChanged = true
+                                    showTeams = false
+                                }
+                            }
+                        }
+                        .background(Color.white)
+                        .cornerRadius(10)
+                        .transition(.move(edge: .top))
+                        .animation(.easeInOut(duration: 4), value: showTeams)
                     }
                 }
+                
                 Button(action: {
                     print("Refresh Tapped")
-                    viewModel.getAllApps(for: viewModel.currentTeam)
+                    viewModel.getiOSApps()
                 }) {
                     Text("Refresh")
                 }
@@ -46,10 +94,24 @@ struct SideBarView: View {
         }
         .padding()
         .onAppear {
-            viewModel.getAllApps(for: viewModel.currentTeam)
-        }.onChange(of: viewModel.currentTeam) { oldValue, newValue in
-            viewModel.isAppListLoaded = false
-            viewModel.updateTeam()
+            if CredentialStorage.shared.selectedTeam == nil {
+                if CredentialStorage.shared.setDefaultTeam() {
+                    navigationManager.isLoggedIn = false
+                }
+            }
+            viewModel.getiOSApps()
+        }
+        .onChange(of: isNewAccountAdded) { oldValue, newValue in
+            if newValue {
+                viewModel.getiOSApps()
+            }
+        }
+        .onChange(of: viewModel.isTeamChanged) { oldValue, newValue in
+            if newValue {
+                viewModel.isAppListLoaded = false
+                viewModel.updateTeam()
+                viewModel.isTeamChanged = false
+            }
         }
     }
     
@@ -78,6 +140,14 @@ struct SideBarView: View {
                         viewModel.setSelectedAppAndGetVersions(app: app) // Select app and call api to get Builds
                     }
                 }
+                Spacer()
+                if viewModel.appMeta?.paging.nextCursor != nil {
+                    Button(action: {
+                        viewModel.getiOSApps(nextPage: viewModel.appMeta?.paging.nextCursor)
+                    }) {
+                        Text("Load More Apps")
+                    }
+                }
             } else {
                 SpinnerView()
             }
@@ -97,5 +167,5 @@ struct SideBarView: View {
 }
 
 #Preview {
-    SideBarView(viewModel: SideBarViewModel())
+    SideBarView(viewModel: SideBarViewModel(), isAddNewTeam: .constant(false), isNewAccountAdded: .constant(false))
 }

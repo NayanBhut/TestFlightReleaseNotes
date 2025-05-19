@@ -103,3 +103,4 @@ struct Meta: Equatable, Codable {
 
 
 typealias BuildsDocument = CompoundDocument<[BuildsModel], Meta>
+typealias AppsDocument = CompoundDocument<[AppsData], Meta>

@@ -20,10 +20,30 @@ final class CredentialStorage {
     static var shared: CredentialStorage = .init()
     static let keychain = KeychainSwift(keyPrefix: "App_Store_Connect_API_")
     
-    private init() { }
+    private init() {
+        if selectedTeam == nil {
+            setDefaultTeam()
+        }
+    }
     
     var getTeams: [String] {
-        return KeychainHelper.getAllKeysFromKeychain().filter({ $0.contains("App_Store_Connect_API_")})
+        return KeychainHelper.getAllKeysFromKeychain()
+            .filter({ $0.contains("App_Store_Connect_API_")})
+            .map { $0.replacingOccurrences(of: "App_Store_Connect_API_", with: "") }
+    }
+    
+    var selectedTeam: Credential?
+    
+    var changeTeam: String? {
+        get {
+            if let selectedTeam = selectedTeam {
+                return selectedTeam.key
+            }
+            return getTeams.first ?? nil
+        }
+        set {
+            selectedTeam = newValue == nil ? nil : getCredential(key: newValue!)
+        }
     }
     
     var getCredential: ((String) -> Credential?) {
@@ -54,5 +74,19 @@ final class CredentialStorage {
         }
         
         return nil
+    }
+    
+    @discardableResult
+    func deleteCredential(for key: String) -> Bool {
+        if getCredential(key: key) != nil {
+            CredentialStorage.keychain.delete(key)
+        }
+        return true
+    }
+    
+    @discardableResult
+    func setDefaultTeam() -> Bool {
+        changeTeam = getTeams.first
+        return getTeams.isEmpty
     }
 }

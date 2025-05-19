@@ -62,7 +62,9 @@ final class APIClient {
         task.resume()
     }
     
-    func getRequest(team: Team, api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
+    func getRequest(api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
+        guard let team = CredentialStorage.shared.selectedTeam else { return nil }
+        
         if let url = getURL(api: api, apiVersion: apiVersion) {
             var request = URLRequest(url: url)
             request.allHTTPHeaderFields = getHeader(team: team)
@@ -93,9 +95,12 @@ final class APIClient {
         }
     }
     
-    private func getHeader(team: Team) -> [String: String] {
+    private func getHeader(team: Credential?) -> [String: String] {
         var requestHeader = ["Content-Type": "application/json"]
-        if let token = try? JWT(keyIdentifier: team.getPrivateKeyID(), issuerIdentifier: team.getIssuerId(), expireDuration: 60 * 20).signedToken(using: team.getPrivateKey()) {
+        
+        guard let credential = team else { return requestHeader }
+        
+        if let token = try? JWT(keyIdentifier: credential.keyID, issuerIdentifier: credential.issuerID, expireDuration: 60 * 20).signedToken(using: credential.privateKey) {
             requestHeader["Authorization"] = "Bearer " + token
         }
         return requestHeader

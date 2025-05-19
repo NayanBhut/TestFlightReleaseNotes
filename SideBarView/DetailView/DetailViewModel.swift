@@ -16,7 +16,7 @@ enum CurrentAppState {
 class DetailViewModel: ObservableObject {
     @Published var currentAppState: CurrentAppState = .appListLoading
     @Published var arrVersions: [PreReleaseVersionsModel] = []
-    @Published var currentTeam: Team = .appName
+    @Published var currentTeam: Credential? 
     @Published var selectedVersion: PreReleaseVersionsModel?
     @Published var arrBuilds: [BuildsModel] = []
     
@@ -31,12 +31,12 @@ class DetailViewModel: ObservableObject {
     
     init(sidebarViewModel: SideBarViewModel) {
         // Subscribe to sidebarViewModel's selectedItem changes
-        sidebarViewModel.$currentTeam
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] currentTeam in
-                self?.currentTeam = currentTeam
-            }
-            .store(in: &cancellables)
+//        sidebarViewModel.$currentTeam
+//            .receive(on: DispatchQueue.main)
+//            .sink { [weak self] currentTeam in
+//                self?.currentTeam = currentTeam
+//            }
+//            .store(in: &cancellables)
         
         sidebarViewModel.$arrVersion
             .receive(on: DispatchQueue.main)
@@ -90,7 +90,7 @@ extension DetailViewModel {
             queryParams["cursor"] = cursor
         }
         
-        guard let request = APIClient.shared.getRequest(team: currentTeam, api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else { return }
+        guard let request = APIClient.shared.getRequest(api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else { return }
         
         currentAppState = .appVersionBuildLoading
         
@@ -147,7 +147,7 @@ extension DetailViewModel {
         
         currentAppState = .appLocalizationLoading
         
-        guard let request = APIClient.shared.getRequest(team: currentTeam, api: .patch(name: .postReleaseNote, body: data, path: buildLocalization.id), apiVersion: .v1) else { return }
+        guard let request = APIClient.shared.getRequest(api: .patch(name: .postReleaseNote, body: data, path: buildLocalization.id), apiVersion: .v1) else { return }
         
         APIClient.shared.callAPI(with: request) { result in
             switch result {
@@ -180,7 +180,7 @@ extension DetailViewModel {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         guard let data = try? encoder.encode(model),
-              let request = APIClient.shared.getRequest(team: currentTeam, api: .post(name: .postReleaseNote, body: data), apiVersion: .v1) else { return }
+              let request = APIClient.shared.getRequest(api: .post(name: .postReleaseNote, body: data), apiVersion: .v1) else { return }
         
         currentAppState = .appLocalizationLoading
         

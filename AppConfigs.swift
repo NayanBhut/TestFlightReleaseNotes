@@ -12,39 +12,39 @@ import Foundation
 
 // Add more enums for different apps
 
-enum Team: String, CaseIterable, Identifiable {
-    var id: String {
-        return getIssuerId()
-    }
-//#error("Update appName enum and refactor. Update the Data below in functions")
-    case appName = "App Name"
-    
-    
-    func getAppName() -> String {
-        self.rawValue
-    }
-
-#warning("Update IssuerId")
-    func getIssuerId() -> String {
-        switch self {
-        case .appName:
-            return "" //#Add Issuer ID
-        }
-    }
-
-#warning("Update Private Key ID")
-    func getPrivateKeyID() -> String {
-        switch self {
-        case .appName:
-            return ""// #Add Private Key ID
-        }
-    }
-
-#warning("Update Private Key")
-    func getPrivateKey() -> String {
-        switch self {
-        case .appName:
-            return "" //#Add Private Key
-        }
-    }
-}
+//enum Team: String, CaseIterable, Identifiable {
+//    var id: String {
+//        return getIssuerId()
+//    }
+////#error("Update appName enum and refactor. Update the Data below in functions")
+//    case appName = "App Name"
+//    
+//    
+//    func getAppName() -> String {
+//        self.rawValue
+//    }
+//
+//#warning("Update IssuerId")
+//    func getIssuerId() -> String {
+//        switch self {
+//        case .appName:
+//            return "" //#Add Issuer ID
+//        }
+//    }
+//
+//#warning("Update Private Key ID")
+//    func getPrivateKeyID() -> String {
+//        switch self {
+//        case .appName:
+//            return ""// #Add Private Key ID
+//        }
+//    }
+//
+//#warning("Update Private Key")
+//    func getPrivateKey() -> String {
+//        switch self {
+//        case .appName:
+//            return "" //#Add Private Key
+//        }
+//    }
+//}

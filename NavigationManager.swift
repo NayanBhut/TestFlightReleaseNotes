@@ -11,7 +11,15 @@ class NavigationManager: ObservableObject {
     @Published var isLoggedIn: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKeys.isLoggedIn)
 
     func checkLoginState() {
-        isLoggedIn = UserDefaults.standard.bool(forKey: UserDefaultsKeys.isLoggedIn)
+        let loginState = UserDefaults.standard.bool(forKey: UserDefaultsKeys.isLoggedIn)
+        let teams = CredentialStorage.shared.getTeams
+        
+        if loginState && !teams.isEmpty {
+            isLoggedIn = true
+        } else {
+            isLoggedIn = false
+            UserDefaults.standard.removeObject(forKey: UserDefaultsKeys.isLoggedIn)
+        }
     }
 }
 
