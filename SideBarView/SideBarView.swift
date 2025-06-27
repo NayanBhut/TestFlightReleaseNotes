@@ -54,17 +54,24 @@ struct SideBarView: View {
                                         .cornerRadius(10)
                                         .padding(.leading, 5)
                                     Spacer()
-                                    Button("Remove", action: {
+                                    
+                                    Button(action: {
                                         CredentialStorage.shared.deleteCredential(for: team)
                                         if CredentialStorage.shared.getTeams.count == 0 {
                                             navigationManager.isLoggedIn = false
                                         } else {
                                             CredentialStorage.shared.setDefaultTeam()
                                             viewModel.getiOSApps()
-                                            print("Remove Tapped")
                                         }
-                                    })
+                                    }) {
+                                        Text("Remove")
+                                            .foregroundStyle(Color.black)
+                                            .padding(.trailing, 5)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(.red)
                                     .padding(.trailing, 5)
+                                    
                                 }
                                 .padding(.vertical, 5)
                                 .contentShape(Rectangle())
@@ -76,6 +83,7 @@ struct SideBarView: View {
                             }
                         }
                         .background(Color.white)
+                        .foregroundStyle(Color.black)
                         .cornerRadius(10)
                         .transition(.move(edge: .top))
                         .animation(.easeInOut(duration: 4), value: showTeams)

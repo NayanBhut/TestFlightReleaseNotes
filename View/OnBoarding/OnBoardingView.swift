@@ -13,7 +13,11 @@ struct OnBoardingView: View {
     @Binding var isLoggedIn: Bool
     
     var body: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Add the Team Details. Tap Outside to close.")
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+                .font(.headline)
             OnBoardingField(title: "Team Name", text: $viewModel.teamName)
             OnBoardingField(title: "Issuer ID", text: $viewModel.issuerID)
             OnBoardingField(title: "Private Key ID", text: $viewModel.keyId)
@@ -31,10 +35,13 @@ struct OnBoardingView: View {
                 .padding(.trailing, 16)
                 VStack {
                     TextEditor(text: $viewModel.privateKey)
+                        .cornerRadius(10)
                         .frame(height: 100)
-                        .padding(.vertical, 5)
-                        .border(Color.white)
-                        .background(Color.white)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white, lineWidth: 1)
+                                .fill(Color.black.opacity(0.8))
+                        )
                         .padding()
                 }
             }
@@ -68,6 +75,7 @@ struct OnBoardingView: View {
         .frame(width: 500)
         .padding()
         .padding(.vertical, 20)
+        .background(Color.black.opacity(0.8))
     }
 }
 
@@ -84,7 +92,14 @@ struct OnBoardingField: View {
             Text(title)
                 .padding(.horizontal)
             TextField(title, text: $text)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.white, lineWidth: 1)
+                        .fill(Color.black.opacity(0.8))
+                )
+                .foregroundStyle(.white)
                 .padding(.horizontal)
+                
         }
         .modifier(TestModifier())
     }
@@ -93,8 +108,8 @@ struct OnBoardingField: View {
 struct TestModifier: ViewModifier {
     func body(content: Self.Content) -> some View {
         content
-            .padding(.vertical, 15)
-            .background(Color.gray)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.8))
             .cornerRadius(10)
     }
 }
