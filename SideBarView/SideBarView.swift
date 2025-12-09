@@ -16,91 +16,57 @@ struct SideBarView: View {
     @State var showTeams = false
     
     var body: some View {
-        VStack {
-            HStack {
-                Text("SideBar View")
-
-                Button(action: {
-                    isAddNewTeam = true
-                }) {
-                    Text("Add Team")
-                }
-            }
-            
-            HStack(alignment: .top) {
-                VStack {
+        VStack(spacing: 0) {
+            // Header section
+            VStack(spacing: 12) {
+                HStack {
+                    Text("Apps")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    
+                    Spacer()
+                    
                     Button(action: {
-                        print("Refresh Tapped")
-                        showTeams.toggle()
+                        isAddNewTeam = true
                     }) {
-                        HStack {
-                            Spacer()
-                                .frame(width: 5)
-                            Text(CredentialStorage.shared.selectedTeam?.key ?? "")
-                            Spacer()
-                            Image(systemName: "chevron.down")
-                                .foregroundStyle(.blue)
-                            
-                        }
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 20))
                     }
-                    if showTeams {
-                        VStack(spacing: 5) {
-                            ForEach(CredentialStorage.shared.getTeams, id: \.self) { team in
-                                HStack {
-                                    Spacer()
-                                        .frame(width: 5)
-                                    Text(team)
-                                        .background(Color.white)
-                                        .cornerRadius(10)
-                                        .padding(.leading, 5)
-                                    Spacer()
-                                    
-                                    Button(action: {
-                                        CredentialStorage.shared.deleteCredential(for: team)
-                                        if CredentialStorage.shared.getTeams.count == 0 {
-                                            navigationManager.isLoggedIn = false
-                                        } else {
-                                            CredentialStorage.shared.setDefaultTeam()
-                                            viewModel.getiOSApps()
-                                        }
-                                    }) {
-                                        Text("Remove")
-                                            .foregroundStyle(Color.black)
-                                            .padding(.trailing, 5)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(.red)
-                                    .padding(.trailing, 5)
-                                    
-                                }
-                                .padding(.vertical, 5)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    CredentialStorage.shared.changeTeam = team
-                                    viewModel.isTeamChanged = true
-                                    showTeams = false
-                                }
-                            }
-                        }
-                        .background(Color.white)
-                        .foregroundStyle(Color.black)
-                        .cornerRadius(10)
-                        .transition(.move(edge: .top))
-                        .animation(.easeInOut(duration: 4), value: showTeams)
-                    }
+                    .buttonStyle(.plain)
+                    .help("Add Team")
                 }
                 
-                Button(action: {
-                    print("Refresh Tapped")
-                    viewModel.getiOSApps()
-                }) {
-                    Text("Refresh")
+                // Team selector
+                teamSelector()
+                
+                // Refresh button
+                HStack {
+                    Button(action: {
+                        viewModel.getiOSApps()
+                    }) {
+                        Label("Refresh Apps", systemImage: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!viewModel.isAppListLoaded)
+                    
+                    Spacer()
+                    
+                    if let total = viewModel.appMeta?.paging.total {
+                        Text("\(total) apps")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
-            .disabled(!viewModel.isAppListLoaded)
+            .padding(16)
+            .background(Color(nsColor: .controlBackgroundColor))
+            
+            Divider()
+            
+            // Apps list
             appList()
         }
-        .padding()
         .onAppear {
             if CredentialStorage.shared.selectedTeam == nil {
                 if CredentialStorage.shared.setDefaultTeam() {
@@ -123,9 +89,95 @@ struct SideBarView: View {
         }
     }
     
-    func appList() -> some View {
-        VStack {
-            if viewModel.isAppListLoaded {
+    @ViewBuilder private func teamSelector() -> some View {
+        VStack(spacing: 8) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showTeams.toggle()
+                }
+            }) {
+                HStack {
+                    Image(systemName: "person.2.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text(CredentialStorage.shared.selectedTeam?.key ?? "No Team")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                    
+                    Spacer()
+                    
+                    Image(systemName: showTeams ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            
+            if showTeams {
+                VStack(spacing: 4) {
+                    ForEach(CredentialStorage.shared.getTeams, id: \.self) { team in
+                        HStack {
+                            Text(team)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                CredentialStorage.shared.deleteCredential(for: team)
+                                if CredentialStorage.shared.getTeams.isEmpty {
+                                    navigationManager.isLoggedIn = false
+                                } else {
+                                    CredentialStorage.shared.setDefaultTeam()
+                                    viewModel.getiOSApps()
+                                }
+                            }) {
+                                Image(systemName: "trash")
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove team")
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            CredentialStorage.shared.changeTeam = team
+                            viewModel.isTeamChanged = true
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showTeams = false
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+    }
+    
+    @ViewBuilder private func appList() -> some View {
+        if viewModel.isAppListLoaded {
+            VStack(spacing: 0) {
                 List(viewModel.arrApps, id: \.id) { app in
                     AppRowView(app: app, isSelected: app.isSelected)
                         .contentShape(Rectangle())
@@ -136,16 +188,26 @@ struct SideBarView: View {
                 .listStyle(.sidebar)
                 
                 if viewModel.appMeta?.paging.nextCursor != nil {
-                    Button("Load More Apps") {
-                        viewModel.getiOSApps(nextPage: viewModel.appMeta?.paging.nextCursor)
+                    VStack {
+                        Divider()
+                        Button("Load More Apps") {
+                            viewModel.getiOSApps(nextPage: viewModel.appMeta?.paging.nextCursor)
+                        }
+                        .buttonStyle(.bordered)
+                        .padding(.vertical, 12)
                     }
-                    .buttonStyle(.bordered)
-                    .padding(.vertical, 8)
                 }
-            } else {
-                SpinnerView()
             }
-            Spacer()
+        } else {
+            VStack(spacing: 16) {
+                Spacer()
+                ProgressView()
+                    .scaleEffect(1.2)
+                Text("Loading apps...")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
         }
     }
 }
