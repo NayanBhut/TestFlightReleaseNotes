@@ -26,6 +26,8 @@ class DetailViewModel: ObservableObject {
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
     
+    @Published var updatingBuildId: String?
+    
     private var cancellables = Set<AnyCancellable>()
     
     
@@ -146,7 +148,11 @@ extension DetailViewModel {
               let betaBuildLocalization = arrBuilds[buildIndex].betaBuildLocalizations.first,
               let localization = betaBuildLocalization.whatsNew else { return }
         
-        createOrUpdate(buildLocalization: betaBuildLocalization, localization: localization, buildIndex: buildIndex)
+        createOrUpdate(buildId: buildId, buildLocalization: betaBuildLocalization, localization: localization, buildIndex: buildIndex)
+    }
+    
+    func isBuildUpdating(_ buildId: String) -> Bool {
+        return updatingBuildId == buildId
     }
 }
 
@@ -156,34 +162,34 @@ private enum Constants {
 }
 
 extension DetailViewModel {
-    func createOrUpdate(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
-        // Prevent duplicate API calls
-        guard currentAppState != .appLocalizationLoading else { return }
+    func createOrUpdate(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
+        guard updatingBuildId != buildId else { return }
+        
+        updatingBuildId = buildId
         
         let arrLocalizations = arrBuilds[buildIndex].betaBuildLocalizations
         if arrLocalizations.isEmpty {
-            createBuildLocalization(buildLocalization: buildLocalization, localization: localization, buildIndex: buildIndex)
+            createBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization, buildIndex: buildIndex)
         } else {
-            updateBuildLocalization(buildLocalization: buildLocalization, localization: localization, buildIndex: buildIndex)
+            updateBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization, buildIndex: buildIndex)
         }
     }
     
-    private func updateBuildLocalization(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
+    private func updateBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
         let model = BuildLocalizationsModel.updateBody(id: buildLocalization.id, whatsNew: buildLocalization.whatsNew)
         let encoder = JSONAPIEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         guard let data = try? encoder.encode(model),
               let request = APIClient.shared.getRequest(api: .patch(name: .postReleaseNote, body: data, path: buildLocalization.id), apiVersion: .v1) else {
+            updatingBuildId = nil
             return
         }
-        
-        currentAppState = .appLocalizationLoading
         
         APIClient.shared.callAPI(with: request) { [weak self] result in
             guard let self = self else { return }
             
-            self.currentAppState = ._none
+            self.updatingBuildId = nil
             
             switch result {
             case .success(let successData):
@@ -211,7 +217,7 @@ extension DetailViewModel {
         }
     }
     
-    private func createBuildLocalization(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
+    private func createBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
         let model = BuildLocalizationsModel.createBody(
             locale: Constants.defaultLocale,
             whatsNew: buildLocalization.whatsNew,
@@ -222,15 +228,14 @@ extension DetailViewModel {
 
         guard let data = try? encoder.encode(model),
               let request = APIClient.shared.getRequest(api: .post(name: .postReleaseNote, body: data), apiVersion: .v1) else {
+            updatingBuildId = nil
             return
         }
-        
-        currentAppState = .appLocalizationLoading
         
         APIClient.shared.callAPI(with: request) { [weak self] result in
             guard let self = self else { return }
             
-            self.currentAppState = ._none
+            self.updatingBuildId = nil
             
             switch result {
             case .success(let successData):

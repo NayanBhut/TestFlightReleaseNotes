@@ -130,7 +130,7 @@ struct BuildDetailsView: View {
                     onUpdate: {
                         viewModel.saveBuildLocalization(buildId: build.id)
                     },
-                    isUpdating: viewModel.currentAppState == .appLocalizationLoading
+                    isUpdating: viewModel.isBuildUpdating(build.id)
                 )
             }
         } else {
