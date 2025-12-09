@@ -16,7 +16,7 @@ enum CurrentAppState {
 class DetailViewModel: ObservableObject {
     @Published var currentAppState: CurrentAppState = .appListLoading
     @Published var arrVersions: [PreReleaseVersionsModel] = []
-    @Published var currentTeam: Credential? 
+    @Published var currentTeam: Credential?
     @Published var selectedVersion: PreReleaseVersionsModel?
     @Published var arrBuilds: [BuildsModel] = []
     
@@ -86,7 +86,7 @@ extension DetailViewModel {
                            "include": "appStoreVersion,betaBuildLocalizations,preReleaseVersion",
                            "limit": "5"]
         
-        if cursor != nil {
+        if let cursor = cursor {
             queryParams["cursor"] = cursor
         }
         
@@ -94,116 +94,169 @@ extension DetailViewModel {
         
         currentAppState = .appVersionBuildLoading
         
-        APIClient.shared.callAPI(with: request) { result in
+        APIClient.shared.callAPI(with: request) { [weak self] result in
+            guard let self = self else { return }
+            
             self.isBuildsLoaded = true
             self.currentAppState = ._none
-            self.meta = nil
+            
             switch result {
             case .success(let successData):
-                print("API Model getBuildsModel Data is ", successData)
-                
                 do {
                     let model = try getDecoder().decode(BuildsDocument.self, from: successData)
                     self.selectedVersion = version
                     
-                    if self.nextPageCursor != nil {
+                    if cursor != nil {
                         self.arrBuilds += model.data
                     } else {
                         self.arrBuilds = model.data
                     }
                     self.meta = model.meta
                     self.nextPageCursor = model.meta.paging.nextCursor
-                    print("Model data is ", model)
                 } catch {
-                    print("API Error is ")
                     self.selectedVersion = version
                     self.arrBuilds = []
+                    self.meta = nil
                 }
-            case .failure(let failure):
-                print("API Error is ", failure)
+            case .failure:
                 self.selectedVersion = version
                 self.arrBuilds = []
+                self.meta = nil
             }
         }
     }
+    
+    func updateBuildWhatsNew(buildId: String, whatsNew: String) {
+        guard let buildIndex = arrBuilds.firstIndex(where: { $0.id == buildId }) else { return }
+        
+        if arrBuilds[buildIndex].betaBuildLocalizations.isEmpty {
+            let betaBuildLocalization = BuildLocalizationsModel(
+                id: buildId,
+                locale: Constants.defaultLocale,
+                whatsNew: whatsNew
+            )
+            arrBuilds[buildIndex].betaBuildLocalizations.append(betaBuildLocalization)
+        } else {
+            arrBuilds[buildIndex].betaBuildLocalizations[0].whatsNew = whatsNew
+        }
+    }
+    
+    func saveBuildLocalization(buildId: String) {
+        guard let buildIndex = arrBuilds.firstIndex(where: { $0.id == buildId }),
+              let betaBuildLocalization = arrBuilds[buildIndex].betaBuildLocalizations.first,
+              let localization = betaBuildLocalization.whatsNew else { return }
+        
+        createOrUpdate(buildLocalization: betaBuildLocalization, localization: localization, buildIndex: buildIndex)
+    }
+}
+
+// Constants
+private enum Constants {
+    static let defaultLocale = "en-US"
 }
 
 extension DetailViewModel {
     func createOrUpdate(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
-        let arrLocalizations =  arrBuilds[buildIndex].betaBuildLocalizations
-        if arrLocalizations.count == 0 {
-            createBuildLocalization(buildLocalization: buildLocalization, localization: localization, buildIndex:buildIndex)
+        // Prevent duplicate API calls
+        guard currentAppState != .appLocalizationLoading else { return }
+        
+        let arrLocalizations = arrBuilds[buildIndex].betaBuildLocalizations
+        if arrLocalizations.isEmpty {
+            createBuildLocalization(buildLocalization: buildLocalization, localization: localization, buildIndex: buildIndex)
         } else {
-            updateBuildLocalization(buildLocalization: buildLocalization, localization: localization, buildIndex:buildIndex)
+            updateBuildLocalization(buildLocalization: buildLocalization, localization: localization, buildIndex: buildIndex)
         }
     }
     
-    func updateBuildLocalization(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
+    private func updateBuildLocalization(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
         let model = BuildLocalizationsModel.updateBody(id: buildLocalization.id, whatsNew: buildLocalization.whatsNew)
         let encoder = JSONAPIEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        guard let data = try? encoder.encode(model) else { return }
+        guard let data = try? encoder.encode(model),
+              let request = APIClient.shared.getRequest(api: .patch(name: .postReleaseNote, body: data, path: buildLocalization.id), apiVersion: .v1) else {
+            return
+        }
         
         currentAppState = .appLocalizationLoading
         
-        guard let request = APIClient.shared.getRequest(api: .patch(name: .postReleaseNote, body: data, path: buildLocalization.id), apiVersion: .v1) else { return }
-        
-        APIClient.shared.callAPI(with: request) { result in
+        APIClient.shared.callAPI(with: request) { [weak self] result in
+            guard let self = self else { return }
+            
+            self.currentAppState = ._none
+            
             switch result {
             case .success(let successData):
-                self.currentAppState = ._none
-                print("API Model getBuildsModel Data is ", successData)
-                
                 do {
                     let model = try getDecoder().decode(BuildLocalizationsModel.self, from: successData)
+                    
+                    guard buildIndex < self.arrBuilds.count else { return }
                     let arrLocalizations = self.arrBuilds[buildIndex].betaBuildLocalizations
                     
-                    if let index = arrLocalizations.firstIndex(where: { $0.id == model.id}) {
-                        let buildLocalizationsModel = BuildLocalizationsModel(id: model.id, locale: model.locale, whatsNew: model.whatsNew)
+                    if let index = arrLocalizations.firstIndex(where: { $0.id == model.id }) {
+                        let buildLocalizationsModel = BuildLocalizationsModel(
+                            id: model.id,
+                            locale: model.locale,
+                            whatsNew: model.whatsNew
+                        )
                         self.arrBuilds[buildIndex].betaBuildLocalizations[index] = buildLocalizationsModel
                     }
-                    
-                    print("Model data is ", model)
                 } catch {
-                    print("API Error is ")
+                    // Handle error
                 }
-            case .failure(let failure):
-                print("API Error is ", failure)
+            case .failure:
+                // Handle error
+                break
             }
         }
     }
     
-    func createBuildLocalization(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
-        let model = BuildLocalizationsModel.createBody(locale: "en-US", whatsNew: buildLocalization.whatsNew, build: RelationshipOne(id: arrBuilds[buildIndex].id))
+    private func createBuildLocalization(buildLocalization: BuildLocalizationsModel, localization: String, buildIndex: Int) {
+        let model = BuildLocalizationsModel.createBody(
+            locale: Constants.defaultLocale,
+            whatsNew: buildLocalization.whatsNew,
+            build: RelationshipOne(id: arrBuilds[buildIndex].id)
+        )
         let encoder = JSONAPIEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         guard let data = try? encoder.encode(model),
-              let request = APIClient.shared.getRequest(api: .post(name: .postReleaseNote, body: data), apiVersion: .v1) else { return }
+              let request = APIClient.shared.getRequest(api: .post(name: .postReleaseNote, body: data), apiVersion: .v1) else {
+            return
+        }
         
         currentAppState = .appLocalizationLoading
         
-        APIClient.shared.callAPI(with: request) { result in
+        APIClient.shared.callAPI(with: request) { [weak self] result in
+            guard let self = self else { return }
+            
             self.currentAppState = ._none
+            
             switch result {
             case .success(let successData):
-                print("API Model getBuildsModel Data is ", successData)
-                
                 do {
                     let model = try getDecoder().decode(BuildLocalizationsModel.self, from: successData)
                     
-                    let arrLocalizations = self.arrBuilds[buildIndex].betaBuildLocalizations
-                    if let index = arrLocalizations.firstIndex(where: { $0.id == model.id}) {
-                        let buildLocalizationsModel = BuildLocalizationsModel(id: model.id, locale: model.locale, whatsNew: model.whatsNew)
-                        self.arrBuilds[buildIndex].betaBuildLocalizations[index] = buildLocalizationsModel
+                    guard buildIndex < self.arrBuilds.count else { return }
+                    
+                    let buildLocalizationsModel = BuildLocalizationsModel(
+                        id: model.id,
+                        locale: model.locale,
+                        whatsNew: model.whatsNew
+                    )
+                    
+                    // Replace the temporary localization with the real one from API
+                    if self.arrBuilds[buildIndex].betaBuildLocalizations.isEmpty {
+                        self.arrBuilds[buildIndex].betaBuildLocalizations.append(buildLocalizationsModel)
+                    } else {
+                        self.arrBuilds[buildIndex].betaBuildLocalizations[0] = buildLocalizationsModel
                     }
-                    print("Model data is ", model)
                 } catch {
-                    print("API Error is ")
+                    // Handle error
                 }
-            case .failure(let failure):
-                print("API Error is ", failure)
+            case .failure:
+                // Handle error
+                break
             }
         }
     }

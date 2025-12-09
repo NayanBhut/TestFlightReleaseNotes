@@ -10,35 +10,54 @@ import SwiftUI
 struct BuildDetailsView: View {
     @ObservedObject var viewModel: DetailViewModel
     
-    var getBuidsData:((String)-> Void)?
-    var setBuidsData:((String, String, String)-> Void)?
-    var refreshBuildList:(() -> Void)?
-    var loadMoreBuild:(() -> Void)?
+    var getBuidsData: ((String) -> Void)?
+    var setBuidsData: ((String, String, String) -> Void)?
+    var refreshBuildList: (() -> Void)?
+    var loadMoreBuild: (() -> Void)?
+    
+    private static let iso8601Formatter = ISO8601DateFormatter()
+    private static let displayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeZone = .current
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter
+    }()
+    
+    private static let customFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss Z"
+        return formatter
+    }()
+    
+    private static let customDisplayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd MMM HH:mm"
+        return formatter
+    }()
     
     var body: some View {
         VStack {
-            if (viewModel.currentAppState == .appVersionBuildLoading) {
+            if viewModel.currentAppState == .appVersionBuildLoading {
                 SpinnerView()
-            } else if ((viewModel.currentAppState == CurrentAppState.appVersionLoading) || (viewModel.currentAppState == CurrentAppState.appListLoading)) {
-                
+            } else if viewModel.currentAppState == .appVersionLoading || viewModel.currentAppState == .appListLoading {
+                EmptyView()
             } else {
                 HStack {
                     Text("Builds").font(.title)
-                    Text("Total Buids : \(viewModel.meta?.paging.total ?? 0)")
+                    Text("Total Builds: \(viewModel.meta?.paging.total ?? 0)")
                     
-                    Button(action: {
-                        self.viewModel.isBuildsLoaded = false
-                        self.viewModel.nextPageCursor = nil
-                        self.viewModel.meta = nil
+                    Button("Refresh") {
+                        viewModel.isBuildsLoaded = false
+                        viewModel.nextPageCursor = nil
+                        viewModel.meta = nil
                         refreshBuildList?()
-                    }) {
-                        Text("Refresh")
                     }
                     
                     if viewModel.currentAppState == .appVersionBuildLoading {
                         SpinnerView()
                     }
                 }
+                
                 if viewModel.selectedVersion != nil {
                     getBuildsList()
                 } else {
@@ -48,41 +67,30 @@ struct BuildDetailsView: View {
             }
             
             if viewModel.nextPageCursor != nil {
-                Button(action: {
+                Button("Load More") {
                     loadMoreBuild?()
-                }) {
-                    Text("Load More")
                 }
             }
         }
         .padding()
     }
     
-    private func getDate(dateString: NSDate?) -> String {
-        guard let dateString = dateString else { return "" }
-        
-        let newFormatter = ISO8601DateFormatter()
-        guard let date = newFormatter.date(from: dateString.description) else { return "" } // Get Date for UTC
-        
-        let formatter = DateFormatter()
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "MMM d, h:mm a"
-        return formatter.string(from: date)
+    private func formatDate(_ dateString: String?) -> String {
+        guard let dateString = dateString,
+              let date = Self.iso8601Formatter.date(from: dateString) else {
+            return ""
+        }
+        return Self.displayFormatter.string(from: date)
     }
     
-    private func getDate(dateString: String?) -> String {
-        guard let dateString = dateString else { return "" }
-        
-        let newFormatter = ISO8601DateFormatter()
-        guard let date = newFormatter.date(from: dateString.description) else { return "" } // Get Date for UTC
-        
-        let formatter = DateFormatter()
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "MMM d, h:mm a"
-        return formatter.string(from: date)
+    private func formatCustomDate(_ dateString: String) -> String? {
+        guard let date = Self.customFormatter.date(from: dateString) else {
+            return nil
+        }
+        return Self.customDisplayFormatter.string(from: date)
     }
     
-    private func getCurrentBuildColor(processingState: String, isExpired: Bool) -> (String, Color) { // PROCESSING, FAILED, INVALID, VALID
+    private func getBuildStatus(processingState: String, isExpired: Bool) -> (String, Color) {
         if isExpired {
             return ("EXPIRED", .red)
         }
@@ -104,54 +112,89 @@ struct BuildDetailsView: View {
     @ViewBuilder private func getBuildsList() -> some View {
         if viewModel.isBuildsLoaded {
             List(viewModel.arrBuilds, id: \.id) { build in
-                BuildRowView(build: build, viewModel: viewModel, getDate: getDate, getCurrentBuildColor: getCurrentBuildColor, convertDate: convertDate)
+                BuildRowView(
+                    buildId: build.id,
+                    version: build.version ?? "",
+                    uploadedDate: build.uploadedDate ?? "",
+                    processingState: build.processingState ?? "",
+                    isExpired: build.expired ?? false,
+                    whatsNew: build.betaBuildLocalizations.first?.whatsNew ?? "",
+                    localizationId: build.betaBuildLocalizations.first?.id,
+                    selectedVersionString: viewModel.selectedVersion?.version ?? "",
+                    formatDate: formatDate,
+                    formatCustomDate: formatCustomDate,
+                    getBuildStatus: getBuildStatus,
+                    onTextChange: { newText in
+                        viewModel.updateBuildWhatsNew(buildId: build.id, whatsNew: newText)
+                    },
+                    onUpdate: {
+                        viewModel.saveBuildLocalization(buildId: build.id)
+                    },
+                    isUpdating: viewModel.currentAppState == .appLocalizationLoading
+                )
             }
         } else {
             SpinnerView()
         }
     }
-    
-    
-    private func convertDate(string: String, fromFormat: String = "yyyy-MM-dd HH:mm:ss Z", toFormat: String = "dd MMM HH:mm") -> String? {
-        let formatter = DateFormatter()
-        
-        formatter.dateFormat = fromFormat
-        guard let date = formatter.date(from: string) else { return nil }
-        
-        formatter.dateFormat = toFormat
-        return formatter.string(from: date)
-    }
-    
 }
 
 // Separate view to handle TextEditor state properly
 struct BuildRowView: View {
-    let build: BuildsModel
-    @ObservedObject var viewModel: DetailViewModel
-    let getDate: (String?) -> String
-    let getCurrentBuildColor: (String, Bool) -> (String, Color)
-    let convertDate: (String, String, String) -> String?
+    let buildId: String
+    let version: String
+    let uploadedDate: String
+    let processingState: String
+    let isExpired: Bool
+    let whatsNew: String
+    let localizationId: String?
+    let selectedVersionString: String
+    let formatDate: (String?) -> String
+    let formatCustomDate: (String) -> String?
+    let getBuildStatus: (String, Bool) -> (String, Color)
+    let onTextChange: (String) -> Void
+    let onUpdate: () -> Void
+    let isUpdating: Bool
     
     @State private var whatsNewText: String = ""
+    @State private var hasChanges: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("\(viewModel.selectedVersion?.version ?? "")(\(build.version ?? ""))")
-                Text("\(getDate(build.uploadedDate))")
-                Text(getCurrentBuildColor(build.processingState ?? "", build.expired ?? false).0)
-                    .foregroundColor(getCurrentBuildColor(build.processingState ?? "", build.expired ?? false).1)
-                Text("\(convertDate(build.uploadedDate?.description ?? "", "yyyy-MM-dd HH:mm:ss Z", "dd MMM HH:mm") ?? "")").foregroundColor(.green)
+                Text("\(selectedVersionString)(\(version))")
+                    .font(.headline)
                 
-                if viewModel.currentAppState == .appLocalizationLoading {
-                    SpinnerView()
+                Text(formatDate(uploadedDate))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                let status = getBuildStatus(processingState, isExpired)
+                Text(status.0)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(status.1.opacity(0.2))
+                    .foregroundColor(status.1)
+                    .cornerRadius(4)
+                
+                if let customDate = formatCustomDate(uploadedDate) {
+                    Text(customDate)
+                        .font(.caption)
+                        .foregroundColor(.green)
+                }
+                
+                Spacer()
+                
+                if isUpdating {
+                    ProgressView()
+                        .scaleEffect(0.8)
                 } else {
-                    Text("Update").onTapGesture {
-                        guard let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}),
-                              let betaBuildLocalization = viewModel.arrBuilds[buildIndex].betaBuildLocalizations.first,
-                              let localization = betaBuildLocalization.whatsNew else { return }
-                        viewModel.createOrUpdate(buildLocalization: betaBuildLocalization, localization: localization, buildIndex:buildIndex)
+                    Button("Update") {
+                        onUpdate()
+                        hasChanges = false
                     }
+                    .disabled(!hasChanges || whatsNewText.isEmpty)
                 }
             }
             
@@ -163,26 +206,19 @@ struct BuildRowView: View {
                 .cornerRadius(6)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        .stroke(hasChanges ? Color.blue.opacity(0.5) : Color.gray.opacity(0.3), lineWidth: hasChanges ? 2 : 1)
                 )
                 .scrollContentBackground(.hidden)
                 .onChange(of: whatsNewText) { newValue in
-                    if let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}) {
-                        if viewModel.arrBuilds[buildIndex].betaBuildLocalizations.count > 0 {
-                            viewModel.arrBuilds[buildIndex].betaBuildLocalizations[0].whatsNew = newValue
-                        } else {
-                            let buildID = viewModel.arrBuilds[buildIndex].id
-                            let betaBuildLocalization = BuildLocalizationsModel(id: buildID, locale: "en-US", whatsNew: newValue)
-                            viewModel.arrBuilds[buildIndex].betaBuildLocalizations.append(betaBuildLocalization)
-                        }
-                    }
+                    hasChanges = newValue != whatsNew
+                    onTextChange(newValue)
                 }
                 .onAppear {
-                    if build.betaBuildLocalizations.count > 0 {
-                        whatsNewText = build.betaBuildLocalizations.first?.whatsNew ?? ""
-                    }
+                    whatsNewText = whatsNew
+                    hasChanges = false
                 }
         }
+        .padding(.vertical, 4)
     }
 }
 
