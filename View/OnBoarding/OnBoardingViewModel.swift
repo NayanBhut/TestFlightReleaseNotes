@@ -14,33 +14,58 @@ class OnBoardingViewModel: ObservableObject {
     @Published var keyId: String = ""
     @Published var privateKey: String = ""
     @Published var isShowSpinner = false
+    @Published var errorMessage: String?
+    
+    var isFormValid: Bool {
+        !teamName.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !issuerID.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !keyId.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !privateKey.trimmingCharacters(in: .whitespaces).isEmpty
+    }
     
     func getAllApps(completion: @escaping ((Bool) -> Void)) {
-        let queryParams = ["include": "appStoreVersions",
-                           "filter[appStoreVersions.platform]": "IOS",
-                           "sort": "-name",
+        guard isFormValid else {
+            errorMessage = "Please fill in all required fields"
+            return
+        }
+        
+        let queryParams = [
+            "include": "appStoreVersions",
+            "filter[appStoreVersions.platform]": "IOS",
+            "sort": "-name"
         ]
         
-        guard let request = APIClient.shared.getRequest(header: getHeader(), api: .get(name: .getAllApps,queryParams: queryParams), apiVersion: .v1) else { return }
+        guard let request = APIClient.shared.getRequest(header: getHeader(), api: .get(name: .getAllApps, queryParams: queryParams), apiVersion: .v1) else {
+            errorMessage = "Failed to create request"
+            return
+        }
         
         isShowSpinner = true
+        errorMessage = nil
         
-        APIClient.shared.callAPI(with: request) {[weak self] result in
-            self?.isShowSpinner = false
+        APIClient.shared.callAPI(with: request) { [weak self] result in
+            guard let self = self else { return }
+            
+            self.isShowSpinner = false
+            
             switch result {
             case .success(let successData):
-                print("API Model getAllApps Data is ", successData)
-                
                 do {
                     let model = try getDecoder().decode([AppsData].self, from: successData)
-                    print("Model data is ", model)
-                    completion(true)
+                    
+                    if model.isEmpty {
+                        self.errorMessage = "No apps found for this team"
+                        completion(false)
+                    } else {
+                        self.errorMessage = nil
+                        completion(true)
+                    }
                 } catch {
-                    print("API Error is ")
+                    self.errorMessage = "Invalid response from server"
                     completion(false)
                 }
             case .failure(let failure):
-                print("API Error is ", failure)
+                self.errorMessage = "Authentication failed. Please check your credentials."
                 completion(false)
             }
         }

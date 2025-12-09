@@ -21,18 +21,24 @@ struct App_StoreApp: App {
 
 struct RootView: View {
     @EnvironmentObject var navigationManager: NavigationManager
+    @State private var showOnboarding = true
 
     var body: some View {
-        Group {
-            if navigationManager.isLoggedIn {
-                ContentView()
-                    .environmentObject(navigationManager)
-            } else {
+        ContentView()
+            .environmentObject(navigationManager)
+            .sheet(isPresented: $showOnboarding) {
                 OnBoardingView(isLoggedIn: $navigationManager.isLoggedIn)
+                    .environmentObject(navigationManager)
+                    .presentationCornerRadius(20)
+                    .presentationBackground(.thinMaterial)
             }
-        }
-        .onAppear {
-            navigationManager.checkLoginState()
-        }
+            .onAppear {
+                navigationManager.checkLoginState()
+                // Show onboarding sheet if not logged in
+                showOnboarding = !navigationManager.isLoggedIn
+            }
+            .onChange(of: navigationManager.isLoggedIn) { newValue in
+                showOnboarding = !newValue
+            }
     }
 }
