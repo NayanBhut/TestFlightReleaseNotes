@@ -36,43 +36,96 @@ struct BuildDetailsView: View {
     }()
     
     var body: some View {
-        VStack {
-            if viewModel.currentAppState == .appVersionBuildLoading {
-                SpinnerView()
-            } else if viewModel.currentAppState == .appVersionLoading || viewModel.currentAppState == .appListLoading {
-                EmptyView()
-            } else {
+        VStack(spacing: 0) {
+            // Show full screen loading when fetching builds
+            if !viewModel.isBuildsLoaded && viewModel.currentAppState == .appVersionBuildLoading {
                 HStack {
-                    Text("Builds").font(.title)
-                    Text("Total Builds: \(viewModel.meta?.paging.total ?? 0)")
-                    
-                    Button("Refresh") {
-                        viewModel.isBuildsLoaded = false
-                        viewModel.nextPageCursor = nil
-                        viewModel.meta = nil
-                        refreshBuildList?()
+                    Spacer()
+                    VStack(spacing: 16) {
+                        Spacer()
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Loading builds...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
                     }
-                    
-                    if viewModel.currentAppState == .appVersionBuildLoading {
-                        SpinnerView()
-                    }
-                }
-                
-                if viewModel.selectedVersion != nil {
-                    getBuildsList()
-                } else {
-                    Spacer().frame(height: 100)
-                    Text("Please select version above to get builds")
+                    Spacer()
                 }
             }
-            
-            if viewModel.nextPageCursor != nil {
-                Button("Load More") {
-                    loadMoreBuild?()
+            // Show message when no version is selected
+            else if viewModel.selectedVersion == nil {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Image(systemName: "cube.box")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("No Version Selected")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                        Text("Select a version above to view its builds")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Spacer()
+                    }
+                    .padding()
+                    Spacer()
+                }
+            }
+            // Show builds list
+            else {
+                VStack(spacing: 0) {
+                    // Header
+                    HStack {
+                        Text("Builds")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                        
+                        Spacer()
+                        
+                        if let total = viewModel.meta?.paging.total {
+                            Text("\(total) total")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Button(action: {
+                            viewModel.isBuildsLoaded = false
+                            viewModel.nextPageCursor = nil
+                            viewModel.meta = nil
+                            refreshBuildList?()
+                        }) {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    
+                    Divider()
+                    
+                    // Builds list
+                    getBuildsList()
+                    
+                    // Load more button
+                    if viewModel.nextPageCursor != nil {
+                        VStack {
+                            Divider()
+                            Button("Load More Builds") {
+                                loadMoreBuild?()
+                            }
+                            .buttonStyle(.bordered)
+                            .padding(.vertical, 12)
+                        }
+                    }
                 }
             }
         }
-        .padding()
     }
     
     private func formatDate(_ dateString: String?) -> String {
@@ -110,7 +163,24 @@ struct BuildDetailsView: View {
     }
     
     @ViewBuilder private func getBuildsList() -> some View {
-        if viewModel.isBuildsLoaded {
+        if viewModel.arrBuilds.isEmpty {
+            // Empty state
+            VStack(spacing: 16) {
+                Spacer()
+                Image(systemName: "tray")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+                Text("No Builds Available")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                Text("This version doesn't have any builds yet")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            }
+            .padding()
+        } else {
             List(viewModel.arrBuilds, id: \.id) { build in
                 BuildRowView(
                     buildId: build.id,
@@ -133,92 +203,7 @@ struct BuildDetailsView: View {
                     isUpdating: viewModel.isBuildUpdating(build.id)
                 )
             }
-        } else {
-            SpinnerView()
         }
-    }
-}
-
-// Separate view to handle TextEditor state properly
-struct BuildRowView: View {
-    let buildId: String
-    let version: String
-    let uploadedDate: String
-    let processingState: String
-    let isExpired: Bool
-    let whatsNew: String
-    let localizationId: String?
-    let selectedVersionString: String
-    let formatDate: (String?) -> String
-    let formatCustomDate: (String) -> String?
-    let getBuildStatus: (String, Bool) -> (String, Color)
-    let onTextChange: (String) -> Void
-    let onUpdate: () -> Void
-    let isUpdating: Bool
-    
-    @State private var whatsNewText: String = ""
-    @State private var hasChanges: Bool = false
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(selectedVersionString)(\(version))")
-                    .font(.headline)
-                
-                Text(formatDate(uploadedDate))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                let status = getBuildStatus(processingState, isExpired)
-                Text(status.0)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(status.1.opacity(0.2))
-                    .foregroundColor(status.1)
-                    .cornerRadius(4)
-                
-                if let customDate = formatCustomDate(uploadedDate) {
-                    Text(customDate)
-                        .font(.caption)
-                        .foregroundColor(.green)
-                }
-                
-                Spacer()
-                
-                if isUpdating {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                } else {
-                    Button("Update") {
-                        onUpdate()
-                        hasChanges = false
-                    }
-                    .disabled(!hasChanges || whatsNewText.isEmpty)
-                }
-            }
-            
-            TextEditor(text: $whatsNewText)
-                .font(.body)
-                .frame(minHeight: 100, maxHeight: 150)
-                .padding(8)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(hasChanges ? Color.blue.opacity(0.5) : Color.gray.opacity(0.3), lineWidth: hasChanges ? 2 : 1)
-                )
-                .scrollContentBackground(.hidden)
-                .onChange(of: whatsNewText) { newValue in
-                    hasChanges = newValue != whatsNew
-                    onTextChange(newValue)
-                }
-                .onAppear {
-                    whatsNewText = whatsNew
-                    hasChanges = false
-                }
-        }
-        .padding(.vertical, 4)
     }
 }
 

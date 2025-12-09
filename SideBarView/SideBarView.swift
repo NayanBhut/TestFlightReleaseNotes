@@ -127,34 +127,20 @@ struct SideBarView: View {
         VStack {
             if viewModel.isAppListLoaded {
                 List(viewModel.arrApps, id: \.id) { app in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("\(app.name ?? "")")
-                                .foregroundColor(colorScheme == .dark ? .white : .black)
-                            Text("\(app.currentLiveVersion.1) : \(app.currentState)")
-                                .foregroundColor(.red)
-                                .fontWeight(.bold)
-                            Text("\(app.bundleId ?? "")")
-                                .foregroundStyle(
-                                    getAppFontStyle(isSelectedApp: app.isSelected))
+                    AppRowView(app: app, isSelected: app.isSelected)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            viewModel.setSelectedAppAndGetVersions(app: app)
                         }
-                        .padding(.leading, 10)
-                        Spacer()
-                    }
-                    .padding(.vertical, 2)
-                    .border(app.isSelected ? Color.green : Color.clear)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        viewModel.setSelectedAppAndGetVersions(app: app) // Select app and call api to get Builds
-                    }
                 }
-                Spacer()
+                .listStyle(.sidebar)
+                
                 if viewModel.appMeta?.paging.nextCursor != nil {
-                    Button(action: {
+                    Button("Load More Apps") {
                         viewModel.getiOSApps(nextPage: viewModel.appMeta?.paging.nextCursor)
-                    }) {
-                        Text("Load More Apps")
                     }
+                    .buttonStyle(.bordered)
+                    .padding(.vertical, 8)
                 }
             } else {
                 SpinnerView()
@@ -162,15 +148,83 @@ struct SideBarView: View {
             Spacer()
         }
     }
+}
+
+struct AppRowView: View {
+    let app: AppsData
+    let isSelected: Bool
     
-    private func getAppFontStyle(isSelectedApp: Bool) -> any ShapeStyle {
-        let colors: [Color] = isSelectedApp ? [.red] : [.blue]
-        
-        return LinearGradient(
-            colors: colors,
-            startPoint: .top,
-            endPoint: .bottom
+    var body: some View {
+        HStack(spacing: 12) {
+            // Selection indicator
+            RoundedRectangle(cornerRadius: 2)
+                .fill(isSelected ? Color.accentColor : Color.clear)
+                .frame(width: 3)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(app.name ?? "Unknown App")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                HStack(spacing: 8) {
+                    Text(app.currentLiveVersion.1)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text("•")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text(app.currentState)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(getStateColor(app.currentState))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(getStateColor(app.currentState).opacity(0.15))
+                        .cornerRadius(4)
+                }
+                
+                Text(app.bundleId ?? "")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.accentColor)
+                    .font(.system(size: 16))
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+        )
+    }
+    
+    private func getStateColor(_ state: String) -> Color {
+        switch state.uppercased() {
+        case "READY_FOR_SALE", "READY FOR SALE":
+            return .green
+        case "PENDING_DEVELOPER_RELEASE", "PENDING DEVELOPER RELEASE":
+            return .orange
+        case "IN_REVIEW", "IN REVIEW":
+            return .blue
+        case "WAITING_FOR_REVIEW", "WAITING FOR REVIEW":
+            return .yellow
+        case "REJECTED":
+            return .red
+        default:
+            return .secondary
+        }
     }
 }
 

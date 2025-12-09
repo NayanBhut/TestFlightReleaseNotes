@@ -15,78 +15,109 @@ struct DetailView: View {
     }
     
     var body: some View {
-        VStack {
-            Text("DetailView \(viewModel.arrVersions.count)")
-            Text("Versions")
-                .font(.title)
-            loadVersion()
-            getBuildList()
-            Spacer()
+        Group {
+            if viewModel.selectedApp != nil && viewModel.arrVersions.isEmpty && (viewModel.currentAppState == .appVersionLoading) {
+                // Full screen loading state
+                VStack(spacing: 16) {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(1.2)
+                    Text("Loading versions...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Header section
+                    if viewModel.selectedApp != nil {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Versions")
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                
+                                Spacer()
+                                
+                                Text("\(viewModel.arrVersions.count) available")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            loadVersion()
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        
+                        Divider()
+                    }
+                    
+                    getBuildList()
+                    Spacer()
+                }
+            }
         }
     }
     
     @ViewBuilder private func loadVersion() -> some View {
-        if ((viewModel.currentAppState == CurrentAppState.appVersionLoading) || (viewModel.currentAppState == CurrentAppState.appListLoading)) {
-            SpinnerView()
+        if viewModel.currentAppState == .appVersionLoading || viewModel.currentAppState == .appListLoading {
+            HStack {
+                Spacer()
+                ProgressView()
+                    .scaleEffect(0.8)
+                Spacer()
+            }
+            .padding(.vertical, 8)
         } else {
             versionView()
         }
     }
     
     private func versionView() -> some View {
-        HStack {
-            versionList()
-        }
-        .padding(15)
-        .onAppear {
-            print("Selected App Name is \n", viewModel.selectedApp?.name ?? "")
-            print("Total Version is \n", viewModel.arrVersions.count)
-        }
-    }
-    
-    private func versionList() -> some View {
-        ForEach(viewModel.arrVersions, id: \.id , content: { version in
-            VStack {
-                versionsNumber(version: version)
-                    .onTapGesture {
-                        viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
-                    }
-            }.background(version.isSelected ? Color.purple : Color.clear)
-        })
-    }
-    
-    private func versionsNumber(version: PreReleaseVersionsModel) -> some View {
-        Text("\(version.version ?? "")")
-            .padding(.vertical, 5)
-            .padding(.horizontal, 10)
-            .background(version.isSelected ? Color.purple : Color.white)
-            .foregroundColor(Color.black)
-    }
-    
-    @ViewBuilder private func getBuildList() -> some View {
-        if viewModel.selectedApp != nil {
-            BuildDetailsView(viewModel: viewModel, refreshBuildList:  {
-                guard let version = viewModel.selectedVersion else { return }
-                viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
-            }, loadMoreBuild: {
-                guard let nextPage = viewModel.nextPageCursor, let version = viewModel.selectedVersion else { return }
-                viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
-            })
-        } else {
-            if viewModel.currentAppState == ._none {
-                Text("Please select App Version from Side Bar")
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(viewModel.arrVersions, id: \.id) { version in
+                    VersionChip(version: version, isSelected: version.isSelected)
+                        .onTapGesture {
+                            viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
+                        }
+                }
             }
         }
     }
     
-    func getAppFontStyle(isSelectedApp: Bool) -> any ShapeStyle {
-        let colors: [Color] = isSelectedApp ? [.white] : [.black]
-        
-        return LinearGradient(
-            colors: colors,
-            startPoint: .top,
-            endPoint: .bottom
-        )
+    @ViewBuilder private func getBuildList() -> some View {
+        if viewModel.selectedApp != nil {
+            BuildDetailsView(
+                viewModel: viewModel,
+                refreshBuildList: {
+                    guard let version = viewModel.selectedVersion else { return }
+                    viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
+                },
+                loadMoreBuild: {
+                    guard let nextPage = viewModel.nextPageCursor,
+                          let version = viewModel.selectedVersion else { return }
+                    viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
+                }
+            )
+        } else {
+            VStack(spacing: 16) {
+                Spacer()
+                Image(systemName: "app.badge")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+                Text("No App Selected")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                Text("Select an app from the sidebar to view versions and builds")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            }
+            .padding()
+        }
     }
 }
 
