@@ -104,78 +104,7 @@ struct BuildDetailsView: View {
     @ViewBuilder private func getBuildsList() -> some View {
         if viewModel.isBuildsLoaded {
             List(viewModel.arrBuilds, id: \.id) { build in
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("\(viewModel.selectedVersion?.version ?? "")(\(build.version ?? ""))")
-                        Text("\(getDate(dateString: build.uploadedDate))")
-                        Text(getCurrentBuildColor(processingState: build.processingState ?? "", isExpired: build.expired ?? false).0)
-                            .foregroundColor(getCurrentBuildColor(processingState: build.processingState ?? "", isExpired: build.expired ?? false).1)
-                        Text("\(convertDate(string:build.uploadedDate?.description ?? "") ?? "")").foregroundColor(.green)
-                        
-                        if viewModel.currentAppState == .appLocalizationLoading {
-                            SpinnerView()
-                        } else {
-                            Text("Update").onTapGesture {
-                                guard let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}),
-                                      let betaBuildLocalization = self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations.first,
-                                      let localization = betaBuildLocalization.whatsNew else { return }
-                                viewModel.createOrUpdate(buildLocalization: betaBuildLocalization, localization: localization, buildIndex:buildIndex)
-                            }
-                        }
-                    }
-                    
-                    //                GeometryReader { proxy in
-                    //                    VStack {
-                    //                        Text("\(proxy.frame(in: .global).width)")
-                    //                        ScrollView {
-                    //                            LazyHGrid(rows: rows, spacing: 20) {
-                    //                                ForEach(build.betaBuildLocalizations?.resources as? [BuildLocalizations] ?? []) { item in
-                    //                                    TextEditor(text: .init(
-                    //                                        get: { (build.betaBuildLocalizations?.resources[0] as? BuildLocalizations)?.whatsNew ?? ""},
-                    //                                        set: { text in
-                    //                                            if let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}) {
-                    //                                                (self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations?.resources[0] as? BuildLocalizations)?.whatsNew = text
-                    //                                            }
-                    //                                        }
-                    //                                    ))
-                    //                                    .scrollContentBackground(.hidden) // <- Hide it
-                    //                                    .background(.red) // To see this
-                    //                                }
-                    //                            }
-                    //                        }
-                    //                    }
-                    //                }.frame(height: 200)
-                    
-                    TextEditor(text: .init(
-                        get: {
-                            if build.betaBuildLocalizations.count > 0 {
-                                return build.betaBuildLocalizations.first?.whatsNew ?? ""
-                            }else {
-                                return ""
-                            }
-                        },
-                        set: { text in
-                            if let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}) {
-                                if self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations.count > 0 {
-                                    self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations[0].whatsNew = text
-                                }else {
-                                    let buildID = self.viewModel.arrBuilds[buildIndex].id
-                                    let betaBuildLocalization = BuildLocalizationsModel(id:buildID, locale: "en-US", whatsNew: text)
-                                    self.viewModel.arrBuilds[buildIndex].betaBuildLocalizations.append(betaBuildLocalization)
-                                }
-                            }
-                        }
-                    ))
-                    .frame(height: 50)
-                    .padding(.vertical, 5)
-                    .cornerRadius(10.0)
-                    .border(Color.white)
-                    .scrollContentBackground(.hidden)
-                    .background(.clear)
-                    
-                }.onAppear {
-                    //                getBuidsData?(build.id)
-                }
+                BuildRowView(build: build, viewModel: viewModel, getDate: getDate, getCurrentBuildColor: getCurrentBuildColor, convertDate: convertDate)
             }
         } else {
             SpinnerView()
@@ -193,6 +122,68 @@ struct BuildDetailsView: View {
         return formatter.string(from: date)
     }
     
+}
+
+// Separate view to handle TextEditor state properly
+struct BuildRowView: View {
+    let build: BuildsModel
+    @ObservedObject var viewModel: DetailViewModel
+    let getDate: (String?) -> String
+    let getCurrentBuildColor: (String, Bool) -> (String, Color)
+    let convertDate: (String, String, String) -> String?
+    
+    @State private var whatsNewText: String = ""
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("\(viewModel.selectedVersion?.version ?? "")(\(build.version ?? ""))")
+                Text("\(getDate(build.uploadedDate))")
+                Text(getCurrentBuildColor(build.processingState ?? "", build.expired ?? false).0)
+                    .foregroundColor(getCurrentBuildColor(build.processingState ?? "", build.expired ?? false).1)
+                Text("\(convertDate(build.uploadedDate?.description ?? "", "yyyy-MM-dd HH:mm:ss Z", "dd MMM HH:mm") ?? "")").foregroundColor(.green)
+                
+                if viewModel.currentAppState == .appLocalizationLoading {
+                    SpinnerView()
+                } else {
+                    Text("Update").onTapGesture {
+                        guard let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}),
+                              let betaBuildLocalization = viewModel.arrBuilds[buildIndex].betaBuildLocalizations.first,
+                              let localization = betaBuildLocalization.whatsNew else { return }
+                        viewModel.createOrUpdate(buildLocalization: betaBuildLocalization, localization: localization, buildIndex:buildIndex)
+                    }
+                }
+            }
+            
+            TextEditor(text: $whatsNewText)
+                .font(.body)
+                .frame(minHeight: 100, maxHeight: 150)
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+                .scrollContentBackground(.hidden)
+                .onChange(of: whatsNewText) { newValue in
+                    if let buildIndex = viewModel.arrBuilds.firstIndex(where: {$0.id == build.id}) {
+                        if viewModel.arrBuilds[buildIndex].betaBuildLocalizations.count > 0 {
+                            viewModel.arrBuilds[buildIndex].betaBuildLocalizations[0].whatsNew = newValue
+                        } else {
+                            let buildID = viewModel.arrBuilds[buildIndex].id
+                            let betaBuildLocalization = BuildLocalizationsModel(id: buildID, locale: "en-US", whatsNew: newValue)
+                            viewModel.arrBuilds[buildIndex].betaBuildLocalizations.append(betaBuildLocalization)
+                        }
+                    }
+                }
+                .onAppear {
+                    if build.betaBuildLocalizations.count > 0 {
+                        whatsNewText = build.betaBuildLocalizations.first?.whatsNew ?? ""
+                    }
+                }
+        }
+    }
 }
 
 #Preview {
