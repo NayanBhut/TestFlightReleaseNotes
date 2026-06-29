@@ -23,21 +23,9 @@ final class APIClient {
                 return
             }
             
-            print("\n🟢🟢🟢 API Details ❇️❇️❇️")
-            print("\nAPI URL: \(request)\n")
-            print("API Method: \(request.httpMethod ?? "GET") Status Code: \(httpResponse.statusCode)\n")
-            print("API Header:\n\(String(describing: request.allHTTPHeaderFields))\n")
-            print("Response Header:\n \(httpResponse.allHeaderFields)")
-            
-            // Print request body
-            if let body = request.httpBody, let json = body.getJsonValue() {
-                json.printJson()
-            }
-            
-            // Print api request
-            if let data = data, let jsonResponse = data.getJsonValue() {
-                jsonResponse.printJsonResponse()
-            }
+            #if DEBUG
+            print("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+            #endif
             
             completion(data, nil)
         }
@@ -132,15 +120,21 @@ extension Dictionary {
     }
 
     func printJson() {
+        #if DEBUG
         print("======= API Body Params:======= \n\(json)\n\n")
+        #endif
     }
 
     func printJsonResponse() {
+        #if DEBUG
         print("======= API Response:======= \n\(json)\n=====================\n\n")
+        #endif
     }
 
     func printHeader() {
+        #if DEBUG
         print("======= API Header:======= \n\(json)\n")
+        #endif
     }
 }
 
@@ -154,7 +148,9 @@ extension Data {
                 }
             }
         } catch {
+            #if DEBUG
             print("❌ \(String(data: self, encoding: .utf8) ?? error.localizedDescription)")
+            #endif
         }
         return nil
     }

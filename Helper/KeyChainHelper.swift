@@ -57,10 +57,7 @@ final class CredentialStorage {
             let encoder = JSONEncoder()
             let data = try encoder.encode(credential)
             CredentialStorage.keychain.set(data, forKey: teamName, withAccess: .accessibleWhenUnlocked)
-            print("Encoded Data: \(data)")
-        } catch {
-            print("Error encoding credential: \(error)")
-        }
+        } catch {}
     }
     
     func getCredential(key: String) -> Credential? {
@@ -69,9 +66,7 @@ final class CredentialStorage {
                 let decoder = JSONDecoder()
                 return try decoder.decode(Credential.self, from: data)
             }
-        } catch {
-            print("Error encoding credential: \(error)")
-        }
+        } catch {}
         
         return nil
     }
