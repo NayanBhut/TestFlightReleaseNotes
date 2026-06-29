@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Datadog/swift-jsonapi",
       "state" : {
-        "revision" : "d3b95e724b0f9259c6ca659fedae246eaca0a3e2",
-        "version" : "0.1.2"
+        "revision" : "c6f790c16dc4e0bcdfd79b0a913000ca518cca33",
+        "version" : "0.1.5"
       }
     },
     {
