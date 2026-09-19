@@ -22,13 +22,12 @@ final class CredentialStorage {
     
     private init() {
         if selectedTeam == nil {
-            setDefaultTeam()
+            restoreDefaultTeam()
         }
     }
     
     var getTeams: [String] {
-        return KeychainHelper.getAllKeysFromKeychain()
-            .filter({ $0.contains("App_Store_Connect_API_")})
+        return getAllKeysFromKeychain()
             .map { $0.replacingOccurrences(of: "App_Store_Connect_API_", with: "") }
     }
     
@@ -73,15 +72,39 @@ final class CredentialStorage {
     
     @discardableResult
     func deleteCredential(for key: String) -> Bool {
-        if getCredential(key: key) != nil {
-            CredentialStorage.keychain.delete(key)
-        }
+        guard getCredential(key: key) != nil else { return false }
+        return CredentialStorage.keychain.delete(key)
+    }
+
+    @discardableResult
+    func restoreDefaultTeam() -> Bool {
+        let teams = getTeams
+        guard !teams.isEmpty else { return false }
+        changeTeam = teams.first
         return true
     }
-    
-    @discardableResult
-    func setDefaultTeam() -> Bool {
-        changeTeam = getTeams.first
-        return getTeams.isEmpty
+}
+
+extension CredentialStorage {
+    private func getAllKeysFromKeychain() -> [String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: false
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+
+        return items.compactMap { item -> String? in
+            if let account = item[kSecAttrAccount as String] as? String {
+                return account
+            }
+            return nil
+        }
+        .filter { $0.hasPrefix("App_Store_Connect_API_") }
     }
 }
