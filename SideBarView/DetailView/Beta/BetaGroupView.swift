@@ -118,9 +118,12 @@ struct BetaGroupView: View {
 
     private var groupsList: some View {
         List(betaViewModel.groups, id: \.id) { group in
+            // Row highlighting derives from the view model's selection —
+            // no duplicated isSelected flag on the decoded model.
+            let isSelected = betaViewModel.selectedGroup?.id == group.id
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(group.isSelected ? Color.accentColor : Color.clear)
+                    .fill(isSelected ? Color.accentColor : Color.clear)
                     .frame(width: 3)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(group.name ?? "Unnamed group")
@@ -145,7 +148,7 @@ struct BetaGroupView: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                if group.isSelected {
+                if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.accentColor)
                 }
@@ -153,7 +156,7 @@ struct BetaGroupView: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 6)
             .background(RoundedRectangle(cornerRadius: 8)
-                .fill(group.isSelected ? Color.accentColor.opacity(0.1) : Color.clear))
+                .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear))
             .contentShape(Rectangle())
             .onTapGesture { betaViewModel.selectGroup(group) }
         }
@@ -311,7 +314,7 @@ struct BetaGroupView: View {
             } else {
                 Button("Search") { betaViewModel.searchTesterByEmail() }
                     .buttonStyle(.bordered)
-                    .disabled(!EmailValidator.isValid(betaViewModel.searchText))
+                    .disabled(!EmailValidator.isValid(EmailValidator.normalized(betaViewModel.searchText)))
             }
         }
     }
@@ -332,14 +335,23 @@ struct BetaGroupView: View {
                     }
                     Spacer()
                     let inGroup = betaViewModel.testers.contains { $0.id == result.id }
-                    Text(inGroup ? "In this group" : "Not in this group")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background((inGroup ? Color.green : Color.orange).opacity(0.15))
-                        .foregroundColor(inGroup ? .green : .orange)
-                        .cornerRadius(4)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(inGroup ? "In this group" : "Not in this group")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background((inGroup ? Color.green : Color.orange).opacity(0.15))
+                            .foregroundColor(inGroup ? .green : .orange)
+                            .cornerRadius(4)
+                        if !inGroup {
+                            Button("Add to this group") {
+                                betaViewModel.addTestersToGroup(testerIds: [result.id])
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(betaViewModel.selectedGroup == nil)
+                        }
+                    }
                 }
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.06)))
@@ -387,7 +399,7 @@ struct BetaGroupView: View {
                     showInviteSheet = false
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!EmailValidator.isValid(inviteEmail))
+                .disabled(!EmailValidator.isValid(EmailValidator.normalized(inviteEmail)))
             }
         }
         .padding(20)
@@ -427,10 +439,13 @@ struct BetaGroupView: View {
                     }
 
                     Button("Assign to group") {
-                        betaViewModel.assignBuildToGroup(buildId: buildIdForActions)
+                        if let build = builds.first(where: { $0.id == buildIdForActions }) {
+                            betaViewModel.assignBuildToGroup(build: build)
+                        }
                     }
                     .buttonStyle(.bordered)
                     .disabled(buildIdForActions.isEmpty ||
+                              betaViewModel.updatingBuildId == buildIdForActions ||
                               betaViewModel.viewState == .betaAssignmentUpdating)
                 }
 

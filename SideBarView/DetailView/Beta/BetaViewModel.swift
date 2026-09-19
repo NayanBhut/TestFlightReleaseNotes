@@ -157,12 +157,8 @@ final class BetaViewModel: ObservableObject {
 
     func selectGroup(_ group: BetaGroupModel) {
         clearSearch()
-        groups = groups.map {
-            var copy = $0
-            copy.isSelected = $0.id == group.id
-            return copy
-        }
         // Re-tapping the already-loaded group shouldn't refetch testers.
+        // Row highlighting is derived from selectedGroup?.id in the view.
         guard group.id != selectedGroup?.id || !isTestersLoaded else { return }
         selectedGroup = group
         // Clear the previous group's testers so stale rows never show while loading.
@@ -203,8 +199,16 @@ final class BetaViewModel: ObservableObject {
                         self.fetchTestersViaFilter(groupId: groupId)
                     }
                 case .failure(let error):
-                    self.testers = []
-                    self.presentError(error)
+                    // Nested relationship endpoints may 404 for some groups;
+                    // fall back to the filter endpoint instead of erroring out.
+                    if error.statusCode == 404 {
+                        self.isTestersLoaded = false
+                        self.viewState = .betaTestersLoading
+                        self.fetchTestersViaFilter(groupId: groupId)
+                    } else {
+                        self.testers = []
+                        self.presentError(error)
+                    }
                 }
             }
         }
@@ -355,12 +359,12 @@ final class BetaViewModel: ObservableObject {
         }
     }
 
-    func assignBuildToGroup(buildId: String) {
+    func assignBuildToGroup(build: BuildsModel) {
         guard let groupId = selectedGroup?.id else {
             presentMessage("Select a beta group first.")
             return
         }
-        guard let body = BetaRelationshipBody.buildLinkage(ids: [buildId]) else {
+        guard let body = BetaRelationshipBody.buildLinkage(ids: [build.id]) else {
             presentMessage(APIError.jsonConversionFailure.details)
             return
         }
@@ -368,7 +372,7 @@ final class BetaViewModel: ObservableObject {
             api: .post(name: .getBetaGroups, body: body, path: "\(groupId)/relationships/builds"),
             apiVersion: .v1) else { return }
 
-        updatingBuildId = buildId
+        updatingBuildId = build.id
         viewState = .betaAssignmentUpdating
         let stateToken = viewState
         APIClient.shared.callAPI(with: request) { [weak self] result in
@@ -378,8 +382,16 @@ final class BetaViewModel: ObservableObject {
                 if self.viewState == stateToken { self.viewState = ._none }
                 switch result {
                 case .success(let data):
-                    if let msg = self.serverMessage(from: data) {
-                        self.presentMessage(msg)
+                    let serverError = self.serverMessage(from: data)
+                    if let serverError {
+                        self.presentMessage(serverError)
+                    } else {
+                        // Keep the group row's builds relationship in sync.
+                        if let groupIndex = self.groups.firstIndex(where: { $0.id == groupId }),
+                           !self.groups[groupIndex].builds.contains(where: { $0.id == build.id }) {
+                            self.groups[groupIndex].builds.append(build)
+                        }
+                        self.presentMessage("Build \(build.version ?? "") assigned to the group.")
                     }
                 case .failure(let error):
                     self.presentError(error)
@@ -423,19 +435,24 @@ final class BetaViewModel: ObservableObject {
         hasSearched = true
         searchResult = nil
 
+        let searchedAppId = currentAppId
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.isSearching = false
-            switch result {
-            case .success(let data):
-                do {
-                    let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
-                    self.searchResult = model.data.first
-                } catch {
-                    self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+            Task { @MainActor in
+                guard let self else { return }
+                self.isSearching = false
+                // Drop stale results if the app or the query changed mid-flight.
+                guard self.currentAppId == searchedAppId, self.searchText == query else { return }
+                switch result {
+                case .success(let data):
+                    do {
+                        let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
+                        self.searchResult = model.data.first
+                    } catch {
+                        self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                    }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -539,6 +556,10 @@ final class BetaViewModel: ObservableObject {
                         let submission = try getDecoder().decode(BetaAppReviewSubmissionModel.self, from: data)
                         self.reviewStates[buildId] = submission.betaReviewState ?? "UNKNOWN"
                     } catch {
+                        // JSONAPIDecoder supports bare single-resource decoding
+                        // (it unwraps the {"data": {...}} envelope itself), so a
+                        // decode failure here means the server returned a null
+                        // resource — i.e. no submission exists for this build.
                         self.reviewStates[buildId] = "NO_SUBMISSION"
                     }
                 case .failure(let error):

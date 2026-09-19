@@ -27,8 +27,6 @@ struct BetaGroupModel: Equatable {
     @ResourceAttribute var autoNotifyEnabled: Bool?
     @ResourceRelationship var betaTesters: [BetaTesterModel]
     @ResourceRelationship var builds: [BuildsModel]
-
-    var isSelected = false
 }
 
 @ResourceWrapper(type: "betaTesters")
@@ -79,10 +77,18 @@ enum EmailValidator {
     private static let regex = try? NSRegularExpression(
         pattern: #"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"#)
 
+    /// Trims before validating — both view bindings and the view model must
+    /// agree, or a pasted email with leading/trailing spaces keeps buttons
+    /// disabled with no explanation.
+    static func normalized(_ email: String) -> String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func isValid(_ email: String) -> Bool {
         guard let regex else { return false }
-        let range = NSRange(email.startIndex..<email.endIndex, in: email)
-        return regex.firstMatch(in: email, options: [], range: range) != nil
+        let trimmed = normalized(email)
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        return regex.firstMatch(in: trimmed, options: [], range: range) != nil
     }
 }
 

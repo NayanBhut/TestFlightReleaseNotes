@@ -144,6 +144,8 @@ struct DetailView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Detail sections")
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
 

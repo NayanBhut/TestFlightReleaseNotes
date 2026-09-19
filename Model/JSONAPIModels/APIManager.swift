@@ -36,16 +36,17 @@ final class APIClient {
 
             #if DEBUG
             apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+            // Bodies and queries carry PII (tester emails/names): redact emails
+            // and cap size. Data is sliced *before* String conversion so multi-MB
+            // responses don't allocate a full string just to be truncated.
             if let url = request.url, let query = url.query {
-                apiLogger.debug("[API] Query: \(query)")
+                apiLogger.debug("[API] Query: \(Self.redactingPII(in: query))")
             }
-            // Bodies may contain PII (tester emails/names); cap what lands in
-            // logs that can end up in bug reports or screen recordings.
-            if let body = request.httpBody, let bodyString = String(data: body, encoding: .utf8) {
-                apiLogger.debug("[API] Request body: \(Self.truncatedForLog(bodyString))")
+            if let body = request.httpBody {
+                apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body))")
             }
-            if let data = data, let responseString = String(data: data, encoding: .utf8) {
-                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.truncatedForLog(responseString))")
+            if let data = data {
+                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data))")
             }
             #endif
 
@@ -59,11 +60,25 @@ final class APIClient {
         return task
     }
     
-    /// DEBUG logs may be shared in bug reports or screen recordings:
-    /// cap payload size instead of dumping entire responses.
-    private static func truncatedForLog(_ string: String, maxLength: Int = 2000) -> String {
-        guard string.count > maxLength else { return string }
-        return String(string.prefix(maxLength)) + "…(truncated)"
+    /// DEBUG logs may end up in bug reports or screen recordings: redact
+    /// emails (PII) and cap size before logging request/response bodies.
+    private static let piiRedactionRegex = try? NSRegularExpression(
+        pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
+
+    private static func redactingPII(in text: String) -> String {
+        guard let piiRedactionRegex else { return text }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return piiRedactionRegex.stringByReplacingMatches(
+            in: text, options: [], range: range, withTemplate: "[redacted]")
+    }
+
+    private static func sanitizedBody(_ data: Data, maxLength: Int = 2000) -> String {
+        let isTruncated = data.count > maxLength
+        let slice = isTruncated ? data.prefix(maxLength) : data[...]
+        guard let text = String(data: slice, encoding: .utf8) else {
+            return "<\(data.count) bytes, non-UTF-8>"
+        }
+        return redactingPII(in: text) + (isTruncated ? "…(truncated)" : "")
     }
 
     func callAPI(with request: URLRequest) async throws -> Data {
