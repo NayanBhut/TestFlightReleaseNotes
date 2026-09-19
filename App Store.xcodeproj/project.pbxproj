@@ -19,7 +19,6 @@
 		8DB5768F2DD746A2005A9CA0 /* OnBoardingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DB5768E2DD7469F005A9CA0 /* OnBoardingViewModel.swift */; };
 		8DB576912DD7535E005A9CA0 /* NavigationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DB576902DD7535E005A9CA0 /* NavigationManager.swift */; };
 		8DBB60852DD3865500111A9E /* APIManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBB60842DD3864F00111A9E /* APIManager.swift */; };
-		CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */; };
 		CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */; };
 		CD616D8A2A8F62A5004ADF44 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CD616D892A8F62A5004ADF44 /* Assets.xcassets */; };
 		CD616D8D2A8F62A5004ADF44 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CD616D8C2A8F62A5004ADF44 /* Preview Assets.xcassets */; };
@@ -48,7 +47,6 @@
 		8DB5768E2DD7469F005A9CA0 /* OnBoardingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnBoardingViewModel.swift; sourceTree = "<group>"; };
 		8DB576902DD7535E005A9CA0 /* NavigationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationManager.swift; sourceTree = "<group>"; };
 		8DBB60842DD3864F00111A9E /* APIManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIManager.swift; sourceTree = "<group>"; };
-		CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigs.swift; sourceTree = "<group>"; };
 		CD616D822A8F62A4004ADF44 /* App Store.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "App Store.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App_StoreApp.swift; sourceTree = "<group>"; };
 		CD616D892A8F62A5004ADF44 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -106,7 +104,6 @@
 			children = (
 				8D00F61C2DCB34A7004CCA36 /* Helper */,
 				CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */,
-				CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */,
 				8DB576902DD7535E005A9CA0 /* NavigationManager.swift */,
 				CD9DD4B52BE3EBC300820E2F /* JWT */,
 				CD9DD4952BE3DDE300820E2F /* ContentView */,
@@ -308,7 +305,6 @@
 				CD9DD4C62BE3ECE000820E2F /* JWTDecoder.swift in Sources */,
 				CD6C7C2A2BE7AB4E0004C24B /* BuildDetailsView.swift in Sources */,
 				CD9DD4C72BE3ECE000820E2F /* JWT.swift in Sources */,
-				CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */,
 				8DB576912DD7535E005A9CA0 /* NavigationManager.swift in Sources */,
 				CDDEC3052BD7C1B400D73E95 /* SpinnerView.swift in Sources */,
 				CD9DD49D2BE3DE8100820E2F /* SideBarView.swift in Sources */,

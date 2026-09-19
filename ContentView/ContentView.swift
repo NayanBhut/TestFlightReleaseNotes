@@ -21,7 +21,6 @@ struct ContentView: View {
     }
     
     var body: some View {
-        let _ = Self._printChanges()
         ZStack {
             NavigationSplitView {
                 SideBarView(viewModel: viewModel, isAddNewTeam: $showAlertView, isNewAccountAdded: $isNewAccountAdded)
