@@ -467,8 +467,13 @@ final class BetaViewModel: ObservableObject {
                 } catch {
                     self.reviewStates[buildId] = "NO_SUBMISSION"
                 }
-            case .failure:
-                self.reviewStates[buildId] = "UNKNOWN"
+            case .failure(let error):
+                // 404 = no submission exists yet; treat as not submitted.
+                if error.statusCode == 404 {
+                    self.reviewStates[buildId] = "NO_SUBMISSION"
+                } else {
+                    self.reviewStates[buildId] = "UNKNOWN"
+                }
             }
         }
     }

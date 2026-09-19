@@ -16,14 +16,14 @@ struct DetailView: View {
         case builds = "Builds"
         case betaGroups = "Beta Groups"
     }
-    
+
     init(viewModel: DetailViewModel) {
         self.viewModel = viewModel
     }
-    
+
     var body: some View {
         Group {
-            if viewModel.selectedApp != nil && viewModel.arrVersions.isEmpty && (viewModel.currentAppState == .appVersionLoading) {
+            if viewModel.selectedApp != nil && viewModel.versionsState.isLoading && viewModel.arrVersions.isEmpty {
                 // Full screen loading state
                 VStack(spacing: 16) {
                     Spacer()
@@ -43,32 +43,35 @@ struct DetailView: View {
                                 Text("Versions")
                                     .font(.title2)
                                     .fontWeight(.semibold)
-                                
+
                                 Spacer()
-                                
+
                                 Text("\(viewModel.arrVersions.count) available")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
+
                             loadVersion()
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
                         .background(Color(nsColor: .controlBackgroundColor))
-                        
+
                         Divider()
                     }
-                    
+
                     getBuildList()
                     Spacer()
                 }
             }
         }
     }
-    
+
     @ViewBuilder private func loadVersion() -> some View {
-        if viewModel.currentAppState == .appVersionLoading || viewModel.currentAppState == .appListLoading {
+        switch viewModel.versionsState {
+        case .idle:
+            versionEmptyMessage(title: "Versions", message: "Select an app to load versions")
+        case .loading:
             HStack {
                 Spacer()
                 ProgressView()
@@ -76,15 +79,37 @@ struct DetailView: View {
                 Spacer()
             }
             .padding(.vertical, 8)
-        } else {
-            versionView()
+        case .loaded(let versions):
+            if versions.isEmpty {
+                versionEmptyMessage(title: "No Versions", message: "This app has no pre-release versions")
+            } else {
+                versionView(versions: versions)
+            }
+        case .empty:
+            versionEmptyMessage(title: "No Versions", message: "This app has no pre-release versions")
+        case .error(let message):
+            HStack {
+                Image(systemName: "wifi.exclamationmark")
+                    .foregroundColor(.secondary)
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                Spacer()
+                Button("Retry") {
+                    viewModel.retryVersions()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(.vertical, 8)
         }
     }
-    
-    private func versionView() -> some View {
+
+    private func versionView(versions: [PreReleaseVersionsModel]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(viewModel.arrVersions, id: \.id) { version in
+                ForEach(versions, id: \.id) { version in
                     VersionChip(version: version, isSelected: version.isSelected)
                         .onTapGesture {
                             viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
@@ -93,7 +118,23 @@ struct DetailView: View {
             }
         }
     }
-    
+
+    private func versionEmptyMessage(title: String, message: String) -> some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 8)
+    }
+
     @ViewBuilder private func getBuildList() -> some View {
         if viewModel.selectedApp != nil {
             Picker("", selection: $selectedTab) {

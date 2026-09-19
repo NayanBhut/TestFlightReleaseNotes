@@ -14,7 +14,7 @@ struct SideBarView: View {
     @Binding var isAddNewTeam: Bool
     @Binding var isNewAccountAdded: Bool
     @State var showTeams = false
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header section
@@ -23,9 +23,9 @@ struct SideBarView: View {
                     Text("Apps")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    
+
                     Spacer()
-                    
+
                     Button(action: {
                         isAddNewTeam = true
                     }) {
@@ -35,10 +35,10 @@ struct SideBarView: View {
                     .buttonStyle(.plain)
                     .help("Add Team")
                 }
-                
+
                 // Team selector
                 teamSelector()
-                
+
                 // Refresh button
                 HStack {
                     Button(action: {
@@ -48,10 +48,10 @@ struct SideBarView: View {
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(!viewModel.isAppListLoaded)
-                    
+                    .disabled(viewModel.appsState.isLoading)
+
                     Spacer()
-                    
+
                     if let total = viewModel.appMeta?.paging.total {
                         Text("\(total) apps")
                             .font(.caption)
@@ -61,9 +61,9 @@ struct SideBarView: View {
             }
             .padding(16)
             .background(Color(nsColor: .controlBackgroundColor))
-            
+
             Divider()
-            
+
             // Apps list
             appList()
         }
@@ -82,13 +82,12 @@ struct SideBarView: View {
         }
         .onChange(of: viewModel.isTeamChanged) { oldValue, newValue in
             if newValue {
-                viewModel.isAppListLoaded = false
                 viewModel.updateTeam()
                 viewModel.isTeamChanged = false
             }
         }
     }
-    
+
     @ViewBuilder private func teamSelector() -> some View {
         VStack(spacing: 8) {
             Button(action: {
@@ -100,13 +99,13 @@ struct SideBarView: View {
                     Image(systemName: "person.2.fill")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     Text(CredentialStorage.shared.selectedTeam?.key ?? "No Team")
                         .font(.subheadline)
                         .foregroundColor(.primary)
-                    
+
                     Spacer()
-                    
+
                     Image(systemName: showTeams ? "chevron.up" : "chevron.down")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -121,7 +120,7 @@ struct SideBarView: View {
                 )
             }
             .buttonStyle(.plain)
-            
+
             if showTeams {
                 VStack(spacing: 4) {
                     ForEach(CredentialStorage.shared.getTeams, id: \.self) { team in
@@ -129,9 +128,9 @@ struct SideBarView: View {
                             Text(team)
                                 .font(.subheadline)
                                 .foregroundColor(.primary)
-                            
+
                             Spacer()
-                            
+
                             Button(action: {
                                 CredentialStorage.shared.deleteCredential(for: team)
                                 if CredentialStorage.shared.getTeams.isEmpty {
@@ -174,11 +173,22 @@ struct SideBarView: View {
             }
         }
     }
-    
+
     @ViewBuilder private func appList() -> some View {
-        if viewModel.isAppListLoaded {
+        switch viewModel.appsState {
+        case .idle, .loading:
+            VStack(spacing: 16) {
+                Spacer()
+                ProgressView()
+                    .scaleEffect(1.2)
+                Text("Loading apps...")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+        case .loaded(let apps):
             VStack(spacing: 0) {
-                List(viewModel.arrApps, id: \.id) { app in
+                List(apps, id: \.id) { app in
                     AppRowView(app: app, isSelected: app.isSelected)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -186,7 +196,7 @@ struct SideBarView: View {
                         }
                 }
                 .listStyle(.sidebar)
-                
+
                 if viewModel.appMeta?.paging.nextCursor != nil {
                     VStack {
                         Divider()
@@ -198,15 +208,32 @@ struct SideBarView: View {
                     }
                 }
             }
-        } else {
+        case .empty:
             VStack(spacing: 16) {
                 Spacer()
-                ProgressView()
-                    .scaleEffect(1.2)
-                Text("Loading apps...")
+                Image(systemName: "app.dashed")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+                Text("No Apps Found")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                Text("No iOS apps are available for this team")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                Button("Refresh") {
+                    viewModel.retryApps()
+                }
+                .buttonStyle(.bordered)
                 Spacer()
+            }
+            .padding()
+        case .error(let message):
+            ErrorRetryView(
+                title: "Couldn't Load Apps",
+                message: message,
+                retryTitle: "Retry"
+            ) {
+                viewModel.retryApps()
             }
         }
     }
@@ -215,28 +242,28 @@ struct SideBarView: View {
 struct AppRowView: View {
     let app: AppsData
     let isSelected: Bool
-    
+
     var body: some View {
         HStack(spacing: 12) {
             // Selection indicator
             RoundedRectangle(cornerRadius: 2)
                 .fill(isSelected ? Color.accentColor : Color.clear)
                 .frame(width: 3)
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.name ?? "Unknown App")
                     .font(.headline)
                     .foregroundColor(.primary)
-                
+
                 HStack(spacing: 8) {
                     Text(app.currentLiveVersion.1)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     Text("•")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     Text(app.currentState)
                         .font(.caption)
                         .fontWeight(.medium)
@@ -246,14 +273,14 @@ struct AppRowView: View {
                         .background(getStateColor(app.currentState).opacity(0.15))
                         .cornerRadius(4)
                 }
-                
+
                 Text(app.bundleId ?? "")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             if isSelected {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.accentColor)
@@ -271,7 +298,7 @@ struct AppRowView: View {
                 .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
         )
     }
-    
+
     private func getStateColor(_ state: String) -> Color {
         switch state.uppercased() {
         case "READY_FOR_SALE", "READY FOR SALE":
