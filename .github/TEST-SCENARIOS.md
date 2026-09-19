@@ -44,26 +44,26 @@ This document describes every test scenario built into the CI workflow and how t
 
 ### Test 2 — Model Availability Check
 
-**What it does:** Checks that the configured model (`kimi-k3`) is available on Ollama Cloud. Falls back to `qwen2.5-coder:7b` if unavailable.
+**What it does:** Checks that the configured model (`kimi-k3:cloud`) is available on Ollama Cloud. Falls back to `qwen2.5-coder:7b` if unavailable.
 
 **What a pass looks like:**
 ```
-✅ PASS: Model 'kimi-k3' is available
+✅ PASS: Model 'kimi-k3:cloud' is available
 ✅ PASS: Fallback model 'qwen2.5-coder:7b' is available
 ```
 
 **What a failure looks like:**
 ```
 ❌ FAIL: Both models unavailable.
-⚠️ Model 'kimi-k3' not found.
+⚠️ Model 'kimi-k3:cloud' not found.
 ```
 
 **How to fix:**
-1. Visit the model library: https://ollama.com/library
+1. Visit the model library: https://ollama.com/library/kimi-k3
 2. Find a model that supports **chat** completions (not just completion)
 3. Update the `MODEL` value in `.github/workflows/Build.yml`
 4. Recommended models for code review:
-   - `kimi-k3` (best, Moonshot AI)
+   - `kimi-k3:cloud` (best, Moonshot AI)
    - `qwen2.5-coder:7b` (lightweight)
    - `llama3.3`
    - `deepseek-r1:70b`
@@ -167,7 +167,7 @@ Test Scenario                        | Status
 5. Review Comment Validation         | Check logs
 
 Review Result: yes
-Model Used: kimi-k3
+Model Used: kimi-k3:cloud
 ═══════════════════════════════════════════════════════════
 ```
 

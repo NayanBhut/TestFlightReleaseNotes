@@ -66,7 +66,7 @@ jobs:
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $OLLAMA_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"model": "kimi-k3", "messages": [{"role": "user", "content": "hi"}]}' \
+            -d '{"model": "kimi-k3:cloud", "messages": [{"role": "user", "content": "hi"}]}' \
             --max-time 30 \
             https://api.ollama.com/v1/chat/completions)
 
@@ -83,14 +83,14 @@ jobs:
 
       # ── TEST SCENARIO 2: Model Availability ──
       # Purpose: Verify the specified model is available on Ollama Cloud
-      # Failure fix: Try a different model (e.g., qwen2.5-coder:7b, llama3.3)
+      # Failure fix: Try a different model (e.g., qwen2.5-coder:7b, llama3.3, deepseek-r1:70b)
       - name: Test 2 — Model Availability Check
         id: model-check
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
           echo "🤖 Checking model availability..."
-          MODEL="kimi-k3"
+          MODEL="kimi-k3:cloud"
           FALLBACK_MODEL="qwen2.5-coder:7b"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -202,9 +202,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEW_MODEL: ${{ steps.model-check.outputs.model || 'kimi-k3' }}
+          REVIEW_MODEL: ${{ steps.model-check.outputs.model || 'kimi-k3:cloud' }}
         run: |
-          MODEL="${REVIEW_MODEL:-kimi-k3}"
+          MODEL="${REVIEW_MODEL:-kimi-k3:cloud}"
           echo "🤖 Starting PR Review with model: $MODEL"
 
           # Fetch PR diff
@@ -408,7 +408,7 @@ jobs:
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $OLLAMA_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"model": "kimi-k3", "messages": [{"role": "user", "content": "say hello in one line"}]}' \
+            -d '{"model": "kimi-k3:cloud", "messages": [{"role": "user", "content": "say hello in one line"}]}' \
             --max-time 60 \
             https://api.ollama.com/v1/chat/completions)
 
