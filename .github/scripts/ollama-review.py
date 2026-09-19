@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
-"""Call Ollama Cloud API to review a PR diff from a file."""
+"""Call Ollama Cloud API to review a PR diff.
+
+Reads the PR diff from a file, sends it to the Ollama Cloud chat
+completions API, saves the raw JSON response to a debug file, and prints
+the extracted review text to stdout.
+
+Exit codes drive the workflow's success/failure logic:
+  0 = success (review text printed to stdout)
+  1 = failure (error message printed to stderr)
+
+Environment variables:
+  OLLAMA_API_KEY    (required) Ollama Cloud API key
+  PR_DIFF_FILE      Path to the PR diff file (default: /tmp/pr_diff.txt)
+  REVIEW_MODEL      Model ID (default: kimi-k3:cloud)
+  REVIEW_RAW_FILE   Path to save raw API response for debugging
+                    (default: /tmp/review_raw.json)
+"""
 
 import json
 import os
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 
 
 def main():
     model = os.environ.get("REVIEW_MODEL", "kimi-k3:cloud")
     diff_file = os.environ.get("PR_DIFF_FILE", "/tmp/pr_diff.txt")
+    raw_file = os.environ.get("REVIEW_RAW_FILE", "/tmp/review_raw.json")
     api_key = os.environ.get("OLLAMA_API_KEY", "")
 
     if not api_key:
@@ -27,6 +44,11 @@ def main():
     if not diff.strip():
         print("ERROR: Diff file is empty", file=sys.stderr)
         sys.exit(1)
+
+    # Limit diff size to stay within practical token limits
+    max_diff_size = 200000
+    if len(diff) > max_diff_size:
+        diff = diff[:max_diff_size]
 
     system_msg = (
         "You are an expert iOS/Swift code reviewer. Review this PR diff carefully.\n\n"
@@ -45,11 +67,6 @@ def main():
         "- UI: Interface issues, accessibility\n\n"
         'If no issues found, say: "✅ No issues found. Great job!"'
     )
-
-    # Limit diff size to avoid hitting token limits
-    MAX_DIFF_SIZE = 200000
-    if len(diff) > MAX_DIFF_SIZE:
-        diff = diff[:MAX_DIFF_SIZE]
 
     payload = json.dumps({
         "model": model,
@@ -72,14 +89,50 @@ def main():
 
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
-            print(resp.read().decode("utf-8"))
+            raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        print(f"HTTP_ERROR: {e.code}: {body}", file=sys.stderr)
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"HTTP_ERROR: {e.code}: {body[:2000]}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"REQUEST_ERROR: {str(e)}", file=sys.stderr)
         sys.exit(1)
+
+    # Save the raw response for debugging (non-fatal on failure)
+    try:
+        with open(raw_file, "w", encoding="utf-8") as f:
+            f.write(raw)
+    except OSError as e:
+        print(f"WARN: Could not save raw response: {e}", file=sys.stderr)
+
+    # Parse the response
+    try:
+        data = json.loads(raw)
+    except ValueError as e:
+        print(f"PARSE_ERROR: Response is not valid JSON: {e}", file=sys.stderr)
+        print(f"Raw response preview: {raw[:1000]}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        # Surface API-level error payloads (e.g. {"error": {"message": ...}})
+        err = data.get("error")
+        if err:
+            print(f"API_ERROR: {json.dumps(err)[:2000]}", file=sys.stderr)
+        else:
+            print(
+                f"PARSE_ERROR: Unexpected response structure. Top-level keys: "
+                f"{list(data.keys())}",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+    if not content or not content.strip():
+        print("PARSE_ERROR: Review content is empty", file=sys.stderr)
+        sys.exit(1)
+
+    print(content)
 
 
 if __name__ == "__main__":

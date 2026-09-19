@@ -39,7 +39,7 @@ jobs:
 
     outputs:
       review-success: ${{ steps.review-check.outputs.success }}
-      review-model: ${{ steps.review-check.outputs.model }}
+      review-model: ${{ steps.model-check.outputs.model }}
 
     steps:
       - name: Checkout repository
@@ -230,28 +230,22 @@ jobs:
           fi
 
           # Call Ollama Cloud for review
+          # The script saves the raw API response to /tmp/review_raw.json (for
+          # debugging) and prints the extracted review text to stdout.
+          # Exit codes drive success/failure - no fragile text matching.
           echo "🔄 Sending to Ollama Cloud for review..."
           echo "$DIFF" > /tmp/pr_diff.txt
-          REVIEW_RESPONSE=$(REVIEW_MODEL="$MODEL" \
+          if REVIEW_TEXT=$(REVIEW_MODEL="$MODEL" \
             OLLAMA_API_KEY="$OLLAMA_API_KEY" \
             PR_DIFF_FILE="/tmp/pr_diff.txt" \
-            python3 .github/scripts/ollama-review.py 2>&1)
-
-          # Extract review text
-          REVIEW_TEXT=$(echo "$REVIEW_RESPONSE" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              print(data['choices'][0]['message']['content'])
-          except:
-              print('ERROR: Could not parse Ollama response.')
-              print(sys.stdin.read()[:2000])
-          " 2>/dev/null)
-
-          if [ -z "$REVIEW_TEXT" ] || echo "$REVIEW_TEXT" | grep -q "ERROR:"; then
+            python3 .github/scripts/ollama-review.py 2>/tmp/review_err.log); then
+            echo "✅ Review received (${#REVIEW_TEXT} chars)"
+          else
             echo "❌ FAIL: Ollama Cloud review failed"
+            echo "Error details:"
+            cat /tmp/review_err.log
             echo "Raw response (first 2000 chars):"
-            echo "$REVIEW_RESPONSE" | head -c 2000
+            head -c 2000 /tmp/review_raw.json 2>/dev/null || echo "(no raw response saved)"
             echo "review=failed" >> $GITHUB_OUTPUT
             echo "success=failed" >> $GITHUB_OUTPUT
             exit 1
@@ -313,7 +307,9 @@ jobs:
   # Test Scenarios Summary & Failure Report
   # ──────────────────────────────────────────────
   review-report:
-    if: github.event_name == 'pull_request'
+    # always() so the diagnostic report still runs when pr-review fails -
+    # that is exactly when the troubleshooting guide is needed
+    if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     needs: [pr-review]
     # Always run even if previous jobs fail
@@ -337,12 +333,12 @@ jobs:
           echo "4. PR Diff Accessibility             | Check logs"
           echo "5. Review Comment Validation         | Check logs"
           echo ""
-          echo "Review Result: ${{ needs.pr-review.outputs.success }}"
+          echo "Review Result: ${{ needs.pr-review.outputs.review-success }}"
           echo "Model Used: ${{ needs.pr-review.outputs.review-model }}"
           echo "═══════════════════════════════════════════════════════════"
 
       - name: 📋 Failure Diagnostic Guide
-        if: always() && needs.pr-review.outputs.success != 'yes'
+        if: always() && needs.pr-review.outputs.review-success != 'yes'
         run: |
           echo "🔧 TROUBLESHOOTING GUIDE"
           echo ""
