@@ -47,7 +47,7 @@ jobs:
 
       # ── TEST SCENARIO 1: Ollama Cloud API Connectivity ──
       # Purpose: Verify Ollama Cloud endpoint is reachable before attempting review
-      # Failure fix: Check OLLAMA_API_KEY secret is set; verify network access to api.ollama.com
+      # Failure fix: Check OLLAMA_API_KEY secret is set; verify network access to ollama.com
       - name: Test 1 — Ollama Cloud Connectivity Check
         id: connectivity
         env:
@@ -68,7 +68,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"model": "kimi-k3:cloud", "messages": [{"role": "user", "content": "hi"}]}' \
             --max-time 30 \
-            https://api.ollama.com/v1/chat/completions)
+            https://ollama.com/v1/chat/completions)
 
           if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 400 ]; then
             echo "✅ PASS: Ollama Cloud API is reachable (HTTP $HTTP_STATUS)"
@@ -98,7 +98,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"model": "'$MODEL'", "messages": [{"role": "user", "content": "hello"}]}' \
             --max-time 60 \
-            https://api.ollama.com/v1/chat/completions)
+            https://ollama.com/v1/chat/completions)
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
@@ -114,7 +114,7 @@ jobs:
               -H "Content-Type: application/json" \
               -d '{"model": "'$FALLBACK_MODEL'", "messages": [{"role": "user", "content": "hello"}]}' \
               --max-time 120 \
-              https://api.ollama.com/v1/chat/completions)
+              https://ollama.com/v1/chat/completions)
 
             FALLBACK_CODE=$(echo "$FALLBACK_RESPONSE" | tail -1)
             if [ "$FALLBACK_CODE" -eq 200 ]; then
@@ -253,7 +253,7 @@ jobs:
               }
             }" \
             --max-time 600 \
-            https://api.ollama.com/v1/chat/completions)
+            https://ollama.com/v1/chat/completions)
 
           # Extract review text
           REVIEW_TEXT=$(echo "$REVIEW_RESPONSE" | python3 -c "
@@ -410,7 +410,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"model": "kimi-k3:cloud", "messages": [{"role": "user", "content": "say hello in one line"}]}' \
             --max-time 60 \
-            https://api.ollama.com/v1/chat/completions)
+            https://ollama.com/v1/chat/completions)
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
