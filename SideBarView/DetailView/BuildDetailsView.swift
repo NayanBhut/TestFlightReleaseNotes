@@ -21,14 +21,6 @@ struct BuildDetailsView: View {
     @State private var toastMessage: String? = nil
     @State private var toastWorkItem: DispatchWorkItem? = nil
 
-    private let snippets = [
-        "Bug fixes and performance improvements",
-        "New features:\n- Feature 1\n- Feature 2\n- Feature 3",
-        "Bug fixes:\n- Fixed issue with login\n- Fixed crash on startup\n- Improved stability",
-        "What's new in this version:\n- Enhanced UI\n- Better performance\n- Security updates",
-        "Release notes:\n- Added dark mode support\n- Fixed memory leaks\n- Updated dependencies"
-    ]
-
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -105,9 +97,11 @@ struct BuildDetailsView: View {
                 }
             }
         }
-        .onChange(of: viewModel.toastMessage) { _, newMessage in
-            if let message = newMessage {
-                showToast(message)
+        .onChange(of: viewModel.toast) { _, newToast in
+            // Toast events carry identity (UUID), so consecutive identical
+            // messages still re-fire — the dismissal timer restarts each time.
+            if let newToast {
+                showToast(newToast.message)
             }
         }
         // Surface failed release-note saves instead of silently logging them.
@@ -182,21 +176,6 @@ struct BuildDetailsView: View {
                     .foregroundColor(.secondary)
             }
 
-            Menu {
-                ForEach(snippets, id: \.self) { snippet in
-                    Button(String(snippet.prefix(40)) + "...") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(snippet, forType: .string)
-                        showToast("Snippet copied — paste it into any build")
-                    }
-                }
-            } label: {
-                Label("Snippets", systemImage: "doc.on.doc")
-                    .font(.caption)
-            }
-            .menuStyle(.borderedButton)
-            .help("Copy a release-notes snippet, then paste it into any build")
-
             Button(action: {
                 refreshBuildList?()
             }) {
@@ -228,7 +207,7 @@ struct BuildDetailsView: View {
         if let saved = selectedLocales[build.id], locales.contains(saved) {
             return saved
         }
-        return locales.first ?? "en-US"
+        return locales.first ?? BetaLocalizationLocales.defaultLocale
     }
 
     private func buildRow(for build: BuildsModel) -> some View {
@@ -253,11 +232,17 @@ struct BuildDetailsView: View {
             onUpdate: { updateLocale in
                 viewModel.saveBuildLocalization(buildId: build.id, locale: updateLocale)
             },
-            onToggleExpire: {
-                viewModel.toggleExpireBuild(buildId: build.id)
+            onExpire: {
+                viewModel.expireBuild(buildId: build.id)
             },
             onCopyVersionBuildId: {
                 viewModel.copyVersionAndBuildId(buildId: build.id)
+            },
+            onAddLocale: { newLocale in
+                // Creates an empty draft localization; the row's existing
+                // save path POSTs it once the user types and hits Update.
+                viewModel.updateBuildWhatsNew(buildId: build.id, locale: newLocale, whatsNew: "")
+                selectedLocales[build.id] = newLocale
             },
             isUpdating: viewModel.isBuildUpdating(build.id),
             isExpireToggling: viewModel.expireTogglingBuildId == build.id

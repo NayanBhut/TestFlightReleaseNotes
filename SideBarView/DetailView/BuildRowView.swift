@@ -25,8 +25,9 @@ struct BuildRowView: View {
     let onLocaleChange: (String) -> Void
     let onTextChange: (String, String) -> Void
     let onUpdate: (String) -> Void
-    let onToggleExpire: () -> Void
+    let onExpire: () -> Void
     let onCopyVersionBuildId: () -> Void
+    let onAddLocale: (String) -> Void
     let isUpdating: Bool
     let isExpireToggling: Bool
 
@@ -41,7 +42,7 @@ struct BuildRowView: View {
     private static let debounceNanoseconds: UInt64 = 400_000_000
 
     /// App Store Connect caps beta release notes at 4000 characters.
-    private let maxLength = 4000
+    private let maxLength = WhatsNewLimits.maxLength
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -99,7 +100,8 @@ struct BuildRowView: View {
                     onUpdate(selectedLocale)
                 }
                 .disabled(!hasChanges || whatsNewText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.return, modifiers: .command)
+                // Note: no keyboard shortcut here — one per list would resolve
+                // to the first row's button and save the wrong build.
             }
 
             Button(action: onCopyVersionBuildId) {
@@ -108,21 +110,23 @@ struct BuildRowView: View {
             }
             .buttonStyle(.plain)
             .help("Copy version and build ID")
+            .accessibilityLabel("Copy version and build ID")
 
             // There is no unexpire API (PATCH expired=false returns 409),
             // so expired builds offer no toggle.
             if !isExpired {
                 Button(action: { showExpireConfirm = true }) {
-                    Image(systemName: "circle")
+                    Image(systemName: "xmark.circle")
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
                 .disabled(isExpireToggling)
                 .help("Expire build")
+                .accessibilityLabel("Expire build")
                 .alert("Expire this build?", isPresented: $showExpireConfirm) {
                     Button("Cancel", role: .cancel) { }
                     Button("Expire", role: .destructive) {
-                        onToggleExpire()
+                        onExpire()
                     }
                 } message: {
                     Text("Testers will no longer be able to install this build. This cannot be undone.")
@@ -158,9 +162,41 @@ struct BuildRowView: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                // Add-locale menu: lists supported locales not yet present.
+                // Creates an empty draft; the existing save path POSTs it.
+                Menu {
+                    ForEach(newLocales, id: \.self) { locale in
+                        Button(locale) {
+                            // Flush the current locale's pending edit first,
+                            // same as switching locale tabs.
+                            flushPendingTextChange()
+                            onAddLocale(locale)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        )
+                        .foregroundColor(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(newLocales.isEmpty)
+                .help("Add a locale")
+                .accessibilityLabel("Add locale")
             }
             .padding(.horizontal, 4)
         }
+    }
+
+    /// Supported locales that don't exist on this build yet.
+    private var newLocales: [String] {
+        BetaLocalizationLocales.supported.filter { !locales.contains($0) }
     }
 
     private var textEditorView: some View {
@@ -215,12 +251,40 @@ struct BuildRowView: View {
 
     private var characterCounterView: some View {
         HStack {
+            // Snippets insert directly into this row's editor — the user's
+            // clipboard is never clobbered.
+            Menu {
+                ForEach(ReleaseNoteSnippets.all, id: \.self) { snippet in
+                    Button(ReleaseNoteSnippets.menuLabel(snippet)) {
+                        appendSnippet(snippet)
+                    }
+                }
+            } label: {
+                Label("Snippets", systemImage: "text.badge.plus")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .help("Insert a release-notes snippet into this build")
             Spacer()
             Text("\(whatsNewText.count)/\(maxLength)")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
+    }
+
+    /// Insert a snippet into this row's editor, respecting the length cap
+    /// and registering the change like a manual edit.
+    private func appendSnippet(_ snippet: String) {
+        let separator = whatsNewText.isEmpty ? "" : "\n"
+        var combined = whatsNewText + separator + snippet
+        if combined.count > maxLength {
+            combined = String(combined.prefix(maxLength))
+        }
+        whatsNewText = combined
+        hasChanges = combined != committedText
+        scheduleDebouncedTextChange(combined, locale: selectedLocale)
     }
 
     /// Immediately propagate any pending (debounced) text change to the
@@ -243,5 +307,24 @@ struct BuildRowView: View {
             guard !Task.isCancelled else { return }
             onTextChange(newValue, locale)
         }
+    }
+}
+
+/// Canned release-note starting points, inserted directly into the row's
+/// editor (never clobbering the user's clipboard).
+enum ReleaseNoteSnippets {
+    static let all = [
+        "Bug fixes and performance improvements",
+        "New features:\n- Feature 1\n- Feature 2\n- Feature 3",
+        "Bug fixes:\n- Fixed issue with login\n- Fixed crash on startup\n- Improved stability",
+        "What's new in this version:\n- Enhanced UI\n- Better performance\n- Security updates",
+        "Release notes:\n- Added dark mode support\n- Fixed memory leaks\n- Updated dependencies"
+    ]
+
+    /// One-line menu label; ellipsis only when actually truncated.
+    static func menuLabel(_ snippet: String) -> String {
+        let flattened = snippet.replacingOccurrences(of: "\n", with: " ")
+        guard flattened.count > 40 else { return flattened }
+        return String(flattened.prefix(40)) + "…"
     }
 }

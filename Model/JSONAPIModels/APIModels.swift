@@ -69,9 +69,6 @@ struct BuildsModel: Equatable {
     @ResourceAttribute var expired: Bool?
     @ResourceRelationship var preReleaseVersion: PreReleaseVersionsModel?
     @ResourceRelationship var betaBuildLocalizations: [BuildLocalizationsModel]
-    
-    var isUpdatingLocalize = false
-    var isExpiredToggled = false
 }
 
 @ResourceWrapper(type: "appStoreVersionLocalizations")
@@ -111,7 +108,7 @@ struct CreateLocalizationData: Encodable {
 }
 
 struct CreateLocalizationAttributes: Encodable {
-    var locale: String?
+    var locale: String
     var whatsNew: String?
 }
 
@@ -138,17 +135,17 @@ struct Meta: Equatable, Codable {
     let paging: Pagination
 }
 
-struct ExpireBuildRequest: Codable {
+struct ExpireBuildRequest: Encodable {
     let data: ExpireBuildData
 }
 
-struct ExpireBuildData: Codable {
+struct ExpireBuildData: Encodable {
     var type = "builds"
     let id: String
     let attributes: ExpireBuildAttributes
 }
 
-struct ExpireBuildAttributes: Codable {
+struct ExpireBuildAttributes: Encodable {
     let expired: Bool
 }
 

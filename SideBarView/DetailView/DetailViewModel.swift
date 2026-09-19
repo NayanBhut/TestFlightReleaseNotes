@@ -29,14 +29,21 @@ class DetailViewModel: ObservableObject {
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
 
-    @Published var updatingBuildId: String?
+    /// In-flight save keys ("buildId|locale") — per-locale so saving locale B
+    /// isn't blocked by an in-flight save of locale A.
+    @Published private(set) var updatingSaveKeys: Set<String> = []
     /// A failed release-note save, surfaced to the UI with a Retry action.
     @Published var saveError: BuildSaveError?
     @Published var expireTogglingBuildId: String?
-    @Published var toastMessage: String?
+    /// Toast event with identity: consecutive identical messages still
+    /// re-fire onChange (which only triggers on *value change*). The view
+    /// owns dismissal — the view model just publishes events.
+    @Published var toast: ToastEvent?
 
     private var cancellables = Set<AnyCancellable>()
     private let sidebarViewModel: SideBarViewModel
+    /// Injectable so clipboard writes can be tested or redirected.
+    private let pasteboard: PasteboardWriting
 
     /// In-flight builds fetch so a new fetch can cancel a stale one.
     private var buildsFetchTask: Task<Void, Never>?
@@ -65,8 +72,9 @@ class DetailViewModel: ObservableObject {
         versionsState.errorMessage
     }
 
-    init(sidebarViewModel: SideBarViewModel) {
+    init(sidebarViewModel: SideBarViewModel, pasteboard: PasteboardWriting = NSPasteboard.general) {
         self.sidebarViewModel = sidebarViewModel
+        self.pasteboard = pasteboard
         sidebarViewModel.$versionsState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] versionsState in
@@ -226,9 +234,9 @@ extension DetailViewModel {
     }
 
     func getAllLocales(for buildId: String) -> [String] {
-        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }) else { return [Constants.defaultLocale] }
+        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }) else { return [BetaLocalizationLocales.defaultLocale] }
         let locales = build.betaBuildLocalizations.compactMap { $0.locale }
-        return locales.isEmpty ? [Constants.defaultLocale] : locales
+        return locales.isEmpty ? [BetaLocalizationLocales.defaultLocale] : locales
     }
 
     func saveBuildLocalization(buildId: String, locale: String) {
@@ -241,19 +249,53 @@ extension DetailViewModel {
     }
 
     func isBuildUpdating(_ buildId: String) -> Bool {
-        return updatingBuildId == buildId
+        return updatingSaveKeys.contains { $0.hasPrefix("\(buildId)|") }
     }
 }
 
-private enum Constants {
+/// App Store Connect caps beta release notes at 4000 characters.
+enum WhatsNewLimits {
+    static let maxLength = 4000
+}
+
+/// Locales supported for TestFlight beta build localizations.
+enum BetaLocalizationLocales {
     static let defaultLocale = "en-US"
-    static let maxWhatsNewLength = 4000
+
+    static let supported: [String] = [
+        "ar-SA", "ca", "cs", "da", "de", "el", "en-AU", "en-CA", "en-GB", "en-US",
+        "es-ES", "es-MX", "fi", "fr-FR", "he", "hi", "hr", "hu", "id", "it",
+        "ja", "ko", "ms", "nl", "no", "pl", "pt-BR", "pt-PT", "ro", "ru",
+        "sk", "sv", "th", "tr", "uk", "vi", "zh-Hans", "zh-Hant"
+    ]
+}
+
+/// Injectable pasteboard so clipboard writes can be tested or redirected.
+protocol PasteboardWriting {
+    func clear()
+    func setString(_ string: String)
+}
+
+extension NSPasteboard: PasteboardWriting {
+    func clear() { clearContents() }
+    func setString(_ string: String) { setString(string, forType: .string) }
+}
+
+/// Toast event with identity so consecutive identical messages still
+/// re-fire `onChange` (which only triggers on value change).
+struct ToastEvent: Equatable {
+    let id = UUID()
+    let message: String
 }
 
 extension DetailViewModel {
     func createOrUpdate(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) {
-        guard updatingBuildId != buildId else { return }
-        updatingBuildId = buildId
+        let saveKey = "\(buildId)|\(locale)"
+        guard !updatingSaveKeys.contains(saveKey) else {
+            showToast("A save is already in progress for this build.")
+            return
+        }
+        updatingSaveKeys.insert(saveKey)
 
         Task {
             if buildLocalization.id.hasPrefix(Self.tempLocalizationPrefix) {
@@ -265,7 +307,7 @@ extension DetailViewModel {
     }
 
     private func updateBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) async {
-        defer { updatingBuildId = nil }
+        defer { updatingSaveKeys.remove("\(buildId)|\(locale)") }
 
         let model = BuildLocalizationsModel.updateBody(id: buildLocalization.id, whatsNew: buildLocalization.whatsNew)
         let encoder = JSONAPIEncoder()
@@ -304,7 +346,7 @@ extension DetailViewModel {
     }
 
     private func createBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) async {
-        defer { updatingBuildId = nil }
+        defer { updatingSaveKeys.remove("\(buildId)|\(locale)") }
 
         let body = CreateLocalizationRequest(
             data: CreateLocalizationData(
@@ -364,7 +406,7 @@ extension DetailViewModel {
 
     /// Expires a build. There is no unexpire API (PATCH expired=false
     /// returns 409), so the UI never offers this for expired builds.
-    func toggleExpireBuild(buildId: String) {
+    func expireBuild(buildId: String) {
         guard case .loaded(let builds) = buildsState,
               let build = builds.first(where: { $0.id == buildId }),
               build.expired != true,
@@ -379,7 +421,7 @@ extension DetailViewModel {
             )
         )
 
-        let encoder = JSONAPIEncoder()
+        let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         guard let data = try? encoder.encode(requestBody),
@@ -398,7 +440,6 @@ extension DetailViewModel {
                       let buildIndex = currentBuilds.firstIndex(where: { $0.id == buildId }) else { return }
                 var updatedBuild = currentBuilds[buildIndex]
                 updatedBuild.expired = model.expired ?? true
-                updatedBuild.isExpiredToggled = false
                 currentBuilds[buildIndex] = updatedBuild
                 buildsState = .loaded(currentBuilds)
                 showToast("Build expired")
@@ -414,18 +455,15 @@ extension DetailViewModel {
               let version = selectedVersion?.version else { return }
 
         let versionBuildString = "\(version) (\(build.version ?? "")) - Build ID: \(buildId)"
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(versionBuildString, forType: .string)
+        pasteboard.clear()
+        pasteboard.setString(versionBuildString)
         showToast("Copied: \(versionBuildString)")
     }
 
     private func showToast(_ message: String) {
-        toastMessage = message
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            if self.toastMessage == message {
-                self.toastMessage = nil
-            }
-        }
+        // The view owns dismissal timing; each event carries a fresh UUID so
+        // even identical consecutive messages re-trigger onChange.
+        toast = ToastEvent(message: message)
     }
 }
 
