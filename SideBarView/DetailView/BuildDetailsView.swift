@@ -79,6 +79,22 @@ struct BuildDetailsView: View {
                 }
             }
         }
+        // Surface failed release-note saves instead of silently logging them.
+        .alert(
+            "Couldn't Save Release Notes",
+            isPresented: Binding(
+                get: { viewModel.saveError != nil },
+                set: { if !$0 { viewModel.saveError = nil } }
+            ),
+            presenting: viewModel.saveError
+        ) { saveError in
+            Button("Retry") {
+                viewModel.saveBuildLocalization(buildId: saveError.buildId)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { saveError in
+            Text(saveError.message)
+        }
     }
 
     private var noVersionSelectedView: some View {

@@ -21,6 +21,12 @@ class SideBarViewModel: ObservableObject {
 
     @Published var isTeamChanged = false
 
+    /// In-flight fetches so a new fetch can cancel a stale one.
+    private var appsFetchTask: Task<Void, Never>?
+    private var versionsFetchTask: Task<Void, Never>?
+    /// Suppresses duplicate pagination requests while one page is loading.
+    private var isPaginatingApps = false
+
     // MARK: - Convenience accessors for views
 
     var arrApps: [AppsData] {
@@ -46,16 +52,28 @@ class SideBarViewModel: ObservableObject {
     // MARK: - Apps
 
     func getiOSApps(nextPage: String? = nil) {
-        Task { await fetchApps(nextPage: nextPage) }
+        let isPaginating = nextPage != nil
+        // Ignore duplicate "Load more" taps while a page request is in flight
+        // (double-tapping would otherwise append the same rows twice).
+        if isPaginating, isPaginatingApps { return }
+        // Cancel any in-flight fetch so a stale response can never overwrite
+        // the state for a newer fetch.
+        appsFetchTask?.cancel()
+        appsFetchTask = Task { await fetchApps(nextPage: nextPage) }
     }
 
     func fetchApps(nextPage: String? = nil) async {
         let isPaginating = nextPage != nil
-        if !isPaginating {
+        if isPaginating {
+            isPaginatingApps = true
+        } else {
             appsState = .loading
             // Team switch / refresh clears selection cleanly.
             selectedApp = nil
             versionsState = .idle
+        }
+        defer {
+            if isPaginating { isPaginatingApps = false }
         }
 
         var queryParams = [
@@ -80,8 +98,13 @@ class SideBarViewModel: ObservableObject {
         do {
             let data = try await APIClient.shared.callAPI(with: request)
             let model = try getDecoder().decode(AppsDocument.self, from: data)
+            // Ignore stale responses superseded by a newer fetch.
+            guard !Task.isCancelled else { return }
             updateCurrentLiveVersion(responseApp: model, nextPage: nextPage)
         } catch {
+            // A cancelled fetch means a newer one took over - don't surface
+            // its failure or overwrite the newer state.
+            guard !Task.isCancelled else { return }
             sidebarLogger.error("Failed to load apps: \(error.localizedDescription)")
             if !isPaginating {
                 appsState = .error(friendlyMessage(for: error))
@@ -153,7 +176,10 @@ class SideBarViewModel: ObservableObject {
     }
 
     private func getTestFlightVersions(app: AppsData) {
-        Task { await fetchVersions(app: app) }
+        // Cancel any in-flight versions fetch so quickly switching apps
+        // can't let a stale response overwrite the newer app's versions.
+        versionsFetchTask?.cancel()
+        versionsFetchTask = Task { await fetchVersions(app: app) }
     }
 
     func fetchVersions(app: AppsData) async {
@@ -172,6 +198,8 @@ class SideBarViewModel: ObservableObject {
         do {
             let data = try await APIClient.shared.callAPI(with: request)
             let model = try getDecoder().decode([PreReleaseVersionsModel].self, from: data)
+            // Ignore stale responses superseded by a newer fetch.
+            guard !Task.isCancelled else { return }
             let limited = model.count > 10 ? Array(model.prefix(10)) : model
             if limited.isEmpty {
                 versionsState = .empty
@@ -179,6 +207,9 @@ class SideBarViewModel: ObservableObject {
                 versionsState = .loaded(limited)
             }
         } catch {
+            // A cancelled fetch means a newer one took over - don't surface
+            // its failure or overwrite the newer state.
+            guard !Task.isCancelled else { return }
             sidebarLogger.error("Failed to load versions: \(error.localizedDescription)")
             versionsState = .error(friendlyMessage(for: error))
         }

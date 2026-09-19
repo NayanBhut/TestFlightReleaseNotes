@@ -69,6 +69,10 @@ struct BuildRowView: View {
                         .scaleEffect(0.8)
                 } else {
                     Button("Update") {
+                        // Flush any pending debounced edit first so the view
+                        // model (and therefore the save request) sees the
+                        // latest text - not the last debounced value.
+                        flushPendingTextChange()
                         committedText = whatsNewText
                         hasChanges = false
                         buildRowLogger.debug("Saving release notes for build \(buildId)")
@@ -110,15 +114,31 @@ struct BuildRowView: View {
                     hasChanges = false
                 }
                 .onDisappear {
-                    debounceTask?.cancel()
+                    // Flush instead of just cancelling: a pending edit must
+                    // not be silently dropped when the row scrolls off-screen
+                    // or the version changes.
+                    flushPendingTextChange()
                 }
         }
         .padding(.vertical, 4)
     }
 
+    /// Immediately propagate any pending (debounced) text change to the
+    /// view model, cancelling the debounce timer.
+    private func flushPendingTextChange() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        if hasChanges, whatsNewText != committedText {
+            onTextChange(whatsNewText)
+        }
+    }
+
     private func scheduleDebouncedTextChange(_ newValue: String) {
         debounceTask?.cancel()
-        debounceTask = Task {
+        // @MainActor: BuildRowView is a plain struct, so the Task would
+        // otherwise inherit no actor and could call onTextChange off the
+        // main thread (mutating @Published state from a background thread).
+        debounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.debounceNanoseconds)
             guard !Task.isCancelled else { return }
             onTextChange(newValue)
