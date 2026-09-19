@@ -10,7 +10,9 @@ import Combine
 import JSONAPI
 
 enum CurrentAppState {
-    case appListLoading, appVersionLoading, appVersionBuildLoading, appLocalizationLoading, _none
+    case appListLoading, appVersionLoading, appVersionBuildLoading, appLocalizationLoading
+    case betaGroupsLoading, betaTestersLoading, betaAssignmentUpdating, betaDetailUpdating
+    case _none
 }
 
 class DetailViewModel: ObservableObject {

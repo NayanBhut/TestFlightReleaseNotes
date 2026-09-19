@@ -9,6 +9,13 @@ import SwiftUI
 
 struct DetailView: View {
     @ObservedObject var viewModel: DetailViewModel
+    @StateObject private var betaViewModel = BetaViewModel()
+    @State private var selectedTab: DetailTab = .builds
+
+    enum DetailTab: String, CaseIterable {
+        case builds = "Builds"
+        case betaGroups = "Beta Groups"
+    }
     
     init(viewModel: DetailViewModel) {
         self.viewModel = viewModel
@@ -89,18 +96,37 @@ struct DetailView: View {
     
     @ViewBuilder private func getBuildList() -> some View {
         if viewModel.selectedApp != nil {
-            BuildDetailsView(
-                viewModel: viewModel,
-                refreshBuildList: {
-                    guard let version = viewModel.selectedVersion else { return }
-                    viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
-                },
-                loadMoreBuild: {
-                    guard let nextPage = viewModel.nextPageCursor,
-                          let version = viewModel.selectedVersion else { return }
-                    viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
+            Picker("", selection: $selectedTab) {
+                ForEach(DetailTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
-            )
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+
+            switch selectedTab {
+            case .builds:
+                BuildDetailsView(
+                    viewModel: viewModel,
+                    refreshBuildList: {
+                        guard let version = viewModel.selectedVersion else { return }
+                        viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
+                    },
+                    loadMoreBuild: {
+                        guard let nextPage = viewModel.nextPageCursor,
+                              let version = viewModel.selectedVersion else { return }
+                        viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
+                    }
+                )
+            case .betaGroups:
+                BetaGroupView(
+                    betaViewModel: betaViewModel,
+                    selectedApp: viewModel.selectedApp,
+                    builds: viewModel.arrBuilds,
+                    selectedVersionString: viewModel.selectedVersion?.version ?? ""
+                )
+            }
         } else {
             VStack(spacing: 16) {
                 Spacer()
