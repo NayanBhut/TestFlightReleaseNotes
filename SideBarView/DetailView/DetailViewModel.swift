@@ -10,6 +10,12 @@ import Combine
 import JSONAPI
 import OSLog
 
+enum CurrentAppState {
+    case appListLoading, appVersionLoading, appVersionBuildLoading, appLocalizationLoading
+    case betaGroupsLoading, betaTestersLoading, betaAssignmentUpdating, betaDetailUpdating
+    case _none
+}
+
 private let detailLogger = Logger(subsystem: "com.appstore.release-notes", category: "Detail")
 
 @MainActor

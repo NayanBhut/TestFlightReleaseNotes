@@ -33,21 +33,54 @@ final class APIClient {
                 completion(nil, .requestFailed)
                 return
             }
-            
+
             #if DEBUG
             apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+            // Bodies and queries carry PII (tester emails/names): redact emails
+            // and cap size. Data is sliced *before* String conversion so multi-MB
+            // responses don't allocate a full string just to be truncated.
+            if let url = request.url, let query = url.query {
+                apiLogger.debug("[API] Query: \(Self.redactingPII(in: query))")
+            }
+            if let body = request.httpBody {
+                apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body))")
+            }
+            if let data = data {
+                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data))")
+            }
             #endif
-            
+
             guard (200..<300).contains(httpResponse.statusCode) else {
                 completion(nil, .httpError(statusCode: httpResponse.statusCode))
                 return
             }
-            
+
             completion(data, nil)
         }
         return task
     }
     
+    /// DEBUG logs may end up in bug reports or screen recordings: redact
+    /// emails (PII) and cap size before logging request/response bodies.
+    private static let piiRedactionRegex = try? NSRegularExpression(
+        pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
+
+    private static func redactingPII(in text: String) -> String {
+        guard let piiRedactionRegex else { return text }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return piiRedactionRegex.stringByReplacingMatches(
+            in: text, options: [], range: range, withTemplate: "[redacted]")
+    }
+
+    private static func sanitizedBody(_ data: Data, maxLength: Int = 2000) -> String {
+        let isTruncated = data.count > maxLength
+        let slice = isTruncated ? data.prefix(maxLength) : data[...]
+        guard let text = String(data: slice, encoding: .utf8) else {
+            return "<\(data.count) bytes, non-UTF-8>"
+        }
+        return redactingPII(in: text) + (isTruncated ? "…(truncated)" : "")
+    }
+
     func callAPI(with request: URLRequest) async throws -> Data {
         apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
         do {
@@ -113,6 +146,8 @@ final class APIClient {
     private func getAPIBody(httpMethod: APIMethod) -> Data? {
         switch httpMethod {
         case .post(_ ,let body, _, _), .put(_, let body, _, _), .patch(_, let body, _, _):
+            return body
+        case .delete(_, _, _, let body):
             return body
         default:
             return nil
@@ -250,6 +285,12 @@ enum APIName: String {
     case getAppVersions = "/preReleaseVersions"
     case getVersionBuilds = "/builds"
     case postReleaseNote = "/betaBuildLocalizations"
+    case getBetaGroups = "/betaGroups"
+    // GET and POST share the /betaTesters path, so one enum case covers both
+    // (the HTTP verb comes from APIMethod): .get/.post(name: .getBetaTesters).
+    case getBetaTesters = "/betaTesters"
+    case patchBuildBetaDetail = "/buildBetaDetails"
+    case postBetaAppReviewSubmission = "/betaAppReviewSubmissions"
 }
 
 enum APIVersion: String {
@@ -263,7 +304,7 @@ enum APIMethod {
     case post(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "")
     case put(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "")
     case patch(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "")
-    case delete(name: APIName, queryParams: [String: String] = [:], path: String = "")
+    case delete(name: APIName, queryParams: [String: String] = [:], path: String = "", body: Data? = nil)
     
     var httpMethod:(String, String) {
         switch self {
@@ -275,14 +316,14 @@ enum APIMethod {
             return ("PUT",apiName.rawValue)
         case .patch(let apiName, _, _, _):
             return ("PATCH",apiName.rawValue)
-        case .delete(let apiName, _, _):
+        case .delete(let apiName, _, _, _):
             return ("DELETE",apiName.rawValue)
         }
     }
     
     var queryItems:[URLQueryItem]? {
         switch self {
-        case .get(_, let params, _), .delete(_, let params, _):
+        case .get(_, let params, _), .delete(_, let params, _, _):
             return params.map{ URLQueryItem(name: $0, value: String(describing: $1)) }
         case .post(_, _, let params, _), .put(_, _, let params, _), .patch(_, _, let params, _):
             return params.map{ URLQueryItem(name: $0, value: String(describing: $1)) }
@@ -291,7 +332,7 @@ enum APIMethod {
     
     var apiPath: String {
         switch self {
-        case .get(_,  _, let path), .delete(_, _, let path), .post(_, _, _, let path), .put(_, _, _, let path), .patch(_, _, _, let path):
+        case .get(_,  _, let path), .delete(_, _, let path, _), .post(_, _, _, let path), .put(_, _, _, let path), .patch(_, _, _, let path):
             return path.isEmpty ? "" : "/\(path)"
         }
     }
