@@ -231,29 +231,11 @@ jobs:
 
           # Call Ollama Cloud for review
           echo "🔄 Sending to Ollama Cloud for review..."
-          REVIEW_RESPONSE=$(curl -s \
-            -H "Authorization: Bearer $OLLAMA_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"model\": \"$MODEL\",
-              \"messages\": [
-                {
-                  \"role\": \"system\",
-                  \"content\": \"You are an expert iOS/Swift code reviewer. Review this PR diff carefully.\\n\\nFor each finding, use this format:\\n- **[BUG]** / **[IMPROVEMENT]** / **[BEST PRACTICE]** / **[SECURITY]** / **[PERFORMANCE]** / **[UI]**\\n- Severity: **[CRITICAL]** / **[HIGH]** / **[MEDIUM]** / **[LOW]**\\n- File: filename.swift (line N)\\n- Description: Clear explanation\\n- Suggestion: How to fix\\n\\nCategories:\\n- BUG: Crashes, logic errors, memory leaks, threading issues\\n- IMPROVEMENT: Could be done better but works\\n- BEST PRACTICE: Coding standards, naming, structure\\n- SECURITY: Vulnerabilities, unsafe code\\n- PERFORMANCE: Slow code, unnecessary work\\n- UI: Interface issues, accessibility\\n\\nIf no issues found, say: \\\"✅ No issues found. Great job!\\\"\"
-                },
-                {
-                  \"role\": \"user\",
-                  \"content\": \"Review this Swift/iOS PR diff:\\n\\n$DIFF\"
-                }
-              ],
-              \"stream\": false,
-              \"options\": {
-                \"temperature\": 0.3,
-                \"num_predict\": 8192
-              }
-            }" \
-            --max-time 600 \
-            https://ollama.com/v1/chat/completions)
+          echo "$DIFF" > /tmp/pr_diff.txt
+          REVIEW_RESPONSE=$(REVIEW_MODEL="$MODEL" \
+            OLLAMA_API_KEY="$OLLAMA_API_KEY" \
+            PR_DIFF_FILE="/tmp/pr_diff.txt" \
+            python3 .github/scripts/ollama-review.py 2>&1)
 
           # Extract review text
           REVIEW_TEXT=$(echo "$REVIEW_RESPONSE" | python3 -c "
@@ -277,14 +259,13 @@ jobs:
 
           # Post review as PR comment
           echo "📤 Posting review comment to PR..."
-          COMMENT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"body\": \"## 🤖 Ollama Cloud PR Review (Model: $MODEL)\\n\\n$REVIEW_TEXT\\n\\n---\\n*Automated review by Ollama Cloud. If this review seems inaccurate, please provide feedback.*\"
-            }" \
-            "https://api.github.com/repos/$OWNER/$REPO/issues/$PR_NUMBER/comments")
+          COMMENT_STATUS=$(REVIEW_TEXT="$REVIEW_TEXT" \
+            REVIEW_MODEL="$MODEL" \
+            GITHUB_TOKEN="$GITHUB_TOKEN" \
+            GITHUB_REPOSITORY_OWNER="$OWNER" \
+            GITHUB_REPOSITORY_NAME="$REPO" \
+            PR_NUMBER="$PR_NUMBER" \
+            python3 .github/scripts/post-review.py 2>&1)
 
           if [ "$COMMENT_STATUS" -eq 201 ]; then
             echo "✅ PASS: Review posted successfully!"
