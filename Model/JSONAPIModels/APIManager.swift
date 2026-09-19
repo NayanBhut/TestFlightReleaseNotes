@@ -7,6 +7,9 @@
 
 import Foundation
 import JSONAPI
+import OSLog
+
+private let apiLogger = Logger(subsystem: "com.appstore.release-notes", category: "API")
 
 final class APIClient {
     typealias JSONTaskCompletionHandler = (Data?, APIError?) -> Void
@@ -24,7 +27,7 @@ final class APIClient {
             }
             
             #if DEBUG
-            print("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+            apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
             #endif
             
             completion(data, nil)
@@ -32,6 +35,22 @@ final class APIClient {
         return task
     }
     
+    func callAPI(with request: URLRequest) async throws -> Data {
+        apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard response is HTTPURLResponse else {
+                throw APIError.requestFailed
+            }
+            return data
+        } catch let apiError as APIError {
+            throw apiError
+        } catch {
+            throw APIError.apiError(error: error.localizedDescription)
+        }
+    }
+
+    /// Legacy completion-handler shim. Kept until all callers migrate to async/await.
     func callAPI(with request: URLRequest, completion: @escaping (Result<Data, APIError>) -> Void) {
         let task = self.decodingTask(with: request) { data, error in
             // MARK: change to main queue

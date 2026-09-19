@@ -9,36 +9,24 @@ import SwiftUI
 
 struct BuildDetailsView: View {
     @ObservedObject var viewModel: DetailViewModel
-    
+
     var getBuidsData: ((String) -> Void)?
     var setBuidsData: ((String, String, String) -> Void)?
     var refreshBuildList: (() -> Void)?
     var loadMoreBuild: (() -> Void)?
-    
-    private static let iso8601Formatter = ISO8601DateFormatter()
-    private static let displayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.timeZone = .current
-        formatter.dateFormat = "MMM d, h:mm a"
-        return formatter
-    }()
-    
-    private static let customFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss Z"
-        return formatter
-    }()
-    
-    private static let customDisplayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "dd MMM HH:mm"
-        return formatter
-    }()
-    
+
     var body: some View {
         VStack(spacing: 0) {
-            // Show full screen loading when fetching builds
-            if !viewModel.isBuildsLoaded && viewModel.currentAppState == .appVersionBuildLoading {
+            switch viewModel.buildsState {
+            case .idle:
+                // No version selected yet
+                if viewModel.selectedVersion == nil {
+                    noVersionSelectedView
+                } else {
+                    Spacer()
+                }
+            case .loading:
+                // Show full screen loading when fetching builds
                 HStack {
                     Spacer()
                     VStack(spacing: 16) {
@@ -52,66 +40,31 @@ struct BuildDetailsView: View {
                     }
                     Spacer()
                 }
-            }
-            // Show message when no version is selected
-            else if viewModel.selectedVersion == nil {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 16) {
-                        Spacer()
-                        Image(systemName: "cube.box")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary)
-                        Text("No Version Selected")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                        Text("Select a version above to view its builds")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        Spacer()
-                    }
-                    .padding()
-                    Spacer()
+            case .error(let message):
+                ErrorRetryView(
+                    title: "Couldn't Load Builds",
+                    message: message,
+                    retryTitle: "Retry"
+                ) {
+                    viewModel.retryBuilds()
                 }
-            }
-            // Show builds list
-            else {
-                VStack(spacing: 0) {
-                    // Header
-                    HStack {
-                        Text("Builds")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        Spacer()
-                        
-                        if let total = viewModel.meta?.paging.total {
-                            Text("\(total) total")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Button(action: {
-                            viewModel.isBuildsLoaded = false
-                            viewModel.nextPageCursor = nil
-                            viewModel.meta = nil
-                            refreshBuildList?()
-                        }) {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    
+            case .empty:
+                if viewModel.selectedVersion == nil {
+                    noVersionSelectedView
+                } else {
+                    buildsHeader()
                     Divider()
-                    
+                    noBuildsView
+                }
+            case .loaded:
+                if viewModel.selectedVersion == nil {
+                    noVersionSelectedView
+                } else {
+                    buildsHeader()
+                    Divider()
                     // Builds list
                     getBuildsList()
-                    
+
                     // Load more button
                     if viewModel.nextPageCursor != nil {
                         VStack {
@@ -127,27 +80,146 @@ struct BuildDetailsView: View {
             }
         }
     }
-    
-    private func formatDate(_ dateString: String?) -> String {
-        guard let dateString = dateString,
-              let date = Self.iso8601Formatter.date(from: dateString) else {
-            return ""
+
+    private var noVersionSelectedView: some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 16) {
+                Spacer()
+                Image(systemName: "cube.box")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+                Text("No Version Selected")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                Text("Select a version above to view its builds")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            }
+            .padding()
+            Spacer()
         }
-        return Self.displayFormatter.string(from: date)
     }
-    
-    private func formatCustomDate(_ dateString: String) -> String? {
-        guard let date = Self.customFormatter.date(from: dateString) else {
-            return nil
+
+    private var noBuildsView: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "tray")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+            Text("No Builds Available")
+                .font(.title3)
+                .fontWeight(.medium)
+            Text("This version doesn't have any builds yet")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            Spacer()
         }
-        return Self.customDisplayFormatter.string(from: date)
+        .padding()
     }
-    
-    private func getBuildStatus(processingState: String, isExpired: Bool) -> (String, Color) {
+
+    private func buildsHeader() -> some View {
+        HStack {
+            Text("Builds")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Spacer()
+
+            if let total = viewModel.meta?.paging.total {
+                Text("\(total) total")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Button(action: {
+                refreshBuildList?()
+            }) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.buildsState.isLoading)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder private func getBuildsList() -> some View {
+        if viewModel.arrBuilds.isEmpty {
+            noBuildsView
+        } else {
+            List(viewModel.arrBuilds, id: \.id) { build in
+                BuildRowView(
+                    buildId: build.id,
+                    version: build.version ?? "",
+                    uploadedDate: build.uploadedDate ?? "",
+                    processingState: build.processingState ?? "",
+                    isExpired: build.expired ?? false,
+                    whatsNew: build.betaBuildLocalizations.first?.whatsNew ?? "",
+                    localizationId: build.betaBuildLocalizations.first?.id,
+                    selectedVersionString: viewModel.selectedVersion?.version ?? "",
+                    onTextChange: { newText in
+                        viewModel.updateBuildWhatsNew(buildId: build.id, whatsNew: newText)
+                    },
+                    onUpdate: {
+                        viewModel.saveBuildLocalization(buildId: build.id)
+                    },
+                    isUpdating: viewModel.isBuildUpdating(build.id)
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Shared build display helpers
+//
+// Single place for upload-date formatting (absolute + relative) and build
+// status. Views use these instead of inline closures so formatting stays
+// consistent and testable.
+
+enum BuildDisplayHelper {
+    private static let iso8601Formatter = ISO8601DateFormatter()
+
+    private static let displayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeZone = .current
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter
+    }()
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    static func uploadedDate(from dateString: String?) -> Date? {
+        guard let dateString = dateString, !dateString.isEmpty else { return nil }
+        return iso8601Formatter.date(from: dateString)
+    }
+
+    /// Single absolute date format used across build rows.
+    static func formattedUploadedDate(_ dateString: String?) -> String {
+        guard let date = uploadedDate(from: dateString) else { return "" }
+        return displayFormatter.string(from: date)
+    }
+
+    /// Relative time ("3 days ago") shown next to the absolute date.
+    static func relativeUploadedTime(_ dateString: String?) -> String? {
+        guard let date = uploadedDate(from: dateString) else { return nil }
+        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    static func buildStatus(processingState: String, isExpired: Bool) -> (String, Color) {
         if isExpired {
             return ("EXPIRED", .red)
         }
-        
+
         switch processingState {
         case "PROCESSING":
             return ("PROCESSING", .yellow)
@@ -161,49 +233,22 @@ struct BuildDetailsView: View {
             return ("", .clear)
         }
     }
-    
-    @ViewBuilder private func getBuildsList() -> some View {
-        if viewModel.arrBuilds.isEmpty {
-            // Empty state
-            VStack(spacing: 16) {
-                Spacer()
-                Image(systemName: "tray")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary)
-                Text("No Builds Available")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                Text("This version doesn't have any builds yet")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                Spacer()
-            }
-            .padding()
-        } else {
-            List(viewModel.arrBuilds, id: \.id) { build in
-                BuildRowView(
-                    buildId: build.id,
-                    version: build.version ?? "",
-                    uploadedDate: build.uploadedDate ?? "",
-                    processingState: build.processingState ?? "",
-                    isExpired: build.expired ?? false,
-                    whatsNew: build.betaBuildLocalizations.first?.whatsNew ?? "",
-                    localizationId: build.betaBuildLocalizations.first?.id,
-                    selectedVersionString: viewModel.selectedVersion?.version ?? "",
-                    formatDate: formatDate,
-                    formatCustomDate: formatCustomDate,
-                    getBuildStatus: getBuildStatus,
-                    onTextChange: { newText in
-                        viewModel.updateBuildWhatsNew(buildId: build.id, whatsNew: newText)
-                    },
-                    onUpdate: {
-                        viewModel.saveBuildLocalization(buildId: build.id)
-                    },
-                    isUpdating: viewModel.isBuildUpdating(build.id)
-                )
-            }
-        }
+}
+
+extension BuildsModel {
+    var displayStatus: (String, Color) {
+        BuildDisplayHelper.buildStatus(
+            processingState: processingState ?? "",
+            isExpired: expired ?? false
+        )
+    }
+
+    var formattedUploadedDate: String {
+        BuildDisplayHelper.formattedUploadedDate(uploadedDate)
+    }
+
+    var relativeUploadedTime: String? {
+        BuildDisplayHelper.relativeUploadedTime(uploadedDate)
     }
 }
 
