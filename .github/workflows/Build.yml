@@ -3,11 +3,18 @@
 
 name: Swift + PR Review
 
+# Single source of truth for the review model - referenced by all jobs
+env:
+  OLLAMA_MODEL: 'kimi-k3:cloud'
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+    # Restrict trigger types: the default fires on labeled/assigned/edited etc.,
+    # burning a paid LLM review on every label change
+    types: [opened, synchronize, reopened]
 
 # Cancel in-progress runs for the same PR
 concurrency:
@@ -17,6 +24,8 @@ concurrency:
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -30,30 +39,37 @@ jobs:
   # Ollama Cloud PR Review (runs only on PRs)
   # ──────────────────────────────────────────────
   pr-review:
-    if: github.event_name == 'pull_request'
+    # [skip-review] anywhere in the PR title skips the LLM review
+    # (as documented in the PR template)
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.title, '[skip-review]')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-      id-token: write
 
     outputs:
       review-success: ${{ steps.review-check.outputs.success }}
       review-model: ${{ steps.model-check.outputs.model }}
+      connectivity: ${{ steps.connectivity.outputs.connectivity }}
+      gh-auth: ${{ steps.gh-auth.outputs.gh-auth }}
+      diff: ${{ steps.diff-check.outputs.diff }}
+      validation: ${{ steps.validate.outputs.validation }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── TEST SCENARIO 1: Ollama Cloud API Connectivity ──
-      # Purpose: Verify Ollama Cloud endpoint is reachable before attempting review
-      # Failure fix: Check OLLAMA_API_KEY secret is set; verify network access to ollama.com
-      - name: Test 1 — Ollama Cloud Connectivity Check
+      # ── TEST SCENARIO 1: Ollama Cloud Auth ──
+      # Purpose: Verify the API key is valid WITHOUT consuming paid tokens.
+      # An empty-payload POST is rejected with HTTP 400 when auth succeeds
+      # (the request fails before any generation) and 401/403 when the key is bad.
+      # Failure fix: Check OLLAMA_API_KEY secret; verify network access to ollama.com
+      - name: Test 1 — Ollama Cloud Auth Check
         id: connectivity
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
-          echo "🔌 Testing Ollama Cloud connectivity..."
+          echo "🔌 Testing Ollama Cloud auth (zero-token probe)..."
 
           if [ -z "$OLLAMA_API_KEY" ]; then
             echo "❌ FAIL: OLLAMA_API_KEY is not set in repository secrets."
@@ -64,101 +80,87 @@ jobs:
           fi
 
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
             -H "Authorization: Bearer $OLLAMA_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"model": "kimi-k3:cloud", "messages": [{"role": "user", "content": "hi"}]}' \
+            -d '{}' \
             --max-time 30 \
             https://ollama.com/v1/chat/completions)
 
-          if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 400 ]; then
-            echo "✅ PASS: Ollama Cloud API is reachable (HTTP $HTTP_STATUS)"
+          # 400 = auth accepted, invalid payload rejected (no tokens generated)
+          # 401/403 = bad key
+          if [ "$HTTP_STATUS" -eq 400 ] || [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ PASS: Ollama Cloud auth OK (HTTP $HTTP_STATUS, zero tokens used)"
             echo "connectivity=ok" >> $GITHUB_OUTPUT
+          elif [ "$HTTP_STATUS" -eq 401 ] || [ "$HTTP_STATUS" -eq 403 ]; then
+            echo "❌ FAIL: API key rejected (HTTP $HTTP_STATUS)"
+            echo "Fix: Regenerate your key at https://ollama.com and update the secret"
+            echo "connectivity=failed" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo "❌ FAIL: Ollama Cloud API returned HTTP $HTTP_STATUS"
-            echo "Fix: Verify your Ollama Cloud API key is valid and active."
-            echo "Fix: Check https://ollama.com for service status."
+            echo "Fix: Check https://ollama.com for service status"
             echo "connectivity=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
 
       # ── TEST SCENARIO 2: Model Availability ──
-      # Purpose: Verify the specified model is available on Ollama Cloud
-      # Failure fix: Try a different model (e.g., qwen2.5-coder:7b, llama3.3, deepseek-r1:70b)
+      # Purpose: Verify the review model exists on Ollama Cloud, using the
+      # free /v1/models catalog instead of a paid generation.
+      # Failure fix: Update OLLAMA_MODEL in the workflow env block
       - name: Test 2 — Model Availability Check
         id: model-check
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
-          echo "🤖 Checking model availability..."
-          MODEL="kimi-k3:cloud"
-          FALLBACK_MODEL="qwen2.5-coder:7b"
+          echo "🤖 Checking model availability (catalog probe, zero tokens)..."
+          MODEL="$OLLAMA_MODEL"
+          # Catalog IDs drop the ':cloud' suffix (e.g. 'kimi-k3:cloud' → 'kimi-k3')
+          CATALOG_ID="${MODEL%%:*}"
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
+          HTTP_CODE=$(curl -s -o /tmp/models.json -w "%{http_code}" \
             -H "Authorization: Bearer $OLLAMA_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{"model": "'$MODEL'", "messages": [{"role": "user", "content": "hello"}]}' \
-            --max-time 60 \
-            https://ollama.com/v1/chat/completions)
+            --max-time 30 \
+            https://ollama.com/v1/models)
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-
-          if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "✅ PASS: Model '$MODEL' is available"
-            echo "model=$MODEL" >> $GITHUB_OUTPUT
-          elif echo "$BODY" | grep -qi "unavailable\|not found\|does not exist"; then
-            echo "⚠️ Model '$MODEL' not found. Trying fallback: '$FALLBACK_MODEL'..."
-
-            FALLBACK_RESPONSE=$(curl -s -w "\n%{http_code}" \
-              -H "Authorization: Bearer $OLLAMA_API_KEY" \
-              -H "Content-Type: application/json" \
-              -d '{"model": "'$FALLBACK_MODEL'", "messages": [{"role": "user", "content": "hello"}]}' \
-              --max-time 120 \
-              https://ollama.com/v1/chat/completions)
-
-            FALLBACK_CODE=$(echo "$FALLBACK_RESPONSE" | tail -1)
-            if [ "$FALLBACK_CODE" -eq 200 ]; then
-              echo "✅ PASS: Fallback model '$FALLBACK_MODEL' is available"
-              echo "model=$FALLBACK_MODEL" >> $GITHUB_OUTPUT
-            else
-              echo "❌ FAIL: Both models unavailable."
-              echo "Fix: Check available models at https://ollama.com/library"
-              echo "Fix: Update MODEL variable in workflow with a valid model name"
-              echo "model=unavailable" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-          else
-            echo "❌ FAIL: Unexpected error checking model."
-            echo "Body: $BODY"
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "❌ FAIL: Could not fetch model catalog (HTTP $HTTP_CODE)"
             echo "model=error" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-      # ── TEST SCENARIO 3: GitHub Token Permissions ──
-      # Purpose: Verify the GitHub token can post comments on the PR
+          if grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"$CATALOG_ID\"" /tmp/models.json; then
+            echo "✅ PASS: Model '$MODEL' is available"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+          else
+            echo "❌ FAIL: Model '$MODEL' not found in the Ollama Cloud catalog"
+            echo "Fix: Check available models at https://ollama.com/library"
+            echo "Fix: Update OLLAMA_MODEL in the workflow env block"
+            echo "model=unavailable" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      # ── TEST SCENARIO 3: GitHub Token Write Permissions ──
+      # Purpose: REALLY verify the token can post comments (a GET succeeds with
+      # read-only perms): creates a probe comment and deletes it.
       # Failure fix: Add 'pull-requests: write' to permissions in workflow
-      - name: Test 3 — GitHub Token Permission Check
+      - name: Test 3 — GitHub Token Write Check
         id: gh-auth
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "🔐 Checking GitHub token permissions..."
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          OWNER="${{ github.repository_owner }}"
-          REPO="${{ github.event.repository.name }}"
+          echo "🔐 Verifying GitHub token can write PR comments (probe)..."
 
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$OWNER/$REPO/issues/$PR_NUMBER/comments")
-
-          if [ "$STATUS" -eq 200 ]; then
-            echo "✅ PASS: GitHub token can post PR comments"
+          if PROBE=$(python3 .github/scripts/gh-write-probe.py 2>&1); then
+            echo "✅ PASS: Token write access confirmed ($PROBE)"
             echo "gh-auth=ok" >> $GITHUB_OUTPUT
           else
-            echo "❌ FAIL: GitHub token cannot post comments (HTTP $STATUS)"
-            echo "Fix: Add 'pull-requests: write' to permissions in workflow"
-            echo "Fix: Check that GITHUB_TOKEN has sufficient permissions"
+            echo "❌ FAIL: Token cannot post comments"
+            echo "Details: $PROBE"
+            echo "Fix: Add 'pull-requests: write' to the pr-review job permissions"
             echo "gh-auth=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -202,9 +204,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEW_MODEL: ${{ steps.model-check.outputs.model || 'kimi-k3:cloud' }}
+          REVIEW_MODEL: ${{ steps.model-check.outputs.model || env.OLLAMA_MODEL }}
         run: |
-          MODEL="${REVIEW_MODEL:-kimi-k3:cloud}"
+          MODEL="${REVIEW_MODEL:-$OLLAMA_MODEL}"
           echo "🤖 Starting PR Review with model: $MODEL"
 
           # Fetch PR diff
@@ -251,22 +253,23 @@ jobs:
             exit 1
           fi
 
-          # Post review as PR comment
+          # Post review as PR comment (or update the existing review comment).
+          # Wrapped in if/else: GitHub Actions runs bash -e, so a bare
+          # assignment would abort the step before this else branch could run.
           echo "📤 Posting review comment to PR..."
-          COMMENT_STATUS=$(REVIEW_TEXT="$REVIEW_TEXT" \
+          if COMMENT_STATUS=$(REVIEW_TEXT="$REVIEW_TEXT" \
             REVIEW_MODEL="$MODEL" \
             GITHUB_TOKEN="$GITHUB_TOKEN" \
             GITHUB_REPOSITORY_OWNER="$OWNER" \
             GITHUB_REPOSITORY_NAME="$REPO" \
             PR_NUMBER="$PR_NUMBER" \
-            python3 .github/scripts/post-review.py 2>&1)
-
-          if [ "$COMMENT_STATUS" -eq 201 ]; then
-            echo "✅ PASS: Review posted successfully!"
+            python3 .github/scripts/post-review.py 2>&1); then
+            echo "✅ PASS: Review comment posted ($COMMENT_STATUS)"
             echo "review=success" >> $GITHUB_OUTPUT
             echo "success=yes" >> $GITHUB_OUTPUT
           else
-            echo "❌ FAIL: Could not post review comment (HTTP $COMMENT_STATUS)"
+            echo "❌ FAIL: Could not post review comment"
+            echo "Details: $COMMENT_STATUS"
             echo "review=comment-failed" >> $GITHUB_OUTPUT
             echo "success=failed" >> $GITHUB_OUTPUT
             # Output review to workflow logs so it's not lost
@@ -279,7 +282,9 @@ jobs:
       # Purpose: Verify the review comment was actually posted
       # Failure fix: Check comment permissions; retry posting
       - name: Test 5 — Review Comment Validation
-        if: always()
+        # Only verify the comment when a review was actually posted; running
+        # after skips/failures would only emit confusing warnings
+        if: steps.review-check.outputs.success == 'yes'
         id: validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -291,10 +296,10 @@ jobs:
 
           COMMENTS=$(curl -s \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$OWNER/$REPO/issues/$PR_NUMBER/comments?per_page=5")
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/$REPO/issues/$PR_NUMBER/comments?per_page=100")
 
-          if echo "$COMMENTS" | grep -q "Ollama Cloud PR Review"; then
+          if echo "$COMMENTS" | grep -q "ollama-pr-review"; then
             echo "✅ PASS: Review comment verified on PR"
             echo "validation=ok" >> $GITHUB_OUTPUT
           else
@@ -320,25 +325,44 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 📊 Test Scenarios Summary
+        env:
+          CONNECTIVITY: ${{ needs.pr-review.outputs.connectivity }}
+          MODEL: ${{ needs.pr-review.outputs.review-model }}
+          GH_AUTH: ${{ needs.pr-review.outputs.gh-auth }}
+          DIFF: ${{ needs.pr-review.outputs.diff }}
+          VALIDATION: ${{ needs.pr-review.outputs.validation }}
+          REVIEW_RESULT: ${{ needs.pr-review.outputs.review-success }}
         run: |
-          echo "═══════════════════════════════════════════════════════════"
+          status() {
+            case "$1" in
+              ok) echo "✅ PASS" ;;
+              yes) echo "✅ PASS" ;;
+              failed) echo "❌ FAIL" ;;
+              unverified) echo "⚠️ WARN" ;;
+              no-diff) echo "⏭ Skipped (no diff)" ;;
+              "") echo "⏭ Not run" ;;
+              *) echo "ℹ️ $1" ;;
+            esac
+          }
+          echo "══════════════════════════════════════════════════════════"
           echo "         PR REVIEW TEST SCENARIOS REPORT"
-          echo "═══════════════════════════════════════════════════════════"
+          echo "══════════════════════════════════════════════════════════"
           echo ""
           echo "Test Scenario                        | Status"
-          echo "─────────────────────────────────────|───────────────"
-          echo "1. Ollama Cloud Connectivity         | ${{ needs.pr-review.outputs.review-success == 'yes' && '✅ PASS' || 'Check logs' }}"
-          echo "2. Model Availability               | ${{ needs.pr-review.outputs.review-model && '✅ PASS' || '❌ Check logs' }}"
-          echo "3. GitHub Token Permissions          | Check logs"
-          echo "4. PR Diff Accessibility             | Check logs"
-          echo "5. Review Comment Validation         | Check logs"
+          echo "───────────────────────────────────|───────────────"
+          echo "1. Ollama Cloud Auth                 | $(status "$CONNECTIVITY")"
+          echo "2. Model Availability                | $( [ -n "$MODEL" ] && echo '✅ PASS' || echo '❌ FAIL')"
+          echo "3. GitHub Token Write                | $(status "$GH_AUTH")"
+          echo "4. PR Diff Accessibility             | $(status "$DIFF")"
+          echo "5. Review Comment Validation         | $(status "$VALIDATION")"
           echo ""
-          echo "Review Result: ${{ needs.pr-review.outputs.review-success }}"
-          echo "Model Used: ${{ needs.pr-review.outputs.review-model }}"
-          echo "═══════════════════════════════════════════════════════════"
+          echo "Review Result: $(status "$REVIEW_RESULT")"
+          echo "Model Used: ${MODEL:-none}"
+          echo "══════════════════════════════════════════════════════════"
 
       - name: 📋 Failure Diagnostic Guide
-        if: always() && needs.pr-review.outputs.review-success != 'yes'
+        # Runs on real failures only; a graceful 'no-diff' skip is not a failure
+        if: always() && needs.pr-review.outputs.review-success != 'yes' && needs.pr-review.outputs.review-success != 'no-diff'
         run: |
           echo "🔧 TROUBLESHOOTING GUIDE"
           echo ""
@@ -348,8 +372,7 @@ jobs:
           echo ""
           echo "If Test 2 (Model) failed:"
           echo "  → Visit https://ollama.com/library to find available models"
-          echo "  → Update MODEL in the workflow yaml"
-          echo "  → Try: qwen2.5-coder:7b, llama3.3, deepseek-r1:70b"
+          echo "  → Update OLLAMA_MODEL in the workflow env block"
           echo ""
           echo "If Test 3 (GitHub Auth) failed:"
           echo "  → Add 'pull-requests: write' to permissions in workflow"
@@ -368,7 +391,8 @@ jobs:
   # Optional: Quick Smoke Test (for manual runs)
   # ──────────────────────────────────────────────
   smoke-test:
-    if: github.event_name == 'pull_request' && github.event.pull_request.title == '[smoke-test]'
+    # [smoke-test] anywhere in the PR title runs this quick connectivity check
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[smoke-test]')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -385,7 +409,7 @@ jobs:
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $OLLAMA_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"model": "kimi-k3:cloud", "messages": [{"role": "user", "content": "say hello in one line"}]}' \
+            -d '{"model": "'"$OLLAMA_MODEL"'", "messages": [{"role": "user", "content": "say hello in one line"}]}' \
             --max-time 60 \
             https://ollama.com/v1/chat/completions)
 

@@ -17,20 +17,20 @@ This document describes every test scenario built into the CI workflow and how t
 
 ## Test Scenarios (inside `pr-review` job)
 
-### Test 1 — Ollama Cloud Connectivity Check
+### Test 1 — Ollama Cloud Auth Check (zero tokens)
 
-**What it does:** Verifies the Ollama Cloud API endpoint is reachable and your API key is valid.
+**What it does:** Verifies your API key is valid WITHOUT generating tokens. It sends an empty-payload POST to `/v1/chat/completions`: a valid key gets HTTP 400 (payload rejected before any generation), a bad key gets 401/403.
 
 **What a pass looks like:**
 ```
-✅ PASS: Ollama Cloud API is reachable (HTTP 200)
+✅ PASS: Ollama Cloud auth OK (HTTP 400, zero tokens used)
 ```
 
 **What a failure looks like:**
 ```
 ❌ FAIL: OLLAMA_API_KEY is not set in repository secrets.
-❌ FAIL: Ollama Cloud API returned HTTP 401
-❌ FAIL: Ollama Cloud API returned HTTP 403
+❌ FAIL: API key rejected (HTTP 401)
+❌ FAIL: API key rejected (HTTP 403)
 ```
 
 **How to fix:**
@@ -42,47 +42,40 @@ This document describes every test scenario built into the CI workflow and how t
 
 ---
 
-### Test 2 — Model Availability Check
+### Test 2 — Model Availability Check (zero tokens)
 
-**What it does:** Checks that the configured model (`kimi-k3:cloud`) is available on Ollama Cloud. Falls back to `qwen2.5-coder:7b` if unavailable.
+**What it does:** Verifies the configured model exists on Ollama Cloud by checking the free `/v1/models` catalog — no paid generation. The model is configured once via the `OLLAMA_MODEL` env var at the top of the workflow.
 
 **What a pass looks like:**
 ```
 ✅ PASS: Model 'kimi-k3:cloud' is available
-✅ PASS: Fallback model 'qwen2.5-coder:7b' is available
 ```
 
 **What a failure looks like:**
 ```
-❌ FAIL: Both models unavailable.
-⚠️ Model 'kimi-k3:cloud' not found.
+❌ FAIL: Model 'kimi-k3:cloud' not found in the Ollama Cloud catalog
+❌ FAIL: Could not fetch model catalog (HTTP 500)
 ```
 
 **How to fix:**
-1. Visit the model library: https://ollama.com/library/kimi-k3
-2. Find a model that supports **chat** completions (not just completion)
-3. Update the `MODEL` value in `.github/workflows/Build.yml`
-4. Recommended models for code review:
-   - `kimi-k3:cloud` (best, Moonshot AI)
-   - `qwen2.5-coder:7b` (lightweight)
-   - `llama3.3`
-   - `deepseek-r1:70b`
+1. Check available models at https://ollama.com/library
+2. Update `OLLAMA_MODEL` in the `env:` block at the top of `.github/workflows/Build.yml`
 
 ---
 
-### Test 3 — GitHub Token Permission Check
+### Test 3 — GitHub Token Write Check
 
-**What it does:** Verifies the GitHub token can post comments on the PR.
+**What it does:** REALLY verifies the token can post comments. A plain GET succeeds with read-only permissions and gives false confidence, so this test creates a temporary probe comment and immediately deletes it — proving actual write access.
 
 **What a pass looks like:**
 ```
-✅ PASS: GitHub token can post PR comments
+✅ PASS: Token write access confirmed (ok)
 ```
 
 **What a failure looks like:**
 ```
-❌ FAIL: GitHub token cannot post comments (HTTP 403)
-❌ FAIL: GitHub token cannot post comments (HTTP 401)
+❌ FAIL: Token cannot post comments
+Details: CREATE_FAILED: HTTP 403 - token cannot post comments. Ensure 'pull-requests: write' is in the job permissions.
 ```
 
 **How to fix:**
@@ -92,7 +85,6 @@ This document describes every test scenario built into the CI workflow and how t
    permissions:
      contents: read
      pull-requests: write
-     id-token: write
    ```
 3. If using a fork PR, the built-in `GITHUB_TOKEN` cannot write to forks. Use a PAT with repo permissions:
    - Create a PAT at https://github.com/settings/tokens
@@ -129,7 +121,7 @@ This document describes every test scenario built into the CI workflow and how t
 
 ### Test 5 — Review Comment Validation
 
-**What it does:** After posting the review, verifies the comment actually appears on the PR.
+**What it does:** After posting the review, verifies the comment actually appears on the PR. Only runs when a review was actually posted (`success == 'yes'`) — running after skips/failures would only emit confusing warnings.
 
 **What a pass looks like:**
 ```
@@ -178,13 +170,15 @@ The `review-report` job automatically prints a troubleshooting guide with specif
 
 ## Smoke Test (Manual)
 
-To quickly test Ollama Cloud without posting a review, create a PR with `[smoke-test]` in the title:
+To quickly test Ollama Cloud without posting a review, create a PR with `[smoke-test]` anywhere in the title:
 
 ```
 Title: [smoke-test] quick connectivity check
 ```
 
-This runs a minimal API call and reports success/failure without posting any comments.
+This runs a minimal API call and reports success/failure without posting any review comments.
+
+**Skipping the review:** Add `[skip-review]` anywhere in the PR title and the LLM review job is skipped entirely (the Swift build still runs).
 
 ---
 
