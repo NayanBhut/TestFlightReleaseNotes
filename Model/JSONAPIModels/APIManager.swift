@@ -283,6 +283,9 @@ enum APIError: Error {
 enum APIName: String {
     case getAllApps = "/apps"
     case getAppVersions = "/preReleaseVersions"
+    // GET /builds fetches builds; PATCH on the same path (with a build id
+    // in `path`) expires a build. One case covers both since enum raw
+    // values must be unique.
     case getVersionBuilds = "/builds"
     case postReleaseNote = "/betaBuildLocalizations"
     case getBetaGroups = "/betaGroups"

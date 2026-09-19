@@ -69,8 +69,6 @@ struct BuildsModel: Equatable {
     @ResourceAttribute var expired: Bool?
     @ResourceRelationship var preReleaseVersion: PreReleaseVersionsModel?
     @ResourceRelationship var betaBuildLocalizations: [BuildLocalizationsModel]
-    
-    var isUpdatingLocalize = false
 }
 
 @ResourceWrapper(type: "appStoreVersionLocalizations")
@@ -89,6 +87,42 @@ struct BuildLocalizationsModel: Equatable {
     @ResourceAttribute var locale: String?
     @ResourceAttribute var whatsNew: String?
     @ResourceRelationship var build: BuildsModel?
+    
+    static func updateBody(id: String, whatsNew: String) -> BuildLocalizationsModel {
+        let model = BuildLocalizationsModel(id: id, locale: nil, whatsNew: whatsNew)
+        return model
+    }
+}
+
+/// POST body for creating a betaBuildLocalization. A plain Encodable struct
+/// (not the @ResourceWrapper model) because relationship linkage cannot be
+/// assigned through the wrapper's typed property.
+struct CreateLocalizationRequest: Encodable {
+    var data: CreateLocalizationData
+}
+
+struct CreateLocalizationData: Encodable {
+    var type = "betaBuildLocalizations"
+    var attributes: CreateLocalizationAttributes
+    var relationships: CreateLocalizationRelationships
+}
+
+struct CreateLocalizationAttributes: Encodable {
+    var locale: String
+    var whatsNew: String?
+}
+
+struct CreateLocalizationRelationships: Encodable {
+    var build: CreateLocalizationBuildLink
+}
+
+struct CreateLocalizationBuildLink: Encodable {
+    var data: CreateLocalizationBuildRef
+}
+
+struct CreateLocalizationBuildRef: Encodable {
+    var type = "builds"
+    var id: String
 }
 
 struct Meta: Equatable, Codable {
@@ -101,6 +135,19 @@ struct Meta: Equatable, Codable {
     let paging: Pagination
 }
 
+struct ExpireBuildRequest: Encodable {
+    let data: ExpireBuildData
+}
+
+struct ExpireBuildData: Encodable {
+    var type = "builds"
+    let id: String
+    let attributes: ExpireBuildAttributes
+}
+
+struct ExpireBuildAttributes: Encodable {
+    let expired: Bool
+}
 
 typealias BuildsDocument = CompoundDocument<[BuildsModel], Meta>
 typealias AppsDocument = CompoundDocument<[AppsData], Meta>

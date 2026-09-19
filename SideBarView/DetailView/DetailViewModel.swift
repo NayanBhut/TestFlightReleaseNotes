@@ -29,12 +29,21 @@ class DetailViewModel: ObservableObject {
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
 
-    @Published var updatingBuildId: String?
+    /// In-flight save keys ("buildId|locale") — per-locale so saving locale B
+    /// isn't blocked by an in-flight save of locale A.
+    @Published private(set) var updatingSaveKeys: Set<String> = []
     /// A failed release-note save, surfaced to the UI with a Retry action.
     @Published var saveError: BuildSaveError?
+    @Published var expireTogglingBuildId: String?
+    /// Toast event with identity: consecutive identical messages still
+    /// re-fire onChange (which only triggers on *value change*). The view
+    /// owns dismissal — the view model just publishes events.
+    @Published var toast: ToastEvent?
 
     private var cancellables = Set<AnyCancellable>()
     private let sidebarViewModel: SideBarViewModel
+    /// Injectable so clipboard writes can be tested or redirected.
+    private let pasteboard: PasteboardWriting
 
     /// In-flight builds fetch so a new fetch can cancel a stale one.
     private var buildsFetchTask: Task<Void, Never>?
@@ -63,8 +72,9 @@ class DetailViewModel: ObservableObject {
         versionsState.errorMessage
     }
 
-    init(sidebarViewModel: SideBarViewModel) {
+    init(sidebarViewModel: SideBarViewModel, pasteboard: PasteboardWriting = NSPasteboard.general) {
         self.sidebarViewModel = sidebarViewModel
+        self.pasteboard = pasteboard
         sidebarViewModel.$versionsState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] versionsState in
@@ -190,64 +200,114 @@ extension DetailViewModel {
         }
     }
 
-    func updateBuildWhatsNew(buildId: String, whatsNew: String) {
+    // MARK: - Multi-locale drafts (Phase 3)
+
+    /// Draft ids for localizations the server hasn't issued yet. The
+    /// create-vs-update decision keys off this prefix because a draft entry
+    /// always exists in the list once the user types (so "missing locale"
+    /// can never signal "needs POST").
+    private static let tempLocalizationPrefix = "temp-"
+
+    func updateBuildWhatsNew(buildId: String, locale: String, whatsNew: String) {
         guard case .loaded(var builds) = buildsState,
               let buildIndex = builds.firstIndex(where: { $0.id == buildId }) else { return }
 
-        if builds[buildIndex].betaBuildLocalizations.isEmpty {
+        if let index = builds[buildIndex].betaBuildLocalizations.firstIndex(where: { $0.locale == locale }) {
+            builds[buildIndex].betaBuildLocalizations[index].whatsNew = whatsNew
+        } else {
             let betaBuildLocalization = BuildLocalizationsModel(
-                id: buildId,
-                locale: Constants.defaultLocale,
+                id: "\(Self.tempLocalizationPrefix)\(UUID().uuidString)",
+                locale: locale,
                 whatsNew: whatsNew
             )
             builds[buildIndex].betaBuildLocalizations.append(betaBuildLocalization)
-        } else {
-            builds[buildIndex].betaBuildLocalizations[0].whatsNew = whatsNew
         }
         buildsState = .loaded(builds)
     }
 
-    func saveBuildLocalization(buildId: String) {
+    func getWhatsNew(for buildId: String, locale: String) -> String {
+        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }),
+              let localization = build.betaBuildLocalizations.first(where: { $0.locale == locale }) else {
+            return ""
+        }
+        return localization.whatsNew ?? ""
+    }
+
+    func getAllLocales(for buildId: String) -> [String] {
+        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }) else { return [BetaLocalizationLocales.defaultLocale] }
+        let locales = build.betaBuildLocalizations.compactMap { $0.locale }
+        return locales.isEmpty ? [BetaLocalizationLocales.defaultLocale] : locales
+    }
+
+    func saveBuildLocalization(buildId: String, locale: String) {
         guard case .loaded(let builds) = buildsState,
               let build = builds.first(where: { $0.id == buildId }),
-              let betaBuildLocalization = build.betaBuildLocalizations.first,
-              betaBuildLocalization.whatsNew != nil else { return }
+              let localization = build.betaBuildLocalizations.first(where: { $0.locale == locale }),
+              localization.whatsNew != nil else { return }
 
-        createOrUpdate(buildId: buildId, buildLocalization: betaBuildLocalization, localization: betaBuildLocalization.whatsNew ?? "")
+        createOrUpdate(buildId: buildId, buildLocalization: localization, localization: localization.whatsNew ?? "", locale: locale)
     }
 
     func isBuildUpdating(_ buildId: String) -> Bool {
-        return updatingBuildId == buildId
+        return updatingSaveKeys.contains { $0.hasPrefix("\(buildId)|") }
     }
 }
 
-// Constants
-private enum Constants {
+/// App Store Connect caps beta release notes at 4000 characters.
+enum WhatsNewLimits {
+    static let maxLength = 4000
+}
+
+/// Locales supported for TestFlight beta build localizations.
+enum BetaLocalizationLocales {
     static let defaultLocale = "en-US"
+
+    static let supported: [String] = [
+        "ar-SA", "ca", "cs", "da", "de", "el", "en-AU", "en-CA", "en-GB", "en-US",
+        "es-ES", "es-MX", "fi", "fr-FR", "he", "hi", "hr", "hu", "id", "it",
+        "ja", "ko", "ms", "nl", "no", "pl", "pt-BR", "pt-PT", "ro", "ru",
+        "sk", "sv", "th", "tr", "uk", "vi", "zh-Hans", "zh-Hant"
+    ]
+}
+
+/// Injectable pasteboard so clipboard writes can be tested or redirected.
+protocol PasteboardWriting {
+    func clear()
+    func setString(_ string: String)
+}
+
+extension NSPasteboard: PasteboardWriting {
+    func clear() { clearContents() }
+    func setString(_ string: String) { setString(string, forType: .string) }
+}
+
+/// Toast event with identity so consecutive identical messages still
+/// re-fire `onChange` (which only triggers on value change).
+struct ToastEvent: Equatable {
+    let id = UUID()
+    let message: String
 }
 
 extension DetailViewModel {
-    func createOrUpdate(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String) {
-        guard updatingBuildId != buildId else { return }
-        updatingBuildId = buildId
+    func createOrUpdate(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) {
+        let saveKey = "\(buildId)|\(locale)"
+        guard !updatingSaveKeys.contains(saveKey) else {
+            showToast("A save is already in progress for this build.")
+            return
+        }
+        updatingSaveKeys.insert(saveKey)
 
         Task {
-            guard case .loaded(let builds) = buildsState,
-                  let buildIndex = builds.firstIndex(where: { $0.id == buildId }) else {
-                updatingBuildId = nil
-                return
-            }
-            let arrLocalizations = builds[buildIndex].betaBuildLocalizations
-            if arrLocalizations.isEmpty {
-                await createBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization)
+            if buildLocalization.id.hasPrefix(Self.tempLocalizationPrefix) {
+                await createBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization, locale: locale)
             } else {
-                await updateBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization)
+                await updateBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization, locale: locale)
             }
         }
     }
 
-    private func updateBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String) async {
-        defer { updatingBuildId = nil }
+    private func updateBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) async {
+        defer { updatingSaveKeys.remove("\(buildId)|\(locale)") }
 
         let model = BuildLocalizationsModel.updateBody(id: buildLocalization.id, whatsNew: buildLocalization.whatsNew)
         let encoder = JSONAPIEncoder()
@@ -255,7 +315,7 @@ extension DetailViewModel {
 
         guard let data = try? encoder.encode(model),
               let request = APIClient.shared.getRequest(api: .patch(name: .postReleaseNote, body: data, path: buildLocalization.id), apiVersion: .v1) else {
-            saveError = BuildSaveError(buildId: buildId, message: "Couldn't build the update request.")
+            saveError = BuildSaveError(buildId: buildId, locale: locale, message: "Couldn't build the update request.")
             return
         }
 
@@ -264,7 +324,7 @@ extension DetailViewModel {
             let model = try getDecoder().decode(BuildLocalizationsModel.self, from: responseData)
 
             // Re-locate the build after the await: the list may have changed
-            // (refresh, pagination) since the save started, so the captured
+            // (refresh, pagination) since the save started, so a captured
             // index would be unreliable.
             guard case .loaded(var builds) = buildsState,
                   let buildIndex = builds.firstIndex(where: { $0.id == buildId }) else { return }
@@ -281,29 +341,29 @@ extension DetailViewModel {
             }
         } catch {
             detailLogger.error("Failed to update localization: \(error.localizedDescription)")
-            saveError = BuildSaveError(buildId: buildId, message: friendlySaveMessage(for: error))
+            saveError = BuildSaveError(buildId: buildId, locale: locale, message: friendlySaveMessage(for: error))
         }
     }
 
-    private func createBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String) async {
-        defer { updatingBuildId = nil }
+    private func createBuildLocalization(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) async {
+        defer { updatingSaveKeys.remove("\(buildId)|\(locale)") }
 
-        guard case .loaded(let builds) = buildsState,
-              let currentBuildId = builds.first(where: { $0.id == buildId })?.id else {
-            return
-        }
-
-        let model = BuildLocalizationsModel.createBody(
-            locale: Constants.defaultLocale,
-            whatsNew: buildLocalization.whatsNew,
-            build: RelationshipOne(id: currentBuildId)
+        let body = CreateLocalizationRequest(
+            data: CreateLocalizationData(
+                attributes: CreateLocalizationAttributes(locale: locale, whatsNew: buildLocalization.whatsNew),
+                relationships: CreateLocalizationRelationships(
+                    build: CreateLocalizationBuildLink(
+                        data: CreateLocalizationBuildRef(id: buildId)
+                    )
+                )
+            )
         )
-        let encoder = JSONAPIEncoder()
+        let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        guard let data = try? encoder.encode(model),
+        guard let data = try? encoder.encode(body),
               let request = APIClient.shared.getRequest(api: .post(name: .postReleaseNote, body: data), apiVersion: .v1) else {
-            saveError = BuildSaveError(buildId: buildId, message: "Couldn't build the save request.")
+            saveError = BuildSaveError(buildId: buildId, locale: locale, message: "Couldn't build the save request.")
             return
         }
 
@@ -322,16 +382,16 @@ extension DetailViewModel {
                 whatsNew: model.whatsNew
             )
 
-            // Replace the temporary localization with the real one from API
-            if currentBuilds[buildIndex].betaBuildLocalizations.isEmpty {
-                currentBuilds[buildIndex].betaBuildLocalizations.append(buildLocalizationsModel)
+            // Replace the temporary draft with the real one from the API.
+            if let index = currentBuilds[buildIndex].betaBuildLocalizations.firstIndex(where: { $0.locale == locale }) {
+                currentBuilds[buildIndex].betaBuildLocalizations[index] = buildLocalizationsModel
             } else {
-                currentBuilds[buildIndex].betaBuildLocalizations[0] = buildLocalizationsModel
+                currentBuilds[buildIndex].betaBuildLocalizations.append(buildLocalizationsModel)
             }
             buildsState = .loaded(currentBuilds)
         } catch {
             detailLogger.error("Failed to create localization: \(error.localizedDescription)")
-            saveError = BuildSaveError(buildId: buildId, message: friendlySaveMessage(for: error))
+            saveError = BuildSaveError(buildId: buildId, locale: locale, message: friendlySaveMessage(for: error))
         }
     }
 
@@ -341,12 +401,77 @@ extension DetailViewModel {
         }
         return error.localizedDescription
     }
+
+    // MARK: - Expire build (Phase 3)
+
+    /// Expires a build. There is no unexpire API (PATCH expired=false
+    /// returns 409), so the UI never offers this for expired builds.
+    func expireBuild(buildId: String) {
+        guard case .loaded(let builds) = buildsState,
+              let build = builds.first(where: { $0.id == buildId }),
+              build.expired != true,
+              expireTogglingBuildId != buildId else { return }
+
+        expireTogglingBuildId = buildId
+
+        let requestBody = ExpireBuildRequest(
+            data: ExpireBuildData(
+                id: buildId,
+                attributes: ExpireBuildAttributes(expired: true)
+            )
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(requestBody),
+              let request = APIClient.shared.getRequest(api: .patch(name: .getVersionBuilds, body: data, path: buildId), apiVersion: .v1) else {
+            expireTogglingBuildId = nil
+            showToast("Couldn't build the expire request.")
+            return
+        }
+
+        Task {
+            defer { expireTogglingBuildId = nil }
+            do {
+                let responseData = try await APIClient.shared.callAPI(with: request)
+                let model = try getDecoder().decode(BuildsModel.self, from: responseData)
+                guard case .loaded(var currentBuilds) = buildsState,
+                      let buildIndex = currentBuilds.firstIndex(where: { $0.id == buildId }) else { return }
+                var updatedBuild = currentBuilds[buildIndex]
+                updatedBuild.expired = model.expired ?? true
+                currentBuilds[buildIndex] = updatedBuild
+                buildsState = .loaded(currentBuilds)
+                showToast("Build expired")
+            } catch {
+                detailLogger.error("Failed to expire build: \(error.localizedDescription)")
+                showToast("Failed to expire build")
+            }
+        }
+    }
+
+    func copyVersionAndBuildId(buildId: String) {
+        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }),
+              let version = selectedVersion?.version else { return }
+
+        let versionBuildString = "\(version) (\(build.version ?? "")) - Build ID: \(buildId)"
+        pasteboard.clear()
+        pasteboard.setString(versionBuildString)
+        showToast("Copied: \(versionBuildString)")
+    }
+
+    private func showToast(_ message: String) {
+        // The view owns dismissal timing; each event carries a fresh UUID so
+        // even identical consecutive messages re-trigger onChange.
+        toast = ToastEvent(message: message)
+    }
 }
 
 /// A failed release-note save, surfaced to the UI with a Retry action.
 struct BuildSaveError: Identifiable, Equatable {
     let buildId: String
+    let locale: String
     let message: String
 
-    var id: String { buildId }
+    var id: String { "\(buildId)-\(locale)" }
 }
