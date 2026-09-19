@@ -7,31 +7,67 @@
 
 import Foundation
 import JSONAPI
+import OSLog
+
+private let apiLogger = Logger(subsystem: "com.appstore.release-notes", category: "API")
 
 final class APIClient {
     typealias JSONTaskCompletionHandler = (Data?, APIError?) -> Void
     
     static let shared = APIClient()
     private let baseURL = "https://api.appstoreconnect.apple.com/"
+    /// Injectable so tests can mock responses with a URLProtocol stub.
+    private let session: URLSession
     
-    private init() { }
+    private init(session: URLSession = .shared) {
+        self.session = session
+    }
     
     private func decodingTask(with request: URLRequest, completionHandler completion: @escaping JSONTaskCompletionHandler) -> URLSessionDataTask {
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(nil, .apiError(error: error.localizedDescription))
+                return
+            }
             guard let httpResponse = response as? HTTPURLResponse else {
                 completion(nil, .requestFailed)
                 return
             }
             
             #if DEBUG
-            print("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+            apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
             #endif
+            
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                completion(nil, .httpError(statusCode: httpResponse.statusCode))
+                return
+            }
             
             completion(data, nil)
         }
         return task
     }
     
+    func callAPI(with request: URLRequest) async throws -> Data {
+        apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.requestFailed
+            }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                apiLogger.error("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+                throw APIError.httpError(statusCode: httpResponse.statusCode)
+            }
+            return data
+        } catch let apiError as APIError {
+            throw apiError
+        } catch {
+            throw APIError.apiError(error: error.localizedDescription)
+        }
+    }
+
+    /// Legacy completion-handler shim. Kept until all callers migrate to async/await.
     func callAPI(with request: URLRequest, completion: @escaping (Result<Data, APIError>) -> Void) {
         let task = self.decodingTask(with: request) { data, error in
             // MARK: change to main queue
@@ -164,6 +200,7 @@ enum APIError: Error {
     case jsonParsingFailure
     case apiErrorWithCode(error: String, _ statusCode: Int? = nil, _ apiError: Error? = nil)
     case apiError(error: String)
+    case httpError(statusCode: Int)
     case noResponse(statusCode: String)
     case otherResponse(statusCode: String)
     case statusResponse(error: String)
@@ -184,6 +221,8 @@ enum APIError: Error {
             return error.localizedLowercase
         case .apiError(let error):
             return error
+        case .httpError(let statusCode):
+            return "Request failed (HTTP \(statusCode))"
         case .noResponse(let statusCode):
             return statusCode
         case .otherResponse(let statusCode):
@@ -196,6 +235,8 @@ enum APIError: Error {
     var statusCode: Int? {
         switch self {
         case .apiErrorWithCode(_, let code, _):
+            return code
+        case .httpError(let code):
             return code
 
         default:

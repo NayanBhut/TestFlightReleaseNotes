@@ -4,3 +4,15 @@ xcuserdata/
 build/
 *.xcworkspace/xcshareddata/
 *.xcodeproj/xcuserdata/
+
+# Python
+__pycache__/
+
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.swiftpm/
+.build/
