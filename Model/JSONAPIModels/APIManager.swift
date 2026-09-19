@@ -11,6 +11,12 @@ import OSLog
 
 private let apiLogger = Logger(subsystem: "com.appstore.release-notes", category: "API")
 
+/// App Store Connect rejects tokens expiring more than 20 minutes ahead,
+/// so this is both the signing duration and the basis for cache lifetime.
+enum JWTLimits {
+    static let expiryInterval: TimeInterval = 60 * 20
+}
+
 final class APIClient {
     typealias JSONTaskCompletionHandler = (Data?, APIError?) -> Void
     
@@ -21,14 +27,23 @@ final class APIClient {
     
     private let jwtCacheQueue = DispatchQueue(label: "com.appstore.jwtcache", attributes: .concurrent)
     private var jwtCache: [String: (token: String, expiry: Date)] = [:]
-    private let jwtExpiryInterval: TimeInterval = 60 * 20
-    
+    /// Cached slightly shorter than the token's own lifetime so a token
+    /// pulled near the end of its life can't expire server-side mid-request.
+    private let jwtCacheLifetime: TimeInterval = JWTLimits.expiryInterval - 120
+
     private init(session: URLSession = .shared) {
         self.session = session
     }
-    
+
+    /// Cache key includes a hash of the private key so re-adding a
+    /// credential with the same Key ID + Issuer ID but a new .p8 never
+    /// reuses tokens signed with the old key.
+    private func cacheKey(for credential: Credential) -> String {
+        "\(credential.keyID)-\(credential.issuerID)-\(credential.privateKey.hashValue)"
+    }
+
     private func cachedJWTToken(for credential: Credential) -> String? {
-        let key = "\(credential.keyID)-\(credential.issuerID)"
+        let key = cacheKey(for: credential)
         return jwtCacheQueue.sync {
             if let cached = jwtCache[key], Date() < cached.expiry {
                 return cached.token
@@ -36,31 +51,32 @@ final class APIClient {
             return nil
         }
     }
-    
+
     private func storeJWTToken(_ token: String, for credential: Credential) {
-        let key = "\(credential.keyID)-\(credential.issuerID)"
-        let expiry = Date().addingTimeInterval(jwtExpiryInterval)
+        let key = cacheKey(for: credential)
+        let expiry = Date().addingTimeInterval(jwtCacheLifetime)
         jwtCacheQueue.async(flags: .barrier) {
             self.jwtCache[key] = (token: token, expiry: expiry)
         }
     }
-    
-    private func clearJWTToken(for credential: Credential) {
-        let key = "\(credential.keyID)-\(credential.issuerID)"
+
+    /// Evict everything on auth rejection — a cached token that just
+    /// produced a 401 must not poison subsequent requests.
+    func clearAllJWTTokens() {
         jwtCacheQueue.async(flags: .barrier) {
-            self.jwtCache.removeValue(forKey: key)
+            self.jwtCache.removeAll()
         }
     }
-    
+
     private func signingToken(for credential: Credential) throws -> String {
         if let cached = cachedJWTToken(for: credential) {
             return cached
         }
-        let token = try JWT(keyIdentifier: credential.keyID, issuerIdentifier: credential.issuerID, expireDuration: 60 * 20).signedToken(using: credential.privateKey)
+        let token = try JWT(keyIdentifier: credential.keyID, issuerIdentifier: credential.issuerID, expireDuration: JWTLimits.expiryInterval).signedToken(using: credential.privateKey)
         storeJWTToken(token, for: credential)
         return token
     }
-    
+
     private func decodingTask(with request: URLRequest, completionHandler completion: @escaping JSONTaskCompletionHandler) -> URLSessionDataTask {
         let task = session.dataTask(with: request) { data, response, error in
             if let error = error {
@@ -88,7 +104,12 @@ final class APIClient {
             }
             #endif
             
-            if httpResponse.statusCode >= 400 {
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                // A cached token that just got rejected must not poison
+                // subsequent requests.
+                if httpResponse.statusCode == 401 {
+                    self.clearAllJWTTokens()
+                }
                 var errorMessage = ""
                 if let data = data {
                     if let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
@@ -100,8 +121,14 @@ final class APIClient {
                 case 401:
                     errorMessage = errorMessage.isEmpty ? "Invalid credentials" : errorMessage
                 case 429:
+                    // Only mention Retry-After when the header is present —
+                    // otherwise the message ends with a dangling "Retry after ".
                     let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? ""
-                    errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
+                    if !retryAfter.isEmpty {
+                        errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
+                    } else if errorMessage.isEmpty {
+                        errorMessage = "Rate limited"
+                    }
                 case 500:
                     errorMessage = errorMessage.isEmpty ? "Server error" : errorMessage
                 default:
@@ -146,6 +173,9 @@ final class APIClient {
             }
             guard (200..<300).contains(httpResponse.statusCode) else {
                 apiLogger.error("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
+                if httpResponse.statusCode == 401 {
+                    clearAllJWTTokens()
+                }
                 throw APIError.httpError(statusCode: httpResponse.statusCode)
             }
             return data
@@ -177,11 +207,13 @@ final class APIClient {
     func getRequest(api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
         guard let team = CredentialStorage.shared.selectedTeam else { return nil }
         guard let token = try? signingToken(for: team) else {
+            // Distinguish 'bad private key' from 'no team selected' in logs.
+            apiLogger.error("JWT signing failed — check the stored private key for team '\(team.key)'")
             return nil
         }
         if let url = getURL(api: api, apiVersion: apiVersion) {
             var request = URLRequest(url: url)
-            request.allHTTPHeaderFields = getHeader(team: team, token: token)
+            request.allHTTPHeaderFields = getHeader(token: token)
             request.httpMethod = api.httpMethod.0
             request.httpBody = getAPIBody(httpMethod: api)
             return request
@@ -211,11 +243,9 @@ final class APIClient {
         }
     }
     
-    private func getHeader(team: Credential?, token: String? = nil) -> [String: String] {
-        var requestHeader = ["Content-Type": "application/json"]
-        guard let credential = team, let token = token else { return requestHeader }
-        requestHeader["Authorization"] = "Bearer " + token
-        return requestHeader
+    private func getHeader(token: String) -> [String: String] {
+        ["Content-Type": "application/json",
+         "Authorization": "Bearer \(token)"]
     }
     
     private func getURL(api: APIMethod, apiVersion: APIVersion = .v1) -> URL? {

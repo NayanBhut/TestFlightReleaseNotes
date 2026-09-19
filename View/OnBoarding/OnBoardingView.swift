@@ -71,6 +71,19 @@ struct OnBoardingView: View {
                     .scrollContentBackground(.hidden)
             }
             
+            // Duplicate team name warning — a duplicate would silently
+            // overwrite the existing Keychain entry.
+            if viewModel.isFormValid && viewModel.isDuplicateTeam {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("A team with this name already exists")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                .padding(.vertical, 2)
+            }
+
             // Error message
             if let errorMessage = viewModel.errorMessage {
                 HStack {

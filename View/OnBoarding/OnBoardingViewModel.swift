@@ -23,24 +23,33 @@ class OnBoardingViewModel: ObservableObject {
         !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
+    /// Cached so repeated SwiftUI body evaluations don't re-sign the EC
+    /// key on every keystroke — only when an input actually changes.
+    private var jwtValidationCache: (inputs: String, isValid: Bool)?
+    
     var isJWTValid: Bool {
         guard !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
-        do {
-            _ = try JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
-                        issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-                        expireDuration: 60 * 20)
-            return true
-        } catch {
-            return false
+        let inputs = "\(keyId)|\(issuerID)|\(privateKey)"
+        if let cache = jwtValidationCache, cache.inputs == inputs {
+            return cache.isValid
         }
+        // Actually sign: the JWT initializer is non-throwing, so only a
+        // successful signedToken() proves the credentials work.
+        let isValid = (try? JWT(
+            keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
+            issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
+            expireDuration: JWTLimits.expiryInterval
+        ).signedToken(using: privateKey.trimmingCharacters(in: .whitespacesAndNewlines))) != nil
+        jwtValidationCache = (inputs, isValid)
+        return isValid
     }
     
     var isContinueEnabled: Bool {
-        isFormValid && isJWTValid
+        isFormValid && isJWTValid && !isDuplicateTeam
     }
     
     func getAllApps(completion: @escaping ((Bool) -> Void)) {
@@ -101,7 +110,7 @@ class OnBoardingViewModel: ObservableObject {
         var requestHeader = ["Content-Type": "application/json"]
         if let token = try? JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
                                 issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-                                expireDuration: 60 * 20).signedToken(using: privateKey.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                                expireDuration: JWTLimits.expiryInterval).signedToken(using: privateKey.trimmingCharacters(in: .whitespacesAndNewlines)) {
             requestHeader["Authorization"] = "Bearer " + token
         }
         return requestHeader
@@ -127,12 +136,12 @@ class OnBoardingViewModel: ObservableObject {
     
     func showOpenPanel() -> URL? {
         let openPanel = NSOpenPanel()
-        openPanel.prompt = "Open"
+        openPanel.prompt = "Choose"
         openPanel.canChooseFiles = true
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
-        openPanel.title = "Open Folder"
+        openPanel.title = "Select your App Store Connect API key"
         openPanel.allowedContentTypes = [UTType(filenameExtension: "p8")!]
         let response = openPanel.runModal()
         return response == .OK ? openPanel.url : nil
@@ -140,6 +149,6 @@ class OnBoardingViewModel: ObservableObject {
     
     var isDuplicateTeam: Bool {
         let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return CredentialStorage.shared.getTeams.contains(cleanTeamName)
+        return !cleanTeamName.isEmpty && CredentialStorage.shared.getTeams.contains(cleanTeamName)
     }
 }

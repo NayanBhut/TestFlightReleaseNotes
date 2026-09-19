@@ -69,7 +69,9 @@ struct SideBarView: View {
         }
         .onAppear {
             if CredentialStorage.shared.selectedTeam == nil {
-                if CredentialStorage.shared.restoreDefaultTeam() {
+                // restoreDefaultTeam() returns true on SUCCESS (a team was
+                // restored) — log out only when nothing could be restored.
+                if !CredentialStorage.shared.restoreDefaultTeam() {
                     navigationManager.isLoggedIn = false
                 }
             }

@@ -70,11 +70,13 @@ final class CredentialStorage {
         return nil
     }
     
+    @discardableResult
     func deleteCredential(for key: String) -> Bool {
         guard getCredential(key: key) != nil else { return false }
         return CredentialStorage.keychain.delete(key)
     }
-    
+
+    @discardableResult
     func restoreDefaultTeam() -> Bool {
         let teams = getTeams
         guard !teams.isEmpty else { return false }
@@ -90,7 +92,7 @@ extension CredentialStorage {
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: false
-        ] as [String: Any]
+        ]
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
