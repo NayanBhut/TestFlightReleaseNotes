@@ -6,12 +6,15 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct BuildDetailsView: View {
     @ObservedObject var viewModel: DetailViewModel
+    @StateObject private var exportManager = ExportManager()
+    @State private var showExportMenu = false
+    @State private var exportURL: URL?
+    @State private var showExportSheet = false
     
-    var getBuidsData: ((String) -> Void)?
-    var setBuidsData: ((String, String, String) -> Void)?
     var refreshBuildList: (() -> Void)?
     var loadMoreBuild: (() -> Void)?
     
@@ -37,7 +40,6 @@ struct BuildDetailsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Show full screen loading when fetching builds
             if !viewModel.isBuildsLoaded && viewModel.currentAppState == .appVersionBuildLoading {
                 HStack {
                     Spacer()
@@ -52,9 +54,7 @@ struct BuildDetailsView: View {
                     }
                     Spacer()
                 }
-            }
-            // Show message when no version is selected
-            else if viewModel.selectedVersion == nil {
+            } else if viewModel.selectedVersion == nil {
                 HStack {
                     Spacer()
                     VStack(spacing: 16) {
@@ -74,11 +74,8 @@ struct BuildDetailsView: View {
                     .padding()
                     Spacer()
                 }
-            }
-            // Show builds list
-            else {
+            } else {
                 VStack(spacing: 0) {
-                    // Header
                     HStack {
                         Text("Builds")
                             .font(.title2)
@@ -109,20 +106,21 @@ struct BuildDetailsView: View {
                     
                     Divider()
                     
-                    // Builds list
                     getBuildsList()
                     
-                    // Load more button
                     if viewModel.nextPageCursor != nil {
                         VStack {
                             Divider()
-                            Button("Load More Builds") {
-                                loadMoreBuild?()
-                            }
-                            .buttonStyle(.bordered)
-                            .padding(.vertical, 12)
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .onAppear {
+                                    Task {
+                                        await viewModel.loadMoreBuilds(cursor: viewModel.nextPageCursor!)
+                                    }
+                                }
                         }
                     }
+                    
                 }
             }
         }
@@ -164,7 +162,6 @@ struct BuildDetailsView: View {
     
     @ViewBuilder private func getBuildsList() -> some View {
         if viewModel.arrBuilds.isEmpty {
-            // Empty state
             VStack(spacing: 16) {
                 Spacer()
                 Image(systemName: "tray")

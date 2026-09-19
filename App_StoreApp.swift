@@ -10,21 +10,27 @@ import SwiftUI
 @main
 struct App_StoreApp: App {
     @StateObject private var navigationManager = NavigationManager()
+    @StateObject private var viewModel = SideBarViewModel()
+    @StateObject private var exportManager = ExportManager()
     
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(navigationManager)
+                .environmentObject(viewModel)
+                .environmentObject(exportManager)
         }
     }
 }
 
 struct RootView: View {
     @EnvironmentObject var navigationManager: NavigationManager
+    @EnvironmentObject var viewModel: SideBarViewModel
+    @EnvironmentObject var exportManager: ExportManager
     @State private var showOnboarding = true
 
     var body: some View {
-        ContentView()
+        ContentView(viewModel: viewModel, exportManager: exportManager)
             .environmentObject(navigationManager)
             .sheet(isPresented: $showOnboarding) {
                 OnBoardingView(isLoggedIn: $navigationManager.isLoggedIn)
@@ -34,7 +40,6 @@ struct RootView: View {
             }
             .onAppear {
                 navigationManager.checkLoginState()
-                // Show onboarding sheet if not logged in
                 showOnboarding = !navigationManager.isLoggedIn
             }
             .onChange(of: navigationManager.isLoggedIn) { newValue in

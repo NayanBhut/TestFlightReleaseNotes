@@ -32,14 +32,6 @@ class DetailViewModel: ObservableObject {
     
     
     init(sidebarViewModel: SideBarViewModel) {
-        // Subscribe to sidebarViewModel's selectedItem changes
-//        sidebarViewModel.$currentTeam
-//            .receive(on: DispatchQueue.main)
-//            .sink { [weak self] currentTeam in
-//                self?.currentTeam = currentTeam
-//            }
-//            .store(in: &cancellables)
-        
         sidebarViewModel.$arrVersion
             .receive(on: DispatchQueue.main)
             .sink { [weak self] arrVersion in
@@ -86,7 +78,7 @@ extension DetailViewModel {
                            "filter[preReleaseVersion]": version.id,
                            "sort": "-version",
                            "include": "appStoreVersion,betaBuildLocalizations,preReleaseVersion",
-                           "limit": "5"]
+                           "limit": String(AppConfigs.buildLimit)]
         
         if let cursor = cursor {
             queryParams["cursor"] = cursor
@@ -153,6 +145,15 @@ extension DetailViewModel {
     
     func isBuildUpdating(_ buildId: String) -> Bool {
         return updatingBuildId == buildId
+    }
+    
+    func loadMoreBuilds(cursor: String) async {
+        await MainActor.run {
+            guard let nextPage = self.nextPageCursor else { return }
+        }
+        guard let version = selectedVersion else { return }
+        guard let app = selectedApp else { return }
+        getBuilds(app: app, version: version, cursor: cursor)
     }
 }
 

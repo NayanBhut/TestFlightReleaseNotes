@@ -14,10 +14,10 @@ struct SideBarView: View {
     @Binding var isAddNewTeam: Bool
     @Binding var isNewAccountAdded: Bool
     @State var showTeams = false
+    @State var showStateFilterMenu = false
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header section
             VStack(spacing: 12) {
                 HStack {
                     Text("Apps")
@@ -34,12 +34,56 @@ struct SideBarView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Add Team")
+                    
+                    Button(action: {
+                        viewModel.getiOSApps()
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 16))
+                            .help("Refresh (Cmd+R)")
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("r", modifiers: .command)
                 }
                 
-                // Team selector
                 teamSelector()
                 
-                // Refresh button
+                // Search field
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    
+                    TextField("Search apps...", text: $viewModel.searchText)
+                        .textFieldStyle(.plain)
+                        .font(.subheadline)
+                    
+                    if !viewModel.searchText.isEmpty {
+                        Button {
+                            viewModel.searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+                
+                // State filter and sort side by side
+                HStack(spacing: 8) {
+                    stateFilterDropdown()
+                    sortToggle()
+                }
+                
                 HStack {
                     Button(action: {
                         viewModel.getiOSApps()
@@ -64,7 +108,6 @@ struct SideBarView: View {
             
             Divider()
             
-            // Apps list
             appList()
         }
         .onAppear {
@@ -175,10 +218,79 @@ struct SideBarView: View {
         }
     }
     
+    private func stateFilterDropdown() -> some View {
+        Menu {
+            ForEach(AppConfigs.AppStateFilter.allCases, id: \.self) { state in
+                Button(action: {
+                    viewModel.selectedStateFilter = state
+                }) {
+                    HStack {
+                        Text(state.rawValue == "all" ? "All States" : state.rawValue.replacingOccurrences(of: "_", with: " "))
+                        if viewModel.selectedStateFilter == state {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.caption)
+                Text(viewModel.selectedStateFilter.rawValue == "all" ? "Filter: All" : "Filter: \(viewModel.selectedStateFilter.rawValue.replacingOccurrences(of: "_", with: " "))")
+                    .font(.caption)
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+    
+    private func sortToggle() -> some View {
+        Menu {
+            ForEach(AppConfigs.SortOption.allCases, id: \.self) { option in
+                Button(action: {
+                    viewModel.selectedSortOption = option
+                }) {
+                    HStack {
+                        Text(option.displayName)
+                        if viewModel.selectedSortOption == option {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.caption)
+                Text("Sort")
+                    .font(.caption)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+    
     @ViewBuilder private func appList() -> some View {
         if viewModel.isAppListLoaded {
             VStack(spacing: 0) {
-                List(viewModel.arrApps, id: \.id) { app in
+                List(viewModel.filteredApps, id: \.id) { app in
                     AppRowView(app: app, isSelected: app.isSelected)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -187,14 +299,16 @@ struct SideBarView: View {
                 }
                 .listStyle(.sidebar)
                 
-                if viewModel.appMeta?.paging.nextCursor != nil {
+                if let nextCursor = viewModel.appMeta?.paging.nextCursor {
                     VStack {
                         Divider()
-                        Button("Load More Apps") {
-                            viewModel.getiOSApps(nextPage: viewModel.appMeta?.paging.nextCursor)
-                        }
-                        .buttonStyle(.bordered)
-                        .padding(.vertical, 12)
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .onAppear {
+                                Task {
+                                    await viewModel.loadMoreApps(cursor: nextCursor)
+                                }
+                            }
                     }
                 }
             }
@@ -218,10 +332,7 @@ struct AppRowView: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Selection indicator
-            RoundedRectangle(cornerRadius: 2)
-                .fill(isSelected ? Color.accentColor : Color.clear)
-                .frame(width: 3)
+            appIconView
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.name ?? "Unknown App")
@@ -272,18 +383,68 @@ struct AppRowView: View {
         )
     }
     
+    private var appIconView: some View {
+        let iconSize: CGFloat = 32
+        let iconSizeInt = Int(iconSize)
+        var iconUrlString = app.appStoreIcon?.iconAsset?.templateUrl ?? ""
+        iconUrlString = iconUrlString.replacingOccurrences(of: "{w}x{h}bb", with: "\(iconSizeInt)x\(iconSizeInt)bb")
+        iconUrlString = iconUrlString.replacingOccurrences(of: "{w}x{h}", with: "\(iconSizeInt)x\(iconSizeInt)")
+        iconUrlString = iconUrlString.replacingOccurrences(of: "{w}", with: "\(iconSizeInt)")
+        iconUrlString = iconUrlString.replacingOccurrences(of: "{h}", with: "\(iconSizeInt)")
+        iconUrlString = iconUrlString.replacingOccurrences(of: "{f}", with: "png")
+        if !iconUrlString.isEmpty, let url = URL(string: iconUrlString) {
+            return AnyView(
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: iconSize, height: iconSize)
+                            .cornerRadius(6)
+                    case .failure:
+                        Image(systemName: "app.fill")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundColor(.gray)
+                            .frame(width: iconSize, height: iconSize)
+                    case .empty:
+                        ProgressView()
+                            .frame(width: iconSize, height: iconSize)
+                    }
+                }
+            )
+        }
+        return AnyView(
+            Image(systemName: "app.fill")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundColor(.gray)
+                .frame(width: iconSize, height: iconSize)
+        )
+    }
+    
     private func getStateColor(_ state: String) -> Color {
         switch state.uppercased() {
-        case "READY_FOR_SALE", "READY FOR SALE":
+        case "READY_FOR_SALE":
             return .green
-        case "PENDING_DEVELOPER_RELEASE", "PENDING DEVELOPER RELEASE":
+        case "PENDING_DEVELOPER_RELEASE":
             return .orange
-        case "IN_REVIEW", "IN REVIEW":
+        case "IN_REVIEW":
             return .blue
-        case "WAITING_FOR_REVIEW", "WAITING FOR REVIEW":
+        case "WAITING_FOR_REVIEW":
             return .yellow
         case "REJECTED":
             return .red
+        case "PROCESSING_FOR_APP_STORE":
+            return .purple
+        case "ACCEPTED", "READY_FOR_REVIEW":
+            return .mint
+        case "METADATA_REJECTED", "INVALID_BINARY":
+            return .red.opacity(0.7)
+        case "DEVELOPER_REJECTED", "DEVELOPER_REMOVED_FROM_SALE", "REMOVED_FROM_SALE":
+            return .gray
+        case "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "PENDING_DEVELOPER_RELEASE":
+            return .orange
+        case "WAITING_FOR_EXPORT_COMPLIANCE":
+            return .cyan
         default:
             return .secondary
         }

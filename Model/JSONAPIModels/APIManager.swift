@@ -23,10 +23,6 @@ final class APIClient {
                 return
             }
             
-            #if DEBUG
-            print("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
-            #endif
-            
             completion(data, nil)
         }
         return task
@@ -76,7 +72,7 @@ final class APIClient {
     
     private func getAPIBody(httpMethod: APIMethod) -> Data? {
         switch httpMethod {
-        case .post(_ ,let body, _, _), .put(_, let body, _, _), .patch(_, let body, _, _):
+        case .post(_, let body, _, _, _), .put(_, let body, _, _, _), .patch(_, let body, _, _, _):
             return body
         default:
             return nil
@@ -218,41 +214,50 @@ enum APIVersion: String {
 }
 
 enum APIMethod {
-    case get(name: APIName, queryParams: [String: String] = [:], path: String = "")
-    case post(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "")
-    case put(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "")
-    case patch(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "")
-    case delete(name: APIName, queryParams: [String: String] = [:], path: String = "")
+    case get(name: APIName, queryParams: [String: String] = [:], path: String = "", pathParams: [String: String] = [:])
+    case post(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "", pathParams: [String: String] = [:])
+    case put(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "", pathParams: [String: String] = [:])
+    case patch(name: APIName, body: Data, queryParams: [String: String] = [:], path: String = "", pathParams: [String: String] = [:])
+    case delete(name: APIName, queryParams: [String: String] = [:], path: String = "", pathParams: [String: String] = [:])
     
     var httpMethod:(String, String) {
         switch self {
-        case .get(let apiName, _, _):
+        case .get(let apiName, _, _, _):
             return ("GET",apiName.rawValue)
-        case .post(let apiName, _, _, _):
+        case .post(let apiName, _, _, _, _):
             return ("POST",apiName.rawValue)
-        case .put(let apiName, _, _, _):
+        case .put(let apiName, _, _, _, _):
             return ("PUT",apiName.rawValue)
-        case .patch(let apiName, _, _, _):
+        case .patch(let apiName, _, _, _, _):
             return ("PATCH",apiName.rawValue)
-        case .delete(let apiName, _, _):
+        case .delete(let apiName, _, _, _):
             return ("DELETE",apiName.rawValue)
         }
     }
     
     var queryItems:[URLQueryItem]? {
         switch self {
-        case .get(_, let params, _), .delete(_, let params, _):
+        case .get(_, let params, _, _), .delete(_, let params, _, _):
             return params.map{ URLQueryItem(name: $0, value: String(describing: $1)) }
-        case .post(_, _, let params, _), .put(_, _, let params, _), .patch(_, _, let params, _):
+        case .post(_, _, let params, _, _), .put(_, _, let params, _, _), .patch(_, _, let params, _, _):
             return params.map{ URLQueryItem(name: $0, value: String(describing: $1)) }
         }
     }
     
     var apiPath: String {
+        var basePath: String
+        var pathParams: [String: String] = [:]
         switch self {
-        case .get(_,  _, let path), .delete(_, _, let path), .post(_, _, _, let path), .put(_, _, _, let path), .patch(_, _, _, let path):
-            return path.isEmpty ? "" : "/\(path)"
+        case .get(_, _, let path, let params), .delete(_, _, let path, let params):
+            basePath = path; pathParams = params
+        case .post(_, _, _, let path, let params), .put(_, _, _, let path, let params), .patch(_, _, _, let path, let params):
+            basePath = path; pathParams = params
         }
+        var resolvedPath = basePath.isEmpty ? "" : "/\(basePath)"
+        for (key, value) in pathParams {
+            resolvedPath = resolvedPath.replacingOccurrences(of: "{\(key)}", with: value)
+        }
+        return resolvedPath
     }
 }
 

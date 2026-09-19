@@ -20,10 +20,12 @@ struct AppsData: Equatable {
     @ResourceAttribute var bundleId: String?
     @ResourceAttribute var sku: String?
     @ResourceRelationship var appStoreVersions: [AppStoreVersionsModel]
+    @ResourceRelationship var appStoreIcon: BuildIcon?
     
     var currentLiveVersion = ("", "") // id, versionString
     var currentState = ""
     var isSelected = false
+    var iconURL: String?
 }
 
 @ResourceWrapper(type: "preReleaseVersions")
@@ -56,6 +58,19 @@ struct StoreIcon: Equatable, Codable {
     var templateUrl: String?
     var width: Int?
     var height: Int?
+}
+
+@ResourceWrapper(type: "buildIcons")
+struct BuildIcon: Equatable {
+    var id: String
+    @ResourceAttribute var iconAsset: IconAsset?
+}
+
+struct IconAsset: Equatable, Codable {
+    var templateUrl: String?
+    var width: Int?
+    var height: Int?
+    var assetType: String?
 }
 
 @ResourceWrapper(type: "builds")
