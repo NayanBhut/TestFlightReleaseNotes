@@ -15,68 +15,99 @@ struct BuildDetailsView: View {
     var refreshBuildList: (() -> Void)?
     var loadMoreBuild: (() -> Void)?
 
+    /// Selected locale per build. The row edits one locale at a time;
+    /// the committed text for it is read from the view model.
+    @State private var selectedLocales: [String: String] = [:]
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
+
+    private let snippets = [
+        "Bug fixes and performance improvements",
+        "New features:\n- Feature 1\n- Feature 2\n- Feature 3",
+        "Bug fixes:\n- Fixed issue with login\n- Fixed crash on startup\n- Improved stability",
+        "What's new in this version:\n- Enhanced UI\n- Better performance\n- Security updates",
+        "Release notes:\n- Added dark mode support\n- Fixed memory leaks\n- Updated dependencies"
+    ]
+
     var body: some View {
-        VStack(spacing: 0) {
-            switch viewModel.buildsState {
-            case .idle:
-                // No version selected yet
-                if viewModel.selectedVersion == nil {
-                    noVersionSelectedView
-                } else {
-                    Spacer()
-                }
-            case .loading:
-                // Show full screen loading when fetching builds
-                HStack {
-                    Spacer()
-                    VStack(spacing: 16) {
-                        Spacer()
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Loading builds...")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+        ZStack {
+            VStack(spacing: 0) {
+                switch viewModel.buildsState {
+                case .idle:
+                    // No version selected yet
+                    if viewModel.selectedVersion == nil {
+                        noVersionSelectedView
+                    } else {
                         Spacer()
                     }
-                    Spacer()
-                }
-            case .error(let message):
-                ErrorRetryView(
-                    title: "Couldn't Load Builds",
-                    message: message,
-                    retryTitle: "Retry"
-                ) {
-                    viewModel.retryBuilds()
-                }
-            case .empty:
-                if viewModel.selectedVersion == nil {
-                    noVersionSelectedView
-                } else {
-                    buildsHeader()
-                    Divider()
-                    noBuildsView
-                }
-            case .loaded:
-                if viewModel.selectedVersion == nil {
-                    noVersionSelectedView
-                } else {
-                    buildsHeader()
-                    Divider()
-                    // Builds list
-                    getBuildsList()
+                case .loading:
+                    // Show full screen loading when fetching builds
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 16) {
+                            Spacer()
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("Loading builds...")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                case .error(let message):
+                    ErrorRetryView(
+                        title: "Couldn't Load Builds",
+                        message: message,
+                        retryTitle: "Retry"
+                    ) {
+                        viewModel.retryBuilds()
+                    }
+                case .empty:
+                    if viewModel.selectedVersion == nil {
+                        noVersionSelectedView
+                    } else {
+                        buildsHeader()
+                        Divider()
+                        noBuildsView
+                    }
+                case .loaded:
+                    if viewModel.selectedVersion == nil {
+                        noVersionSelectedView
+                    } else {
+                        buildsHeader()
+                        Divider()
+                        // Builds list
+                        getBuildsList()
 
-                    // Load more button
-                    if viewModel.nextPageCursor != nil {
-                        VStack {
-                            Divider()
-                            Button("Load More Builds") {
-                                loadMoreBuild?()
+                        // Load more button
+                        if viewModel.nextPageCursor != nil {
+                            VStack {
+                                Divider()
+                                Button("Load More Builds") {
+                                    loadMoreBuild?()
+                                }
+                                .buttonStyle(.bordered)
+                                .padding(.vertical, 12)
                             }
-                            .buttonStyle(.bordered)
-                            .padding(.vertical, 12)
                         }
                     }
                 }
+            }
+
+            if let toast = toastMessage {
+                VStack {
+                    Spacer()
+                    ToastView(message: toast)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .animation(.spring(), value: toastMessage)
+                        .padding(.bottom, 20)
+                }
+            }
+        }
+        .onChange(of: viewModel.toastMessage) { _, newMessage in
+            if let message = newMessage {
+                showToast(message)
             }
         }
         // Surface failed release-note saves instead of silently logging them.
@@ -89,7 +120,7 @@ struct BuildDetailsView: View {
             presenting: viewModel.saveError
         ) { saveError in
             Button("Retry") {
-                viewModel.saveBuildLocalization(buildId: saveError.buildId)
+                viewModel.saveBuildLocalization(buildId: saveError.buildId, locale: saveError.locale)
             }
             Button("Cancel", role: .cancel) {}
         } message: { saveError in
@@ -151,6 +182,21 @@ struct BuildDetailsView: View {
                     .foregroundColor(.secondary)
             }
 
+            Menu {
+                ForEach(snippets, id: \.self) { snippet in
+                    Button(String(snippet.prefix(40)) + "...") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(snippet, forType: .string)
+                        showToast("Snippet copied — paste it into any build")
+                    }
+                }
+            } label: {
+                Label("Snippets", systemImage: "doc.on.doc")
+                    .font(.caption)
+            }
+            .menuStyle(.borderedButton)
+            .help("Copy a release-notes snippet, then paste it into any build")
+
             Button(action: {
                 refreshBuildList?()
             }) {
@@ -170,25 +216,80 @@ struct BuildDetailsView: View {
             noBuildsView
         } else {
             List(viewModel.arrBuilds, id: \.id) { build in
-                BuildRowView(
-                    buildId: build.id,
-                    version: build.version ?? "",
-                    uploadedDate: build.uploadedDate ?? "",
-                    processingState: build.processingState ?? "",
-                    isExpired: build.expired ?? false,
-                    whatsNew: build.betaBuildLocalizations.first?.whatsNew ?? "",
-                    localizationId: build.betaBuildLocalizations.first?.id,
-                    selectedVersionString: viewModel.selectedVersion?.version ?? "",
-                    onTextChange: { newText in
-                        viewModel.updateBuildWhatsNew(buildId: build.id, whatsNew: newText)
-                    },
-                    onUpdate: {
-                        viewModel.saveBuildLocalization(buildId: build.id)
-                    },
-                    isUpdating: viewModel.isBuildUpdating(build.id)
-                )
+                buildRow(for: build)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private func selectedLocale(for build: BuildsModel) -> String {
+        let locales = viewModel.getAllLocales(for: build.id)
+        if let saved = selectedLocales[build.id], locales.contains(saved) {
+            return saved
+        }
+        return locales.first ?? "en-US"
+    }
+
+    private func buildRow(for build: BuildsModel) -> some View {
+        let locale = selectedLocale(for: build)
+
+        return BuildRowView(
+            buildId: build.id,
+            version: build.version ?? "",
+            uploadedDate: build.uploadedDate ?? "",
+            processingState: build.processingState ?? "",
+            isExpired: build.expired ?? false,
+            selectedVersionString: viewModel.selectedVersion?.version ?? "",
+            whatsNew: viewModel.getWhatsNew(for: build.id, locale: locale),
+            selectedLocale: locale,
+            locales: viewModel.getAllLocales(for: build.id),
+            onLocaleChange: { newLocale in
+                selectedLocales[build.id] = newLocale
+            },
+            onTextChange: { newText, textLocale in
+                viewModel.updateBuildWhatsNew(buildId: build.id, locale: textLocale, whatsNew: newText)
+            },
+            onUpdate: { updateLocale in
+                viewModel.saveBuildLocalization(buildId: build.id, locale: updateLocale)
+            },
+            onToggleExpire: {
+                viewModel.toggleExpireBuild(buildId: build.id)
+            },
+            onCopyVersionBuildId: {
+                viewModel.copyVersionAndBuildId(buildId: build.id)
+            },
+            isUpdating: viewModel.isBuildUpdating(build.id),
+            isExpireToggling: viewModel.expireTogglingBuildId == build.id
+        )
+        .padding(.vertical, 4)
+    }
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        toastMessage = message
+
+        let workItem = DispatchWorkItem {
+            withAnimation {
+                toastMessage = nil
             }
         }
+        toastWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: workItem)
+    }
+}
+
+struct ToastView: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.caption)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+            .shadow(radius: 4)
     }
 }
 
