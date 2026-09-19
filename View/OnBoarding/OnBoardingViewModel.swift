@@ -17,15 +17,41 @@ class OnBoardingViewModel: ObservableObject {
     @Published var errorMessage: String?
     
     var isFormValid: Bool {
-        !teamName.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !issuerID.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !keyId.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !privateKey.trimmingCharacters(in: .whitespaces).isEmpty
+        !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    
+    var isJWTValid: Bool {
+        guard !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        do {
+            _ = try JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
+                        issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
+                        expireDuration: 60 * 20)
+            return true
+        } catch {
+            return false
+        }
+    }
+    
+    var isContinueEnabled: Bool {
+        isFormValid && isJWTValid
     }
     
     func getAllApps(completion: @escaping ((Bool) -> Void)) {
         guard isFormValid else {
             errorMessage = "Please fill in all required fields"
+            return
+        }
+        
+        guard isJWTValid else {
+            errorMessage = "Invalid JWT credentials"
+            completion(false)
             return
         }
         
@@ -73,7 +99,9 @@ class OnBoardingViewModel: ObservableObject {
     
     private func getHeader() -> [String: String] {
         var requestHeader = ["Content-Type": "application/json"]
-        if let token = try? JWT(keyIdentifier: keyId, issuerIdentifier: issuerID, expireDuration: 60 * 20).signedToken(using: privateKey) {
+        if let token = try? JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
+                                issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
+                                expireDuration: 60 * 20).signedToken(using: privateKey.trimmingCharacters(in: .whitespacesAndNewlines)) {
             requestHeader["Authorization"] = "Bearer " + token
         }
         return requestHeader
@@ -81,7 +109,8 @@ class OnBoardingViewModel: ObservableObject {
     
     func saveLoginState(isLoggedIn: Bool) {
         UserDefaults.standard.set(isLoggedIn, forKey: UserDefaultsKeys.isLoggedIn)
-        CredentialStorage.shared.saveData(credential: Credential(key: teamName, issuerID: issuerID, privateKey: privateKey, keyID: keyId), teamName: teamName)
+        let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
+        CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines), keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName)
     }
     
     func getPrivateKey(filePath: URL?) {
@@ -90,6 +119,8 @@ class OnBoardingViewModel: ObservableObject {
                 .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
                 .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
                 .replacingOccurrences(of: "\n", with: "")
+                .replacingOccurrences(of: "\r", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             privateKey = strData
         }
     }
@@ -99,11 +130,16 @@ class OnBoardingViewModel: ObservableObject {
         openPanel.prompt = "Open"
         openPanel.canChooseFiles = true
         openPanel.allowsMultipleSelection = false
-        openPanel.canChooseDirectories = true
-        openPanel.canCreateDirectories = true
+        openPanel.canChooseDirectories = false
+        openPanel.canCreateDirectories = false
         openPanel.title = "Open Folder"
         openPanel.allowedContentTypes = [UTType(filenameExtension: "p8")!]
         let response = openPanel.runModal()
         return response == .OK ? openPanel.url : nil
+    }
+    
+    var isDuplicateTeam: Bool {
+        let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return CredentialStorage.shared.getTeams.contains(cleanTeamName)
     }
 }

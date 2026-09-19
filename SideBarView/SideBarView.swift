@@ -69,7 +69,7 @@ struct SideBarView: View {
         }
         .onAppear {
             if CredentialStorage.shared.selectedTeam == nil {
-                if CredentialStorage.shared.setDefaultTeam() {
+                if CredentialStorage.shared.restoreDefaultTeam() {
                     navigationManager.isLoggedIn = false
                 }
             }
@@ -136,7 +136,7 @@ struct SideBarView: View {
                                 if CredentialStorage.shared.getTeams.isEmpty {
                                     navigationManager.isLoggedIn = false
                                 } else {
-                                    CredentialStorage.shared.setDefaultTeam()
+                                    CredentialStorage.shared.restoreDefaultTeam()
                                     viewModel.getiOSApps()
                                 }
                             }) {

@@ -102,7 +102,7 @@ struct OnBoardingView: View {
                     })
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!viewModel.isFormValid || viewModel.isShowSpinner)
+                .disabled(!viewModel.isContinueEnabled || viewModel.isShowSpinner)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.top, 8)
