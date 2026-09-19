@@ -22,38 +22,35 @@ struct ContentView: View {
     }
     
     var body: some View {
-        let _ = Self._printChanges()
-        VStack {
-            ZStack {
-                NavigationSplitView {
-                    SideBarView(viewModel: viewModel, isAddNewTeam: $showAlertView, isNewAccountAdded: $isNewAccountAdded)
-                        .environmentObject(navigationManager)
-                } detail: {
-                    VStack(alignment: .center){
-                        DetailView(viewModel: detailViewModel)
-                            .environmentObject(exportManager)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            NavigationSplitView {
+                SideBarView(viewModel: viewModel, isAddNewTeam: $showAlertView, isNewAccountAdded: $isNewAccountAdded)
+                    .environmentObject(navigationManager)
+            } detail: {
+                VStack(alignment: .center){
+                    DetailView(viewModel: detailViewModel)
+                        .environmentObject(exportManager)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            
+            if showAlertView {
+                Color.black.opacity(0.8)
+                    .edgesIgnoringSafeArea(.all)
+                    .onTapGesture {
+                        showAlertView = false
+                    }
                 
-                if showAlertView {
-                    Color.black.opacity(0.8)
-                        .edgesIgnoringSafeArea(.all)
-                        .onTapGesture {
+                OnBoardingView(isLoggedIn: $isNewAccountAdded)
+                    .frame(width: 500)
+                    .background(Color.clear)
+                    .cornerRadius(10)
+                    .shadow(radius: 10)
+                    .onChange(of: isNewAccountAdded) { oldValue, newValue in
+                        if newValue {
                             showAlertView = false
                         }
-                    
-                    OnBoardingView(isLoggedIn: $isNewAccountAdded)
-                        .frame(width: 500)
-                        .background(Color.clear)
-                        .cornerRadius(10)
-                        .shadow(radius: 10)
-                        .onChange(of: isNewAccountAdded) { oldValue, newValue in
-                            if newValue {
-                                showAlertView = false
-                            }
-                        }
-                }
+                    }
             }
         }
     }
@@ -62,4 +59,5 @@ struct ContentView: View {
 #Preview {
     ContentView(viewModel: SideBarViewModel(), exportManager: ExportManager())
         .environmentObject(NavigationManager())
+        .environmentObject(ExportManager())
 }

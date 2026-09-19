@@ -1,22 +1,425 @@
-# This workflow will build a Swift project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-swift
+# This workflow will build a Swift project and optionally run Ollama Cloud PR Review
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-testing/building-and-testing/swift
 
-name: Swift
+name: Swift + PR Review
+
+# Single source of truth for the review model - referenced by all jobs
+env:
+  OLLAMA_MODEL: 'kimi-k3:cloud'
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+    # Restrict trigger types: the default fires on labeled/assigned/edited etc.,
+    # burning a paid LLM review on every label change
+    types: [opened, synchronize, reopened]
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: latest-stable
-    - name: Build
-      run: xcodebuild -project "App Store.xcodeproj" -scheme "App Store" -sdk macosx -configuration Debug CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build -skipMacroValidation
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Build
+        run: xcodebuild -project "App Store.xcodeproj" -scheme "App Store" -sdk macosx -configuration Debug CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build -skipMacroValidation
+
+  # ──────────────────────────────────────────────
+  # Ollama Cloud PR Review (runs only on PRs)
+  # ──────────────────────────────────────────────
+  pr-review:
+    # [skip-review] anywhere in the PR title skips the LLM review
+    # (as documented in the PR template)
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.title, '[skip-review]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    outputs:
+      review-success: ${{ steps.review-check.outputs.success }}
+      review-model: ${{ steps.model-check.outputs.model }}
+      connectivity: ${{ steps.connectivity.outputs.connectivity }}
+      gh-auth: ${{ steps.gh-auth.outputs.gh-auth }}
+      diff: ${{ steps.diff-check.outputs.diff }}
+      validation: ${{ steps.validate.outputs.validation }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── TEST SCENARIO 1: Ollama Cloud Auth ──
+      # Purpose: Verify the API key is valid WITHOUT consuming paid tokens.
+      # An empty-payload POST is rejected with HTTP 400 when auth succeeds
+      # (the request fails before any generation) and 401/403 when the key is bad.
+      # Failure fix: Check OLLAMA_API_KEY secret; verify network access to ollama.com
+      - name: Test 1 — Ollama Cloud Auth Check
+        id: connectivity
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          echo "🔌 Testing Ollama Cloud auth (zero-token probe)..."
+
+          if [ -z "$OLLAMA_API_KEY" ]; then
+            echo "❌ FAIL: OLLAMA_API_KEY is not set in repository secrets."
+            echo "Fix: Go to Settings → Secrets and variables → Actions → New repository secret"
+            echo "Name: OLLAMA_API_KEY | Value: <your Ollama Cloud API key>"
+            echo "connectivity=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $OLLAMA_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 30 \
+            https://ollama.com/v1/chat/completions)
+
+          # 400 = auth accepted, invalid payload rejected (no tokens generated)
+          # 401/403 = bad key
+          if [ "$HTTP_STATUS" -eq 400 ] || [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ PASS: Ollama Cloud auth OK (HTTP $HTTP_STATUS, zero tokens used)"
+            echo "connectivity=ok" >> $GITHUB_OUTPUT
+          elif [ "$HTTP_STATUS" -eq 401 ] || [ "$HTTP_STATUS" -eq 403 ]; then
+            echo "❌ FAIL: API key rejected (HTTP $HTTP_STATUS)"
+            echo "Fix: Regenerate your key at https://ollama.com and update the secret"
+            echo "connectivity=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "❌ FAIL: Ollama Cloud API returned HTTP $HTTP_STATUS"
+            echo "Fix: Check https://ollama.com for service status"
+            echo "connectivity=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      # ── TEST SCENARIO 2: Model Availability ──
+      # Purpose: Verify the review model exists on Ollama Cloud, using the
+      # free /v1/models catalog instead of a paid generation.
+      # Failure fix: Update OLLAMA_MODEL in the workflow env block
+      - name: Test 2 — Model Availability Check
+        id: model-check
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          echo "🤖 Checking model availability (catalog probe, zero tokens)..."
+          MODEL="$OLLAMA_MODEL"
+          # Catalog IDs drop the ':cloud' suffix (e.g. 'kimi-k3:cloud' → 'kimi-k3')
+          CATALOG_ID="${MODEL%%:*}"
+
+          HTTP_CODE=$(curl -s -o /tmp/models.json -w "%{http_code}" \
+            -H "Authorization: Bearer $OLLAMA_API_KEY" \
+            --max-time 30 \
+            https://ollama.com/v1/models)
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "❌ FAIL: Could not fetch model catalog (HTTP $HTTP_CODE)"
+            echo "model=error" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          if grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"$CATALOG_ID\"" /tmp/models.json; then
+            echo "✅ PASS: Model '$MODEL' is available"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+          else
+            echo "❌ FAIL: Model '$MODEL' not found in the Ollama Cloud catalog"
+            echo "Fix: Check available models at https://ollama.com/library"
+            echo "Fix: Update OLLAMA_MODEL in the workflow env block"
+            echo "model=unavailable" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      # ── TEST SCENARIO 3: GitHub Token Write Permissions ──
+      # Purpose: REALLY verify the token can post comments (a GET succeeds with
+      # read-only perms): creates a probe comment and deletes it.
+      # Failure fix: Add 'pull-requests: write' to permissions in workflow
+      - name: Test 3 — GitHub Token Write Check
+        id: gh-auth
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "🔐 Verifying GitHub token can write PR comments (probe)..."
+
+          if PROBE=$(python3 .github/scripts/gh-write-probe.py 2>&1); then
+            echo "✅ PASS: Token write access confirmed ($PROBE)"
+            echo "gh-auth=ok" >> $GITHUB_OUTPUT
+          else
+            echo "❌ FAIL: Token cannot post comments"
+            echo "Details: $PROBE"
+            echo "Fix: Add 'pull-requests: write' to the pr-review job permissions"
+            echo "gh-auth=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      # ── TEST SCENARIO 4: PR Diff Fetch ──
+      # Purpose: Verify we can fetch the PR diff from GitHub
+      # Failure fix: Check PR is not from fork without permission
+      - name: Test 4 — PR Diff Fetch Check
+        id: diff-check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "📋 Checking PR diff accessibility..."
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER")
+
+          if [ "$STATUS" -eq 200 ]; then
+            echo "✅ PASS: PR diff is accessible"
+            echo "diff=ok" >> $GITHUB_OUTPUT
+          else
+            echo "❌ FAIL: Cannot fetch PR diff (HTTP $STATUS)"
+            echo "Fix: If PR is from a fork, ensure 'contents: read' permission is set"
+            echo "Fix: Check that the PR is not closed or missing"
+            echo "diff=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      # ── Run Ollama Cloud PR Review ──
+      # This is the actual review step using Ollama Cloud
+      - name: Run Ollama Cloud PR Review
+        id: review-check
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_MODEL: ${{ steps.model-check.outputs.model || env.OLLAMA_MODEL }}
+        run: |
+          MODEL="${REVIEW_MODEL:-$OLLAMA_MODEL}"
+          echo "🤖 Starting PR Review with model: $MODEL"
+
+          # Fetch PR diff
+          echo "📥 Fetching PR diff..."
+          DIFF=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER")
+
+          if [ -z "$DIFF" ]; then
+            echo "⚠️ No diff found (possibly binary-only changes). Skipping review."
+            echo "review=skipped" >> $GITHUB_OUTPUT
+            echo "success=no-diff" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Limit diff size to avoid hitting token limits
+          DIFF_SIZE=${#DIFF}
+          MAX_DIFF_SIZE=200000
+          if [ "$DIFF_SIZE" -gt "$MAX_DIFF_SIZE" ]; then
+            echo "⚠️ Diff is large ($DIFF_SIZE chars), truncating to $MAX_DIFF_SIZE..."
+            DIFF="${DIFF:0:$MAX_DIFF_SIZE}"
+          fi
+
+          # Call Ollama Cloud for review
+          # The script saves the raw API response to /tmp/review_raw.json (for
+          # debugging) and prints the extracted review text to stdout.
+          # Exit codes drive success/failure - no fragile text matching.
+          echo "🔄 Sending to Ollama Cloud for review..."
+          echo "$DIFF" > /tmp/pr_diff.txt
+          if REVIEW_TEXT=$(REVIEW_MODEL="$MODEL" \
+            OLLAMA_API_KEY="$OLLAMA_API_KEY" \
+            PR_DIFF_FILE="/tmp/pr_diff.txt" \
+            python3 .github/scripts/ollama-review.py 2>/tmp/review_err.log); then
+            echo "✅ Review received (${#REVIEW_TEXT} chars)"
+          else
+            echo "❌ FAIL: Ollama Cloud review failed"
+            echo "Error details:"
+            cat /tmp/review_err.log
+            echo "Raw response (first 2000 chars):"
+            head -c 2000 /tmp/review_raw.json 2>/dev/null || echo "(no raw response saved)"
+            echo "review=failed" >> $GITHUB_OUTPUT
+            echo "success=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Post review as PR comment (or update the existing review comment).
+          # Wrapped in if/else: GitHub Actions runs bash -e, so a bare
+          # assignment would abort the step before this else branch could run.
+          echo "📤 Posting review comment to PR..."
+          if COMMENT_STATUS=$(REVIEW_TEXT="$REVIEW_TEXT" \
+            REVIEW_MODEL="$MODEL" \
+            GITHUB_TOKEN="$GITHUB_TOKEN" \
+            GITHUB_REPOSITORY_OWNER="$OWNER" \
+            GITHUB_REPOSITORY_NAME="$REPO" \
+            PR_NUMBER="$PR_NUMBER" \
+            python3 .github/scripts/post-review.py 2>&1); then
+            echo "✅ PASS: Review comment posted ($COMMENT_STATUS)"
+            echo "review=success" >> $GITHUB_OUTPUT
+            echo "success=yes" >> $GITHUB_OUTPUT
+          else
+            echo "❌ FAIL: Could not post review comment"
+            echo "Details: $COMMENT_STATUS"
+            echo "review=comment-failed" >> $GITHUB_OUTPUT
+            echo "success=failed" >> $GITHUB_OUTPUT
+            # Output review to workflow logs so it's not lost
+            echo "--- REVIEW OUTPUT (would have been posted) ---"
+            echo "$REVIEW_TEXT"
+            exit 1
+          fi
+
+      # ── TEST SCENARIO 5: Post-Review Validation ──
+      # Purpose: Verify the review comment was actually posted
+      # Failure fix: Check comment permissions; retry posting
+      - name: Test 5 — Review Comment Validation
+        # Only verify the comment when a review was actually posted; running
+        # after skips/failures would only emit confusing warnings
+        if: steps.review-check.outputs.success == 'yes'
+        id: validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "🔍 Validating review comment was posted..."
+
+          COMMENTS=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/$REPO/issues/$PR_NUMBER/comments?per_page=100")
+
+          if echo "$COMMENTS" | grep -q "ollama-pr-review"; then
+            echo "✅ PASS: Review comment verified on PR"
+            echo "validation=ok" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ WARN: Could not verify review comment on PR"
+            echo "This may be a timing issue or permission problem."
+            echo "validation=unverified" >> $GITHUB_OUTPUT
+          fi
+
+  # ──────────────────────────────────────────────
+  # Test Scenarios Summary & Failure Report
+  # ──────────────────────────────────────────────
+  review-report:
+    # always() so the diagnostic report still runs when pr-review fails -
+    # that is exactly when the troubleshooting guide is needed
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    needs: [pr-review]
+    # Always run even if previous jobs fail
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 📊 Test Scenarios Summary
+        env:
+          CONNECTIVITY: ${{ needs.pr-review.outputs.connectivity }}
+          MODEL: ${{ needs.pr-review.outputs.review-model }}
+          GH_AUTH: ${{ needs.pr-review.outputs.gh-auth }}
+          DIFF: ${{ needs.pr-review.outputs.diff }}
+          VALIDATION: ${{ needs.pr-review.outputs.validation }}
+          REVIEW_RESULT: ${{ needs.pr-review.outputs.review-success }}
+        run: |
+          status() {
+            case "$1" in
+              ok) echo "✅ PASS" ;;
+              yes) echo "✅ PASS" ;;
+              failed) echo "❌ FAIL" ;;
+              unverified) echo "⚠️ WARN" ;;
+              no-diff) echo "⏭ Skipped (no diff)" ;;
+              "") echo "⏭ Not run" ;;
+              *) echo "ℹ️ $1" ;;
+            esac
+          }
+          echo "══════════════════════════════════════════════════════════"
+          echo "         PR REVIEW TEST SCENARIOS REPORT"
+          echo "══════════════════════════════════════════════════════════"
+          echo ""
+          echo "Test Scenario                        | Status"
+          echo "───────────────────────────────────|───────────────"
+          echo "1. Ollama Cloud Auth                 | $(status "$CONNECTIVITY")"
+          echo "2. Model Availability                | $( [ -n "$MODEL" ] && echo '✅ PASS' || echo '❌ FAIL')"
+          echo "3. GitHub Token Write                | $(status "$GH_AUTH")"
+          echo "4. PR Diff Accessibility             | $(status "$DIFF")"
+          echo "5. Review Comment Validation         | $(status "$VALIDATION")"
+          echo ""
+          echo "Review Result: $(status "$REVIEW_RESULT")"
+          echo "Model Used: ${MODEL:-none}"
+          echo "══════════════════════════════════════════════════════════"
+
+      - name: 📋 Failure Diagnostic Guide
+        # Runs on real failures only; a graceful 'no-diff' skip is not a failure
+        if: always() && needs.pr-review.outputs.review-success != 'yes' && needs.pr-review.outputs.review-success != 'no-diff'
+        run: |
+          echo "🔧 TROUBLESHOOTING GUIDE"
+          echo ""
+          echo "If Test 1 (Connectivity) failed:"
+          echo "  → Add OLLAMA_API_KEY secret: Settings → Secrets → Actions → New secret"
+          echo "  → Name: OLLAMA_API_KEY, Value: <your key from ollama.com>"
+          echo ""
+          echo "If Test 2 (Model) failed:"
+          echo "  → Visit https://ollama.com/library to find available models"
+          echo "  → Update OLLAMA_MODEL in the workflow env block"
+          echo ""
+          echo "If Test 3 (GitHub Auth) failed:"
+          echo "  → Add 'pull-requests: write' to permissions in workflow"
+          echo ""
+          echo "If Test 4 (PR Diff) failed:"
+          echo "  → Ensure PR is not from a fork without permission"
+          echo "  → Add 'contents: read' to permissions"
+          echo ""
+          echo "If review itself failed:"
+          echo "  → Check rate limits on Ollama Cloud dashboard"
+          echo "  → Try a different model (smaller = faster)"
+          echo "  → Check if the PR has any code changes (not just metadata)"
+          echo ""
+
+  # ──────────────────────────────────────────────
+  # Optional: Quick Smoke Test (for manual runs)
+  # ──────────────────────────────────────────────
+  smoke-test:
+    # [smoke-test] anywhere in the PR title runs this quick connectivity check
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[smoke-test]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Smoke Test — Ollama Cloud
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          echo "🧪 Running smoke test..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $OLLAMA_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"model": "'"$OLLAMA_MODEL"'", "messages": [{"role": "user", "content": "say hello in one line"}]}' \
+            --max-time 60 \
+            https://ollama.com/v1/chat/completions)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Smoke test PASSED"
+            echo "Response: $BODY" | head -c 500
+          else
+            echo "❌ Smoke test FAILED (HTTP $HTTP_CODE)"
+            exit 1
+          fi
