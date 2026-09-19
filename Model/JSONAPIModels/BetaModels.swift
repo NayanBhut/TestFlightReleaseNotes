@@ -75,9 +75,14 @@ typealias BetaTestersDocument = CompoundDocument<[BetaTesterModel], Meta>
 // MARK: - Email validation
 
 enum EmailValidator {
+    /// Compiled once — isValid runs on every keystroke via the search binding.
+    private static let regex = try? NSRegularExpression(
+        pattern: #"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"#)
+
     static func isValid(_ email: String) -> Bool {
-        let regex = #"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"#
-        return email.range(of: regex, options: .regularExpression) != nil
+        guard let regex else { return false }
+        let range = NSRange(email.startIndex..<email.endIndex, in: email)
+        return regex.firstMatch(in: email, options: [], range: range) != nil
     }
 }
 

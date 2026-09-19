@@ -10,6 +10,7 @@ import SwiftUI
 import Combine
 import JSONAPI
 
+@MainActor
 final class BetaViewModel: ObservableObject {
     // MARK: - ViewState
     @Published var viewState: CurrentAppState = ._none
@@ -42,7 +43,7 @@ final class BetaViewModel: ObservableObject {
     @Published var isSearching = false
     @Published var hasSearched = false
 
-    private var currentAppId: String?
+    private(set) var currentAppId: String?
     private var pendingAutoNotify: [String: Bool] = [:]
 
     private var cancellables = Set<AnyCancellable>()
@@ -84,6 +85,27 @@ final class BetaViewModel: ObservableObject {
         hasError = false
     }
 
+    // MARK: - Staleness / Truncation Helpers
+
+    /// Groups cap (limit 50) indicator until cursor pagination is added.
+    var groupsTruncationMessage: String? {
+        guard let total = groupsMeta?.paging.total, total > groups.count else { return nil }
+        return "Showing \(groups.count) of \(total) groups"
+    }
+
+    /// Testers cap (limit 100) indicator until cursor pagination is added.
+    var testersTruncationMessage: String? {
+        guard let total = testersMeta?.paging.total, total > testers.count else { return nil }
+        return "Showing \(testers.count) of \(total) testers"
+    }
+
+    /// Toggle state consults the pending (not-yet-persisted) value first so
+    /// the switch reflects the user's intent while the detail is re-fetching.
+    func autoNotifyState(for buildId: String) -> Bool {
+        if let pending = pendingAutoNotify[buildId] { return pending }
+        return betaDetails[buildId]?.autoNotifyEnabled ?? false
+    }
+
     // MARK: - Beta Groups
 
     func fetchBetaGroups(app: AppsData) {
@@ -106,24 +128,29 @@ final class BetaViewModel: ObservableObject {
 
         isGroupsLoaded = false
         viewState = .betaGroupsLoading
+        let stateToken = viewState
 
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.isGroupsLoaded = true
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                do {
-                    let model = try getDecoder().decode(BetaGroupsDocument.self, from: data)
-                    self.groups = model.data.sorted { ($0.name ?? "") < ($1.name ?? "") }
-                    self.groupsMeta = model.meta
-                } catch {
+            Task { @MainActor in
+                // Drop stale responses if the user switched apps mid-flight.
+                guard let self, self.currentAppId == app.id else { return }
+                if self.viewState == stateToken { self.viewState = ._none }
+                self.isGroupsLoaded = true
+                switch result {
+                case .success(let data):
+                    do {
+                        // The server already sorts by name; trust its ordering.
+                        let model = try getDecoder().decode(BetaGroupsDocument.self, from: data)
+                        self.groups = model.data
+                        self.groupsMeta = model.meta
+                    } catch {
+                        self.groups = []
+                        self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                    }
+                case .failure(let error):
                     self.groups = []
-                    self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.groups = []
-                self.presentError(error)
             }
         }
     }
@@ -135,7 +162,11 @@ final class BetaViewModel: ObservableObject {
             copy.isSelected = $0.id == group.id
             return copy
         }
+        // Re-tapping the already-loaded group shouldn't refetch testers.
+        guard group.id != selectedGroup?.id || !isTestersLoaded else { return }
         selectedGroup = group
+        // Clear the previous group's testers so stale rows never show while loading.
+        testers = []
         fetchTesters(groupId: group.id)
     }
 
@@ -150,23 +181,31 @@ final class BetaViewModel: ObservableObject {
 
         isTestersLoaded = false
         viewState = .betaTestersLoading
+        let stateToken = viewState
 
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.isTestersLoaded = true
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                do {
-                    let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
-                    self.testers = model.data
-                    self.testersMeta = model.meta
-                } catch {
-                    self.fetchTestersViaFilter(groupId: groupId)
+            Task { @MainActor in
+                // Drop stale responses if the user switched groups mid-flight.
+                guard let self, self.selectedGroup?.id == groupId else { return }
+                if self.viewState == stateToken { self.viewState = ._none }
+                self.isTestersLoaded = true
+                switch result {
+                case .success(let data):
+                    do {
+                        let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
+                        self.testers = model.data
+                        self.testersMeta = model.meta
+                    } catch {
+                        // Reset loading state before falling back to the filter request.
+                        self.testers = []
+                        self.isTestersLoaded = false
+                        self.viewState = .betaTestersLoading
+                        self.fetchTestersViaFilter(groupId: groupId)
+                    }
+                case .failure(let error):
+                    self.testers = []
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.testers = []
-                self.presentError(error)
             }
         }
     }
@@ -176,23 +215,30 @@ final class BetaViewModel: ObservableObject {
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .getBetaTesters, queryParams: queryParams), apiVersion: .v1) else {
             testers = []
+            isTestersLoaded = true
+            viewState = ._none
             return
         }
+        let stateToken = viewState
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success(let data):
-                do {
-                    let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
-                    self.testers = model.data
-                    self.testersMeta = model.meta
-                } catch {
+            Task { @MainActor in
+                guard let self, self.selectedGroup?.id == groupId else { return }
+                if self.viewState == stateToken { self.viewState = ._none }
+                self.isTestersLoaded = true
+                switch result {
+                case .success(let data):
+                    do {
+                        let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
+                        self.testers = model.data
+                        self.testersMeta = model.meta
+                    } catch {
+                        self.testers = []
+                        self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                    }
+                case .failure(let error):
                     self.testers = []
-                    self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.testers = []
-                self.presentError(error)
             }
         }
     }
@@ -219,21 +265,22 @@ final class BetaViewModel: ObservableObject {
             api: .post(name: .getBetaTesters, body: body), apiVersion: .v1) else { return }
 
         viewState = .betaAssignmentUpdating
-        updatingTesterId = trimmed
+        let stateToken = viewState
 
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.viewState = ._none
-            self.updatingTesterId = nil
-            switch result {
-            case .success(let data):
-                if let msg = self.serverMessage(from: data) {
-                    self.presentMessage(msg)
-                } else if let groupId = self.selectedGroup?.id {
-                    self.fetchTesters(groupId: groupId)
+            Task { @MainActor in
+                guard let self else { return }
+                if self.viewState == stateToken { self.viewState = ._none }
+                switch result {
+                case .success(let data):
+                    if let msg = self.serverMessage(from: data) {
+                        self.presentMessage(msg)
+                    } else if let groupId = self.selectedGroup?.id {
+                        self.fetchTesters(groupId: groupId)
+                    }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -249,18 +296,22 @@ final class BetaViewModel: ObservableObject {
             apiVersion: .v1) else { return }
 
         viewState = .betaAssignmentUpdating
+        let stateToken = viewState
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                if data.isEmpty || self.serverMessage(from: data) == nil {
-                    self.fetchTesters(groupId: groupId)
-                } else {
-                    self.presentMessage(self.serverMessage(from: data) ?? "Failed to add testers.")
+            Task { @MainActor in
+                guard let self else { return }
+                if self.viewState == stateToken { self.viewState = ._none }
+                switch result {
+                case .success(let data):
+                    let serverError = self.serverMessage(from: data)
+                    if data.isEmpty || serverError == nil {
+                        self.fetchTesters(groupId: groupId)
+                    } else {
+                        self.presentMessage(serverError ?? "Failed to add testers.")
+                    }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -277,20 +328,29 @@ final class BetaViewModel: ObservableObject {
 
         updatingTesterId = tester.id
         viewState = .betaAssignmentUpdating
+        let stateToken = viewState
 
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.updatingTesterId = nil
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                if data.isEmpty || self.serverMessage(from: data) == nil {
-                    self.testers.removeAll { $0.id == tester.id }
-                } else {
-                    self.presentMessage(self.serverMessage(from: data) ?? "Failed to remove tester.")
+            Task { @MainActor in
+                guard let self else { return }
+                self.updatingTesterId = nil
+                if self.viewState == stateToken { self.viewState = ._none }
+                switch result {
+                case .success(let data):
+                    let serverError = self.serverMessage(from: data)
+                    if data.isEmpty || serverError == nil {
+                        self.testers.removeAll { $0.id == tester.id }
+                        // Keep the group row's tester count in sync.
+                        if let groupIndex = self.groups.firstIndex(where: { $0.id == groupId }),
+                           let testerIndex = self.groups[groupIndex].betaTesters.firstIndex(where: { $0.id == tester.id }) {
+                            self.groups[groupIndex].betaTesters.remove(at: testerIndex)
+                        }
+                    } else {
+                        self.presentMessage(serverError ?? "Failed to remove tester.")
+                    }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -310,17 +370,20 @@ final class BetaViewModel: ObservableObject {
 
         updatingBuildId = buildId
         viewState = .betaAssignmentUpdating
+        let stateToken = viewState
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.updatingBuildId = nil
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                if let msg = self.serverMessage(from: data) {
-                    self.presentMessage(msg)
+            Task { @MainActor in
+                guard let self else { return }
+                self.updatingBuildId = nil
+                if self.viewState == stateToken { self.viewState = ._none }
+                switch result {
+                case .success(let data):
+                    if let msg = self.serverMessage(from: data) {
+                        self.presentMessage(msg)
+                    }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -385,24 +448,31 @@ final class BetaViewModel: ObservableObject {
             apiVersion: .v1) else { return }
 
         viewState = .betaDetailUpdating
+        let stateToken = viewState
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                do {
-                    let detail = try getDecoder().decode(BuildBetaDetailModel.self, from: data)
-                    self.betaDetails[buildId] = detail
+            Task { @MainActor in
+                guard let self else { return }
+                if self.viewState == stateToken { self.viewState = ._none }
+                switch result {
+                case .success(let data):
+                    do {
+                        let detail = try getDecoder().decode(BuildBetaDetailModel.self, from: data)
+                        self.betaDetails[buildId] = detail
 
-                    if let pending = self.pendingAutoNotify.removeValue(forKey: buildId),
-                       detail.autoNotifyEnabled != pending {
-                        self.setAutoNotify(buildId: buildId, enabled: pending)
+                        if let pending = self.pendingAutoNotify.removeValue(forKey: buildId),
+                           detail.autoNotifyEnabled != pending {
+                            self.setAutoNotify(buildId: buildId, enabled: pending)
+                        }
+                    } catch {
+                        // Don't leave a pending value replaying a stale PATCH on
+                        // some later successful fetch.
+                        self.pendingAutoNotify.removeValue(forKey: buildId)
+                        self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
                     }
-                } catch {
-                    self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                case .failure(let error):
+                    self.pendingAutoNotify.removeValue(forKey: buildId)
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -425,26 +495,29 @@ final class BetaViewModel: ObservableObject {
         }
         updatingBuildId = buildId
         viewState = .betaDetailUpdating
+        let stateToken = viewState
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.updatingBuildId = nil
-            self.viewState = ._none
-            switch result {
-            case .success(let data):
-                do {
-                    let updated = try getDecoder().decode(BuildBetaDetailModel.self, from: data)
-                    self.betaDetails[buildId] = updated
-                } catch {
-                    if data.isEmpty {
-                        var current = self.betaDetails[buildId]
-                        current?.autoNotifyEnabled = enabled
-                        if let current { self.betaDetails[buildId] = current }
-                    } else {
-                        self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+            Task { @MainActor in
+                guard let self else { return }
+                self.updatingBuildId = nil
+                if self.viewState == stateToken { self.viewState = ._none }
+                switch result {
+                case .success(let data):
+                    do {
+                        let updated = try getDecoder().decode(BuildBetaDetailModel.self, from: data)
+                        self.betaDetails[buildId] = updated
+                    } catch {
+                        if data.isEmpty {
+                            var current = self.betaDetails[buildId]
+                            current?.autoNotifyEnabled = enabled
+                            if let current { self.betaDetails[buildId] = current }
+                        } else {
+                            self.presentMessage(self.serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                        }
                     }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }
@@ -457,22 +530,24 @@ final class BetaViewModel: ObservableObject {
             apiVersion: .v1) else { return }
         reviewLoadingBuildId = buildId
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.reviewLoadingBuildId = nil
-            switch result {
-            case .success(let data):
-                do {
-                    let submission = try getDecoder().decode(BetaAppReviewSubmissionModel.self, from: data)
-                    self.reviewStates[buildId] = submission.betaReviewState ?? "UNKNOWN"
-                } catch {
-                    self.reviewStates[buildId] = "NO_SUBMISSION"
-                }
-            case .failure(let error):
-                // 404 = no submission exists yet; treat as not submitted.
-                if error.statusCode == 404 {
-                    self.reviewStates[buildId] = "NO_SUBMISSION"
-                } else {
-                    self.reviewStates[buildId] = "UNKNOWN"
+            Task { @MainActor in
+                guard let self else { return }
+                self.reviewLoadingBuildId = nil
+                switch result {
+                case .success(let data):
+                    do {
+                        let submission = try getDecoder().decode(BetaAppReviewSubmissionModel.self, from: data)
+                        self.reviewStates[buildId] = submission.betaReviewState ?? "UNKNOWN"
+                    } catch {
+                        self.reviewStates[buildId] = "NO_SUBMISSION"
+                    }
+                case .failure(let error):
+                    // 404 = no submission exists yet; treat as not submitted.
+                    if error.statusCode == 404 {
+                        self.reviewStates[buildId] = "NO_SUBMISSION"
+                    } else {
+                        self.reviewStates[buildId] = "UNKNOWN"
+                    }
                 }
             }
         }
@@ -488,22 +563,24 @@ final class BetaViewModel: ObservableObject {
 
         reviewLoadingBuildId = buildId
         APIClient.shared.callAPI(with: request) { [weak self] result in
-            guard let self else { return }
-            self.reviewLoadingBuildId = nil
-            switch result {
-            case .success(let data):
-                do {
-                    let submission = try getDecoder().decode(BetaAppReviewSubmissionModel.self, from: data)
-                    self.reviewStates[buildId] = submission.betaReviewState ?? "WAITING_FOR_REVIEW"
-                } catch {
-                    if let msg = self.serverMessage(from: data) {
-                        self.presentMessage(msg)
-                    } else {
-                        self.reviewStates[buildId] = "WAITING_FOR_REVIEW"
+            Task { @MainActor in
+                guard let self else { return }
+                self.reviewLoadingBuildId = nil
+                switch result {
+                case .success(let data):
+                    do {
+                        let submission = try getDecoder().decode(BetaAppReviewSubmissionModel.self, from: data)
+                        self.reviewStates[buildId] = submission.betaReviewState ?? "WAITING_FOR_REVIEW"
+                    } catch {
+                        if let msg = self.serverMessage(from: data) {
+                            self.presentMessage(msg)
+                        } else {
+                            self.reviewStates[buildId] = "WAITING_FOR_REVIEW"
+                        }
                     }
+                case .failure(let error):
+                    self.presentError(error)
                 }
-            case .failure(let error):
-                self.presentError(error)
             }
         }
     }

@@ -39,11 +39,13 @@ final class APIClient {
             if let url = request.url, let query = url.query {
                 apiLogger.debug("[API] Query: \(query)")
             }
+            // Bodies may contain PII (tester emails/names); cap what lands in
+            // logs that can end up in bug reports or screen recordings.
             if let body = request.httpBody, let bodyString = String(data: body, encoding: .utf8) {
-                apiLogger.debug("[API] Request body: \(bodyString)")
+                apiLogger.debug("[API] Request body: \(Self.truncatedForLog(bodyString))")
             }
             if let data = data, let responseString = String(data: data, encoding: .utf8) {
-                apiLogger.debug("[API] Response body (\(data.count) bytes): \(responseString)")
+                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.truncatedForLog(responseString))")
             }
             #endif
 
@@ -57,6 +59,13 @@ final class APIClient {
         return task
     }
     
+    /// DEBUG logs may be shared in bug reports or screen recordings:
+    /// cap payload size instead of dumping entire responses.
+    private static func truncatedForLog(_ string: String, maxLength: Int = 2000) -> String {
+        guard string.count > maxLength else { return string }
+        return String(string.prefix(maxLength)) + "…(truncated)"
+    }
+
     func callAPI(with request: URLRequest) async throws -> Data {
         apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
         do {
@@ -262,8 +271,9 @@ enum APIName: String {
     case getVersionBuilds = "/builds"
     case postReleaseNote = "/betaBuildLocalizations"
     case getBetaGroups = "/betaGroups"
+    // GET and POST share the /betaTesters path, so one enum case covers both
+    // (the HTTP verb comes from APIMethod): .get/.post(name: .getBetaTesters).
     case getBetaTesters = "/betaTesters"
-    case postBetaTesterInvitation = "/betaTesterInvitations"
     case patchBuildBetaDetail = "/buildBetaDetails"
     case postBetaAppReviewSubmission = "/betaAppReviewSubmissions"
 }

@@ -18,7 +18,7 @@ struct BetaGroupView: View {
     @State private var inviteFirstName = ""
     @State private var inviteLastName = ""
     @State private var buildIdForActions = ""
-    @State private var lastFetchedAppId: String?
+    @State private var testerPendingRemoval: BetaTesterModel?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,15 +55,32 @@ struct BetaGroupView: View {
         .onAppear {
             refreshGroupsIfStale()
         }
+        .confirmationDialog(
+            "Remove \(testerPendingRemoval?.displayName ?? "this tester") from this group?",
+            isPresented: Binding(
+                get: { testerPendingRemoval != nil },
+                set: { if !$0 { testerPendingRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let tester = testerPendingRemoval {
+                    betaViewModel.removeTesterFromGroup(tester)
+                }
+                testerPendingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { testerPendingRemoval = nil }
+        }
     }
 
+    /// Staleness lives in the view model so switching tabs (which destroys
+    /// this view's @State) doesn't cause a redundant refetch on return.
     private func refreshGroupsIfStale(force: Bool = false) {
-        guard let app = selectedApp else {
-            lastFetchedAppId = nil
-            return
+        guard let app = selectedApp else { return }
+        if !force {
+            if betaViewModel.viewState == .betaGroupsLoading { return }
+            if betaViewModel.isGroupsLoaded, betaViewModel.currentAppId == app.id { return }
         }
-        if !force && lastFetchedAppId == app.id { return }
-        lastFetchedAppId = app.id
         betaViewModel.fetchBetaGroups(app: app)
     }
 
@@ -78,6 +95,11 @@ struct BetaGroupView: View {
             if !betaViewModel.groups.isEmpty {
                 Text("\(betaViewModel.groups.count) groups")
                     .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if let truncation = betaViewModel.groupsTruncationMessage {
+                Text(truncation)
+                    .font(.caption2)
                     .foregroundColor(.secondary)
             }
             Button(action: { refreshGroupsIfStale(force: true) }) {
@@ -209,6 +231,12 @@ struct BetaGroupView: View {
 
             searchResultView
 
+            if let truncation = betaViewModel.testersTruncationMessage {
+                Text(truncation)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
             if !betaViewModel.isTestersLoaded && betaViewModel.viewState == .betaTestersLoading {
                 loadingState(text: "Loading testers...")
             } else if betaViewModel.testers.isEmpty {
@@ -238,12 +266,13 @@ struct BetaGroupView: View {
                             ProgressView().scaleEffect(0.7)
                         } else {
                             Button(role: .destructive) {
-                                betaViewModel.removeTesterFromGroup(tester)
+                                testerPendingRemoval = tester
                             } label: {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.plain)
                             .foregroundColor(.red)
+                            .accessibilityLabel("Remove \(tester.displayName) from group")
                             .help("Remove from group")
                         }
                     }
@@ -274,6 +303,7 @@ struct BetaGroupView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
                 .help("Clear search")
             }
             if betaViewModel.isSearching {
@@ -437,7 +467,7 @@ struct BetaGroupView: View {
                     ProgressView().scaleEffect(0.7)
                 } else {
                     Toggle("", isOn: Binding(
-                        get: { detail?.autoNotifyEnabled ?? false },
+                        get: { betaViewModel.autoNotifyState(for: buildId) },
                         set: { betaViewModel.setAutoNotify(buildId: buildId, enabled: $0) }
                     ))
                     .toggleStyle(.switch)

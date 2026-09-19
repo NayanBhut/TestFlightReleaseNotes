@@ -142,6 +142,7 @@ struct DetailView: View {
                     Text(tab.rawValue).tag(tab)
                 }
             }
+            .labelsHidden()
             .pickerStyle(.segmented)
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
