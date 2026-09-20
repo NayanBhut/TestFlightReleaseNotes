@@ -207,14 +207,19 @@ struct SideBarView: View {
                             Image(systemName: "trash")
                                 .font(.caption)
                                 .foregroundColor(.red)
+                                .padding(6)
                                 .contentShape(Rectangle())
                                 .highPriorityGesture(
                                     TapGesture().onEnded {
                                         deleteTeam(team)
                                     }
                                 )
+                                .focusable(true)
                                 .accessibilityAddTraits(.isButton)
                                 .accessibilityLabel("Remove \(team)")
+                                // Gesture-only views aren't reliably activatable
+                                // via VoiceOver/keyboard — wire the default action.
+                                .accessibilityAction(.default) { deleteTeam(team) }
                                 .help("Remove team")
                         }
                         .padding(.horizontal, 12)

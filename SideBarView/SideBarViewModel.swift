@@ -20,6 +20,7 @@ class SideBarViewModel: ObservableObject {
     @Published var versionsMeta: Meta?
     @Published var versionsNextCursor: String?
     @Published var versionsPaginationFailed = false
+    @Published var isLoadingMoreVersions = false
     @Published var selectedApp: AppsData?
 
     @Published var isTeamChanged = false
@@ -358,6 +359,8 @@ class SideBarViewModel: ObservableObject {
         let isPaginating = cursor != nil
         if isPaginating {
             isPaginatingVersions = true
+            // Visible in-flight feedback for the Load-more control.
+            isLoadingMoreVersions = true
         } else {
             versionsState = .loading
             versionsNextCursor = nil
@@ -365,7 +368,10 @@ class SideBarViewModel: ObservableObject {
         }
         versionsPaginationFailed = false
         defer {
-            if isPaginating { isPaginatingVersions = false }
+            if isPaginating {
+                isPaginatingVersions = false
+                isLoadingMoreVersions = false
+            }
         }
 
         var queryParams = [

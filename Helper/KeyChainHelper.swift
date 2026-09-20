@@ -7,6 +7,9 @@
 
 import Foundation
 import Security
+import OSLog
+
+private let keychainLogger = Logger(subsystem: "com.appstore.release-notes", category: "Keychain")
 
 struct Credential: Codable {
     let key: String
@@ -32,38 +35,72 @@ final class CredentialStorage {
 
     /// One-time upgrade path: KeychainSwift stored items with no
     /// kSecAttrService, so pre-scoping teams are invisible to the
-    /// service-scoped queries. Copy each legacy entry into a
-    /// service-scoped item (keeping the scoped one when both exist),
-    /// then remove the legacy entry so it can't linger as a ghost.
+    /// service-scoped queries. Idempotent by construction: once nothing
+    /// unscoped matches, the attributes-only scan is a cheap no-op (a
+    /// UserDefaults "done" flag is deliberately NOT used — it would
+    /// permanently skip migration if the first launch hit a transient
+    /// keychain error).
     private func migrateLegacyUnscopedItems() {
-        let query: [String: Any] = [
+        // Phase 1: ATTRIBUTES ONLY — data of other services' passwords
+        // never leaves the keychain; nothing unrelated is read or prompted.
+        let scan: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
-            kSecReturnData as String: true
+            kSecReturnData as String: false
         ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]] else { return }
-        for item in items {
+        var scanResult: AnyObject?
+        guard SecItemCopyMatching(scan as CFDictionary, &scanResult) == errSecSuccess,
+              let items = scanResult as? [[String: Any]] else { return }
+        let legacyAccounts = items.compactMap { item -> String? in
             guard let account = item[kSecAttrAccount as String] as? String,
                   account.hasPrefix(Self.accountPrefix),
-                  item[kSecAttrService as String] as? String == nil,
-                  let legacyData = item[kSecValueData as String] as? Data else { continue }
+                  item[kSecAttrService as String] as? String == nil else { return nil }
+            return account
+        }
+        guard !legacyAccounts.isEmpty else { return }
+
+        for account in legacyAccounts {
             let teamName = String(account.dropFirst(Self.accountPrefix.count))
-            // Prefer the scoped entry when the team was re-added after
-            // the upgrade — the user deliberately re-entered it.
+            // Phase 2a: fetch data only for OUR legacy item (exact account).
+            let fetchQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrAccount as String: account,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+                kSecReturnData as String: true
+            ]
+            var fetched: AnyObject?
+            guard SecItemCopyMatching(fetchQuery as CFDictionary, &fetched) == errSecSuccess,
+                  let legacyData = fetched as? Data else {
+                keychainLogger.error("Migration: couldn't read legacy item '\(teamName, privacy: .public)'")
+                continue
+            }
+            // Prefer the scoped entry when the team was re-added after the
+            // upgrade — the user deliberately re-entered it.
             let winner = scopedItemData(forKey: teamName) ?? legacyData
-            // Deletes by account alone, matching both the legacy entry
-            // and any scoped duplicate; the winner is re-added below.
+
+            // Phase 2b: delete by account (the legacy item AND any scoped
+            // twin — the upsert below replaces the twin's data), then write
+            // the scoped item. On write failure, roll the legacy entry back
+            // so migration can never destroy a credential.
             SecItemDelete([
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrAccount as String: account
             ] as CFDictionary)
+
             var add = Self.baseQuery(forKey: teamName)
             add[kSecValueData as String] = winner
             add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-            SecItemAdd(add as CFDictionary, nil)
+            if SecItemAdd(add as CFDictionary, nil) != errSecSuccess {
+                let rollback: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrAccount as String: account,
+                    kSecValueData as String: legacyData,
+                    kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
+                ]
+                SecItemAdd(rollback as CFDictionary, nil)
+                keychainLogger.error("Migration: scoped write failed for '\(teamName, privacy: .public)', legacy item restored")
+            }
         }
     }
 
@@ -102,26 +139,36 @@ final class CredentialStorage {
         }
     }
 
-    func saveData(credential: Credential, teamName: String) {
+    /// Returns false when the keychain write fails so callers can refuse
+    /// to proceed (onboarding must not log in with an unstored credential).
+    @discardableResult
+    func saveData(credential: Credential, teamName: String) -> Bool {
         do {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(credential)
-            let query = Self.baseQuery(forKey: teamName)
-            // Update in place when the item already exists; add otherwise.
-            var existsCheck = query
-            existsCheck[kSecMatchLimit as String] = kSecMatchLimitOne
-            existsCheck[kSecReturnData as String] = false
-            var ignored: AnyObject?
-            let exists = SecItemCopyMatching(existsCheck as CFDictionary, &ignored) == errSecSuccess
-            if exists {
-                SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-            } else {
-                var addQuery = query
-                addQuery[kSecValueData as String] = data
-                addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-                SecItemAdd(addQuery as CFDictionary, nil)
+            let data = try JSONEncoder().encode(credential)
+            let status = upsert(key: teamName, data: data)
+            if status != errSecSuccess {
+                keychainLogger.error("Keychain write failed for '\(teamName, privacy: .public)' (OSStatus \(status))")
+                return false
             }
-        } catch {}
+            return true
+        } catch {
+            keychainLogger.error("Credential encoding failed for '\(teamName, privacy: .public)'")
+            return false
+        }
+    }
+
+    /// Add, or update in place when the scoped item already exists.
+    private func upsert(key: String, data: Data) -> OSStatus {
+        var addQuery = Self.baseQuery(forKey: key)
+        addQuery[kSecValueData as String] = data
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            return SecItemUpdate(
+                Self.baseQuery(forKey: key) as CFDictionary,
+                [kSecValueData as String: data] as CFDictionary)
+        }
+        return status
     }
 
     func getCredential(key: String) -> Credential? {

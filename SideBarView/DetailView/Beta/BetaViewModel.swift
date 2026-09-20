@@ -162,6 +162,9 @@ final class BetaViewModel: ObservableObject {
                 presentMessage(serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
             }
         } catch {
+            // Drop stale failures: the user switched apps mid-flight and
+            // the newer fetch owns the state now.
+            guard self.currentAppId == app.id else { return }
             if viewState == stateToken { viewState = ._none }
             groups = []
             presentError(error)
@@ -211,6 +214,10 @@ final class BetaViewModel: ObservableObject {
                 await fetchTestersViaFilter(groupId: groupId)
             }
         } catch {
+            // Drop stale failures: the user switched groups mid-flight and
+            // the newer fetch owns the state now (incl. the 404 fallback —
+            // a stale 404 must not fire a wasted filter request).
+            guard self.selectedGroup?.id == groupId else { return }
             // Nested relationship endpoints may 404 for some groups;
             // fall back to the filter endpoint instead of erroring out.
             if (error as? APIError)?.statusCode == 404 {
@@ -250,6 +257,8 @@ final class BetaViewModel: ObservableObject {
                 presentMessage(serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
             }
         } catch {
+            // Drop stale failures: the user switched groups mid-flight.
+            guard self.selectedGroup?.id == groupId else { return }
             if viewState == stateToken { viewState = ._none }
             testers = []
             presentError(error)
@@ -283,7 +292,10 @@ final class BetaViewModel: ObservableObject {
 
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard self.viewState == stateToken else { return }
+            // Always exit the updating state before handling the result:
+            // the old guard-return left viewState stuck on
+            // .betaAssignmentUpdating (permanently disabled controls).
+            if viewState == stateToken { viewState = ._none }
             if let msg = serverMessage(from: data) {
                 presentMessage(msg)
             } else if let groupId = selectedGroup?.id {
@@ -309,7 +321,10 @@ final class BetaViewModel: ObservableObject {
         let stateToken = viewState
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard self.viewState == stateToken else { return }
+            // Always exit the updating state before handling the result:
+            // the old guard-return left viewState stuck on
+            // .betaAssignmentUpdating (permanently disabled controls).
+            if viewState == stateToken { viewState = ._none }
             let serverError = serverMessage(from: data)
             if data.isEmpty || serverError == nil {
                 await fetchTesters(groupId: groupId)
@@ -434,9 +449,12 @@ final class BetaViewModel: ObservableObject {
         let searchedAppId = currentAppId
         do {
             let data = try await APIClient.shared.callAPI(with: request)
+            // Reset the spinner BEFORE the staleness guard: a stale result
+            // (app/query changed mid-flight) must never leave isSearching
+            // stuck on — the spinner permanently replaces the Search button.
+            isSearching = false
             // Drop stale results if the app or the query changed mid-flight.
             guard self.currentAppId == searchedAppId, self.searchText == query else { return }
-            isSearching = false
             do {
                 let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
                 searchResult = model.data.first

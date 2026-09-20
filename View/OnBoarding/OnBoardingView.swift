@@ -108,9 +108,8 @@ struct OnBoardingView: View {
                 
                 Button("Continue") {
                     viewModel.getAllApps(completion: { isSuccess in
-                        if isSuccess {
+                        if isSuccess, viewModel.saveLoginState(isLoggedIn: true) {
                             isLoggedIn = true
-                            viewModel.saveLoginState(isLoggedIn: true)
                         }
                     })
                 }

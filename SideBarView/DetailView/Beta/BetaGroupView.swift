@@ -439,8 +439,11 @@ struct BetaGroupView: View {
                     .onChange(of: buildIdForActions) { _, newId in
                         guard !newId.isEmpty else { return }
                         Task {
-                            await betaViewModel.fetchBuildBetaDetail(buildId: newId)
-                            await betaViewModel.fetchReviewStatus(buildId: newId)
+                            // Independent requests: run them concurrently
+                            // instead of serially to halve perceived latency.
+                            async let detail: Void = betaViewModel.fetchBuildBetaDetail(buildId: newId)
+                            async let review: Void = betaViewModel.fetchReviewStatus(buildId: newId)
+                            _ = await (detail, review)
                         }
                     }
 

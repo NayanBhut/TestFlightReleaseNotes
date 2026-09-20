@@ -23,34 +23,56 @@ final class AppIconImageCache: Sendable {
     /// Icons change only when the app's artwork changes (new upload);
     /// a week comfortably covers that while keeping launches offline-fast.
     private static let diskTTL: TimeInterval = 7 * 24 * 60 * 60
+    /// A failing URL (404, decode failure, offline) is skipped for this long
+    /// so a permanently-broken icon doesn't re-hit the network on every
+    /// row appearance — negative caching.
+    private static let failureTTL: TimeInterval = 10 * 60
 
     private let memory = NSCache<NSURL, NSImage>()
     private let lock = NSLock()
     private var inFlight: [URL: Task<NSImage?, Never>] = [:]
+    private var lastFailure: [URL: Date] = [:]
     private let diskDirectory: URL = FileManager.default
         .urls(for: .cachesDirectory, in: .userDomainMask).first?
         .appendingPathComponent("AppIcons", isDirectory: true)
         ?? FileManager.default.temporaryDirectory.appendingPathComponent("AppIcons", isDirectory: true)
 
     func image(for url: URL) async -> NSImage? {
-        if let cached = memory.object(forKey: url as NSURL) { return cached }
-        let task: Task<NSImage?, Never> = {
-            lock.lock()
-            defer { lock.unlock() }
-            // Coalesce concurrent requests for the same URL (e.g. the row
-            // re-rendering mid-download) into a single network fetch.
-            if let existing = inFlight[url] { return existing }
-            let created = Task { await Self.load(url: url, diskDirectory: diskDirectory) }
-            inFlight[url] = created
-            return created
-        }()
+        lock.lock()
+        if let cached = memory.object(forKey: url as NSURL) {
+            lock.unlock()
+            return cached
+        }
+        // Negative cache: skip refetching a recently-failing URL.
+        if let failedAt = lastFailure[url],
+           Date().timeIntervalSince(failedAt) < Self.failureTTL {
+            lock.unlock()
+            return nil
+        }
+        // Coalesce concurrent requests for the same URL (e.g. the row
+        // re-rendering mid-download) into a single network fetch.
+        let task: Task<NSImage?, Never>
+        if let existing = inFlight[url] {
+            task = existing
+        } else {
+            task = Task { await Self.load(url: url, diskDirectory: diskDirectory) }
+            inFlight[url] = task
+        }
+        lock.unlock()
+
         let image = await task.value
+        // Single lock section for the completion mutations: clearing
+        // inFlight and caching must be atomic so a caller arriving between
+        // them can't slip past into a duplicate network fetch.
         lock.lock()
         inFlight[url] = nil
-        lock.unlock()
         if let image {
             memory.setObject(image, forKey: url as NSURL)
+            lastFailure[url] = nil
+        } else {
+            lastFailure[url] = Date()
         }
+        lock.unlock()
         return image
     }
 
