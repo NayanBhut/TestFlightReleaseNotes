@@ -50,10 +50,10 @@ struct BetaGroupView: View {
             inviteSheet
         }
         .onChange(of: selectedApp?.id) { _, _ in
-            refreshGroupsIfStale()
+            Task { await refreshGroupsIfStale() }
         }
         .onAppear {
-            refreshGroupsIfStale()
+            Task { await refreshGroupsIfStale() }
         }
         .confirmationDialog(
             "Remove \(testerPendingRemoval?.displayName ?? "this tester") from this group?",
@@ -65,7 +65,7 @@ struct BetaGroupView: View {
         ) {
             Button("Remove", role: .destructive) {
                 if let tester = testerPendingRemoval {
-                    betaViewModel.removeTesterFromGroup(tester)
+                    Task { await betaViewModel.removeTesterFromGroup(tester) }
                 }
                 testerPendingRemoval = nil
             }
@@ -75,13 +75,13 @@ struct BetaGroupView: View {
 
     /// Staleness lives in the view model so switching tabs (which destroys
     /// this view's @State) doesn't cause a redundant refetch on return.
-    private func refreshGroupsIfStale(force: Bool = false) {
+    private func refreshGroupsIfStale(force: Bool = false) async {
         guard let app = selectedApp else { return }
         if !force {
             if betaViewModel.viewState == .betaGroupsLoading { return }
             if betaViewModel.isGroupsLoaded, betaViewModel.currentAppId == app.id { return }
         }
-        betaViewModel.fetchBetaGroups(app: app)
+        await betaViewModel.fetchBetaGroups(app: app)
     }
 
     // MARK: - Header
@@ -102,7 +102,7 @@ struct BetaGroupView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            Button(action: { refreshGroupsIfStale(force: true) }) {
+            Button(action: { Task { await refreshGroupsIfStale(force: true) } }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
                     .font(.caption)
             }
@@ -295,7 +295,7 @@ struct BetaGroupView: View {
                 .foregroundColor(.secondary)
             TextField("Check if email is invited…", text: $betaViewModel.searchText)
                 .textFieldStyle(.roundedBorder)
-                .onSubmit { betaViewModel.searchTesterByEmail() }
+                .onSubmit { Task { await betaViewModel.searchTesterByEmail() } }
             if !betaViewModel.searchText.isEmpty {
                 Button(action: {
                     betaViewModel.searchText = ""
@@ -312,7 +312,7 @@ struct BetaGroupView: View {
             if betaViewModel.isSearching {
                 ProgressView().scaleEffect(0.7)
             } else {
-                Button("Search") { betaViewModel.searchTesterByEmail() }
+                Button("Search") { Task { await betaViewModel.searchTesterByEmail() } }
                     .buttonStyle(.bordered)
                     .disabled(!EmailValidator.isValid(EmailValidator.normalized(betaViewModel.searchText)))
             }
@@ -346,7 +346,7 @@ struct BetaGroupView: View {
                             .cornerRadius(4)
                         if !inGroup {
                             Button("Add to this group") {
-                                betaViewModel.addTestersToGroup(testerIds: [result.id])
+                                Task { await betaViewModel.addTestersToGroup(testerIds: [result.id]) }
                             }
                             .buttonStyle(.bordered)
                             .disabled(betaViewModel.selectedGroup == nil)
@@ -393,9 +393,13 @@ struct BetaGroupView: View {
                 Button("Cancel") { showInviteSheet = false }
                     .buttonStyle(.plain)
                 Button("Send Invite") {
-                    betaViewModel.inviteTester(email: inviteEmail,
-                                               firstName: inviteFirstName.isEmpty ? nil : inviteFirstName,
-                                               lastName: inviteLastName.isEmpty ? nil : inviteLastName)
+                    Task {
+                        await betaViewModel.inviteTester(
+                            email: inviteEmail,
+                            firstName: inviteFirstName.isEmpty ? nil : inviteFirstName,
+                            lastName: inviteLastName.isEmpty ? nil : inviteLastName
+                        )
+                    }
                     showInviteSheet = false
                 }
                 .buttonStyle(.borderedProminent)
@@ -434,13 +438,15 @@ struct BetaGroupView: View {
                     }
                     .onChange(of: buildIdForActions) { _, newId in
                         guard !newId.isEmpty else { return }
-                        betaViewModel.fetchBuildBetaDetail(buildId: newId)
-                        betaViewModel.fetchReviewStatus(buildId: newId)
+                        Task {
+                            await betaViewModel.fetchBuildBetaDetail(buildId: newId)
+                            await betaViewModel.fetchReviewStatus(buildId: newId)
+                        }
                     }
 
                     Button("Assign to group") {
                         if let build = builds.first(where: { $0.id == buildIdForActions }) {
-                            betaViewModel.assignBuildToGroup(build: build)
+                            Task { await betaViewModel.assignBuildToGroup(build: build) }
                         }
                     }
                     .buttonStyle(.bordered)
@@ -483,7 +489,7 @@ struct BetaGroupView: View {
                 } else {
                     Toggle("", isOn: Binding(
                         get: { betaViewModel.autoNotifyState(for: buildId) },
-                        set: { betaViewModel.setAutoNotify(buildId: buildId, enabled: $0) }
+                        set: { newValue in Task { await betaViewModel.setAutoNotify(buildId: buildId, enabled: newValue) } }
                     ))
                     .toggleStyle(.switch)
                     .labelsHidden()
@@ -516,11 +522,11 @@ struct BetaGroupView: View {
                 }
                 Spacer()
                 Button("Check status") {
-                    betaViewModel.fetchReviewStatus(buildId: buildId)
+                    Task { await betaViewModel.fetchReviewStatus(buildId: buildId) }
                 }
                 .buttonStyle(.bordered)
                 Button("Submit for external review") {
-                    betaViewModel.submitForExternalReview(buildId: buildId)
+                    Task { await betaViewModel.submitForExternalReview(buildId: buildId) }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(reviewState == "WAITING_FOR_REVIEW" || reviewState == "IN_REVIEW" ||

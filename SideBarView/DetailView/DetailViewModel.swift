@@ -28,6 +28,9 @@ class DetailViewModel: ObservableObject {
 
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
+    @Published var versionsNextCursor: String?
+    @Published var versionsMeta: Meta?
+    @Published var versionsPaginationFailed = false
 
     /// In-flight save keys ("buildId|locale") — per-locale so saving locale B
     /// isn't blocked by an in-flight save of locale A.
@@ -82,6 +85,27 @@ class DetailViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        sidebarViewModel.$versionsNextCursor
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] cursor in
+                self?.versionsNextCursor = cursor
+            }
+            .store(in: &cancellables)
+
+        sidebarViewModel.$versionsMeta
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] meta in
+                self?.versionsMeta = meta
+            }
+            .store(in: &cancellables)
+
+        sidebarViewModel.$versionsPaginationFailed
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] failed in
+                self?.versionsPaginationFailed = failed
+            }
+            .store(in: &cancellables)
+
         sidebarViewModel.$selectedApp
             .receive(on: DispatchQueue.main)
             .sink { [weak self] selectedApp in
@@ -100,6 +124,11 @@ class DetailViewModel: ObservableObject {
 extension DetailViewModel {
     func retryVersions() {
         sidebarViewModel.retryVersions()
+    }
+
+    /// Loads the next versions page, like builds pagination.
+    func loadMoreVersions(cursor: String) {
+        sidebarViewModel.loadMoreVersions(cursor: cursor)
     }
 
     func setSelectedVersionAndGetBuilds(selectedVersion: PreReleaseVersionsModel, cursor: String? = nil) {

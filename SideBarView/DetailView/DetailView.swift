@@ -115,6 +115,25 @@ struct DetailView: View {
                             viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
                         }
                 }
+                // Cursor pagination, like apps/builds: offer the next page
+                // inline after the chips, with a retry on pagination failure.
+                if let nextCursor = viewModel.versionsNextCursor {
+                    if viewModel.versionsPaginationFailed {
+                        Button("Couldn't load more — Retry") {
+                            viewModel.loadMoreVersions(cursor: nextCursor)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 8)
+                    } else {
+                        Button("Load more") {
+                            viewModel.loadMoreVersions(cursor: nextCursor)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
             }
         }
     }

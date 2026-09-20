@@ -122,11 +122,37 @@ struct SideBarView: View {
                 viewModel.getiOSApps()
             }
         }
+        .onChange(of: navigationManager.isLoggedIn) { _, isLoggedIn in
+            // First login happens under this view: onAppear already ran
+            // (with an empty keychain) before the team was saved, so a
+            // fresh login must select the team and fetch explicitly.
+            if isLoggedIn {
+                if CredentialStorage.shared.selectedTeam == nil {
+                    CredentialStorage.shared.restoreDefaultTeam()
+                }
+                viewModel.getiOSApps()
+            }
+        }
         .onChange(of: viewModel.isTeamChanged) { oldValue, newValue in
             if newValue {
                 viewModel.updateTeam()
                 viewModel.isTeamChanged = false
             }
+        }
+    }
+
+    /// Removes a team: wipes everything on logout (last team), or resets
+    /// onto the restored team when the active one was deleted. Deleting a
+    /// background team needs no refresh.
+    private func deleteTeam(_ team: String) {
+        let wasSelected = CredentialStorage.shared.selectedTeam?.key == team
+        CredentialStorage.shared.deleteCredential(for: team)
+        if CredentialStorage.shared.getTeams.isEmpty {
+            viewModel.clearOnLogout()
+            navigationManager.isLoggedIn = false
+        } else if wasSelected {
+            CredentialStorage.shared.restoreDefaultTeam()
+            viewModel.updateTeam()
         }
     }
 
@@ -173,21 +199,23 @@ struct SideBarView: View {
 
                             Spacer()
 
-                            Button(action: {
-                                CredentialStorage.shared.deleteCredential(for: team)
-                                if CredentialStorage.shared.getTeams.isEmpty {
-                                    navigationManager.isLoggedIn = false
-                                } else {
-                                    CredentialStorage.shared.restoreDefaultTeam()
-                                    viewModel.getiOSApps()
-                                }
-                            }) {
-                                Image(systemName: "trash")
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Remove team")
+                            // Plain Image, not a Button: a Button here fires
+                            // ALONGSIDE the row's onTapGesture, re-selecting
+                            // the team being deleted and refetching its apps.
+                            // The high-priority gesture wins over the row
+                            // gesture, so delete never selects.
+                            Image(systemName: "trash")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .contentShape(Rectangle())
+                                .highPriorityGesture(
+                                    TapGesture().onEnded {
+                                        deleteTeam(team)
+                                    }
+                                )
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityLabel("Remove \(team)")
+                                .help("Remove team")
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -473,22 +501,9 @@ struct AppRowView: View {
         // window/screen state during view construction.
         let pixelSize = Int(iconSize * 2)
         if let url = resolvedIconURL(template: app.iconURL, size: pixelSize) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: iconSize, height: iconSize)
-                        .cornerRadius(6)
-                case .failure:
-                    placeholderIcon(size: iconSize)
-                case .empty:
-                    ProgressView()
-                        .frame(width: iconSize, height: iconSize)
-                @unknown default:
-                    placeholderIcon(size: iconSize)
-                }
-            }
+            // Disk + memory cached: AsyncImage re-downloaded on every
+            // scroll/launch because the CDN's cache headers revalidate.
+            CachedAppIcon(url: url, size: iconSize)
         } else {
             placeholderIcon(size: iconSize)
         }

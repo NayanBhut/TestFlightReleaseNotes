@@ -120,6 +120,10 @@ class OnBoardingViewModel: ObservableObject {
         UserDefaults.standard.set(isLoggedIn, forKey: UserDefaultsKeys.isLoggedIn)
         let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
         CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines), keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName)
+        // Saving alone doesn't select: make the just-added team active so
+        // API requests work immediately, even when the sidebar's onAppear
+        // (which restores the default team) already ran before this login.
+        CredentialStorage.shared.changeTeam = cleanTeamName
     }
     
     func getPrivateKey(filePath: URL?) {
