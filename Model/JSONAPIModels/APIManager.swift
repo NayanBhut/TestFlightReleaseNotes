@@ -395,11 +395,10 @@ enum APIName: String {
 
     // MARK: Batch C endpoints (read-only)
     //
-    // NOTE: app-scoped subpaths under /apps — GET /v1/apps/{id}/appInfos,
-    // /v1/apps/{id}/customerReviews and /v1/apps/{id}/appEncryptionDeclarations
-    // — are composed with the existing `/apps` prefix (getAllApps) plus a
-    // `path` argument, e.g. .get(name: .getAllApps, path: "\(appId)/appInfos"),
-    // mirroring the existing /builds/{id}/buildBetaDetail pattern. Enum raw
+    // NOTE: app-scoped subpaths under /apps — GET /v1/apps/{id}/appInfos
+    // and /v1/apps/{id}/customerReviews — are composed with the existing
+    // `/apps` prefix (getAllApps) plus a `path` argument, e.g.
+    // .get(name: .getAllApps, path: "\(appId)/appInfos"), mirroring the existing /builds/{id}/buildBetaDetail pattern. Enum raw
     // values must be unique, so `/apps` cannot have a second case (a literal
     // `case getAppInfos = "/appInfos"` would build /v1/appInfos/{path},
     // which is not a valid collection route and would 404).
@@ -407,6 +406,16 @@ enum APIName: String {
     case getAppStoreVersions = "/appStoreVersions"
     // GET /v1/reviewSubmissions?filter[app]=... (top-level collection).
     case getReviewSubmissions = "/reviewSubmissions"
+    // GET /v1/appEncryptionDeclarations?filter[app]=... (top-level collection).
+    // There is no /v1/apps/{id}/appEncryptionDeclarations subpath — the
+    // relationship doesn't exist on apps (server 400s it).
+    case getAppEncryptionDeclarations = "/appEncryptionDeclarations"
+    // MARK: - Write operations
+    // POST /v1/customerReviews/{id}/customerReviewResponses — reply to a review.
+    // C3: review replies (POST /v1/customerReviews/{id}/customerReviewResponses).
+    // Not under /apps/{id}/ — it's a top-level subpath of /customerReviews.
+    case postCustomerReviewResponse = "/customerReviews"
+
     // C2: team-scoped resources (top-level collections).
     case getDevices = "/devices"
     case getCertificates = "/certificates"
