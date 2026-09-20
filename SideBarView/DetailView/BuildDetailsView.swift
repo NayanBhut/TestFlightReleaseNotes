@@ -34,20 +34,17 @@ struct BuildDetailsView: View {
                         Spacer()
                     }
                 case .loading:
-                    // Show full screen loading when fetching builds
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 16) {
-                            Spacer()
-                            ProgressView()
-                                .scaleEffect(1.2)
-                            Text("Loading builds...")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        Spacer()
+                    // Full screen loading when fetching builds. One flexible
+                    // frame centers the content; inner Spacers would only
+                    // compete with it for the available height.
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Loading builds...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .error(let message):
                     ErrorRetryView(
                         title: "Couldn't Load Builds",
@@ -56,17 +53,21 @@ struct BuildDetailsView: View {
                     ) {
                         viewModel.retryBuilds()
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .empty:
                     if viewModel.selectedVersion == nil {
                         noVersionSelectedView
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         buildsHeader()
                         Divider()
                         noBuildsView
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 case .loaded:
                     if viewModel.selectedVersion == nil {
                         noVersionSelectedView
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         buildsHeader()
                         Divider()

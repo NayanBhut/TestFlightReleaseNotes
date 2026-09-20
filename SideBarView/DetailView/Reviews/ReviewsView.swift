@@ -20,14 +20,19 @@ struct ReviewsView: View {
                     header(app: app)
                     filterBar(app: app)
                     Divider()
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
+                    // Side-by-side columns, each with its own scroll: a tall
+                    // submissions list can no longer push reviews off-screen.
+                    HStack(alignment: .top, spacing: 16) {
+                        ScrollView {
                             submissionsSection
-                            reviewsSection
+                                .padding(20)
                         }
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        ScrollView {
+                            reviewsSection
+                                .padding(20)
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
                 .onAppear {
                     reviewsViewModel.load(app: app)

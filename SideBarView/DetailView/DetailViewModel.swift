@@ -148,6 +148,10 @@ class DetailViewModel: ObservableObject {
                 self.selectedApp = selectedApp
                 // Team / app switch clears versions + builds cleanly.
                 self.selectedVersion = nil
+                // Cancel the in-flight builds fetch: without this a late
+                // response from the previous app would set selectedVersion
+                // and buildsState for the wrong app after the switch.
+                self.buildsFetchTask?.cancel()
                 self.buildsState = .idle
                 self.nextPageCursor = nil
                 self.meta = nil
