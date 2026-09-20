@@ -55,7 +55,41 @@ struct ReviewSubmissionModel: Equatable {
     /// CANCELING, COMPLETING, COMPLETE.
     @ResourceAttribute var state: String?
     @ResourceAttribute var submittedDate: String?
+    /// Included via include=appStoreVersion; nil when not requested.
+    @ResourceRelationship var appStoreVersion: AppStoreVersionsModel?
+    /// Included via include=submittedByActor (verified against a recorded
+    /// GET /v1/reviewSubmissions/{id} response); nil when not requested.
+    @ResourceRelationship var submittedByActor: ActorModel?
 }
 
 typealias CustomerReviewsDocument = CompoundDocument<[CustomerReviewModel], Meta>
 typealias ReviewSubmissionsDocument = CompoundDocument<[ReviewSubmissionModel], Meta>
+
+/// Actors (type "actors") — verified against a recorded
+/// GET /v1/reviewSubmissions/{id}?include=submittedByActor response:
+/// attributes apiKeyId/actorType/userEmail/userFirstName/userLastName
+/// (all null for APPLE actors).
+@ResourceWrapper(type: "actors")
+struct ActorModel: Equatable {
+    static func == (lhs: ActorModel, rhs: ActorModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var actorType: String?
+    @ResourceAttribute var apiKeyId: String?
+    @ResourceAttribute var userEmail: String?
+    @ResourceAttribute var userFirstName: String?
+    @ResourceAttribute var userLastName: String?
+
+    /// "First Last"; falls back to email, then "Unknown" (names are
+    /// null for APPLE and API-key actors), so PII only shows when no
+    /// name exists. Mirrors BetaTesterModel.displayName.
+    var displayName: String {
+        let first = userFirstName ?? ""
+        let last = userLastName ?? ""
+        let full = "\(first) \(last)".trimmingCharacters(in: .whitespaces)
+        return full.isEmpty ? (userEmail ?? "Unknown") : full
+    }
+}

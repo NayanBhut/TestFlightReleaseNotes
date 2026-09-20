@@ -94,6 +94,16 @@ struct ReviewsView: View {
                                 Text(submission.platform ?? "")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
+                                if let version = submission.appStoreVersion?.versionString, !version.isEmpty {
+                                    Text("Version \(version)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                if let submitter = submission.submittedByActor {
+                                    Text("Submitted by \(submitter.displayName)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
                                 Text(submission.submittedDate ?? "")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
@@ -197,6 +207,10 @@ struct ReviewsView: View {
                 .background(Color(nsColor: .windowBackgroundColor))
                 .cornerRadius(6)
             }
+            if review.response == nil {
+                ReplySection(reviewId: review.id,
+                              reviewsViewModel: reviewsViewModel)
+            }
         }
     }
 
@@ -252,6 +266,63 @@ struct ReviewsView: View {
             Spacer()
         }
         .padding()
+    }
+}
+
+// MARK: - Reply controls
+
+struct ReplySection: View {
+    let reviewId: String
+    @ObservedObject var reviewsViewModel: ReviewsViewModel
+    @State private var isReplying = false
+    @State private var replyText: String = ""
+
+    var body: some View {
+        if isReplying {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Write a reply...", text: $replyText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                HStack {
+                    Button("Cancel") {
+                        isReplying = false
+                        replyText = ""
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Send") {
+                        Task { @MainActor in
+                            let posted = await reviewsViewModel.replyToReview(
+                                reviewId: reviewId,
+                                responseBody: replyText
+                            )
+                            // Keep the composer open on failure so the
+                            // typed reply is never silently discarded.
+                            if posted {
+                                isReplying = false
+                                replyText = ""
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(8)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .cornerRadius(6)
+        } else {
+            Button("Reply") {
+                isReplying = true
+            }
+            .font(.caption)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .padding(.top, 4)
+        }
     }
 }
 

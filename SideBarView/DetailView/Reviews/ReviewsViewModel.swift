@@ -119,6 +119,54 @@ final class ReviewsViewModel: ObservableObject {
         submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
     }
 
+    /// POST /v1/customerReviews/{id}/customerReviewResponses.
+    /// Optimistically updates the review's response relationship on
+    /// success so the reply appears in the row without a refetch.
+    /// Returns whether the reply posted — the row keeps the composer
+    /// open on failure so typed input is never silently discarded.
+    func replyToReview(reviewId: String, responseBody: String) async -> Bool {
+        guard currentAppId != nil else { return false }
+        let trimmed = responseBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let body = CustomerReviewResponseRequest(
+            data: CustomerReviewResponseData(
+                attributes: CustomerReviewResponseAttributes(responseBody: trimmed),
+                relationships: CustomerReviewResponseRelationships(
+                    review: ReviewLinkage(data: ReviewLinkageData(id: reviewId))
+                )
+            )
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .postCustomerReviewResponse,
+                           body: data,
+                           path: "\(reviewId)/customerReviewResponses"),
+                apiVersion: .v1) else {
+            return false
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return false }
+            let model = try getDecoder().decode(CustomerReviewResponseModel.self,
+                                                from: responseData)
+            // Optimistic update: set the response on the review row.
+            guard case .loaded(var reviews) = reviewsState,
+                  let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return false }
+            reviews[index].response = model
+            reviewsState = .loaded(reviews)
+            return true
+        } catch {
+            reviewsLogger.error("Failed to reply to review: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     func loadMoreReviews(cursor: String) {
         // In-flight check BEFORE cancelling: the successor task starts
         // before the cancelled predecessor runs its defer, so the internal
@@ -205,9 +253,13 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
-    /// GET /v1/reviewSubmissions?filter[app]={id}. The collection has no
-    /// sort parameter (verified against the OpenAPI spec), so order is the
-    /// server's default.
+    /// GET /v1/reviewSubmissions?filter[app]={id}&include=submittedByActor.
+    /// The collection has no sort parameter (verified against the OpenAPI
+    /// spec), so order is the server's default. NOTE: the list endpoint's
+    /// include enum is narrower than the detail endpoint's — it rejects
+    /// appStoreVersion ("not a valid relationship name", verified at
+    /// runtime), so the version relationship + row UI stay nil on list
+    /// rows until a valid path for them is found.
     func fetchSubmissions(appId: String, cursor: String? = nil) async {
         guard !Task.isCancelled else { return }
         let isPaginating = cursor != nil
@@ -225,6 +277,7 @@ final class ReviewsViewModel: ObservableObject {
 
         var queryParams = [
             "filter[app]": appId,
+            "include": "submittedByActor",
             "limit": String(AppConfigs.reviewLimit)
         ]
         if let cursor {
@@ -282,3 +335,33 @@ final class ReviewsViewModel: ObservableObject {
         return error.localizedDescription
     }
 }
+
+// MARK: - POST /customerReviewResponses request body
+
+struct CustomerReviewResponseRequest: Codable {
+    let data: CustomerReviewResponseData
+}
+
+struct CustomerReviewResponseData: Codable {
+    let type: String = "customerReviewResponses"
+    let attributes: CustomerReviewResponseAttributes
+    let relationships: CustomerReviewResponseRelationships
+}
+
+struct CustomerReviewResponseAttributes: Codable {
+    let responseBody: String
+}
+
+struct CustomerReviewResponseRelationships: Codable {
+    let review: ReviewLinkage
+}
+
+struct ReviewLinkage: Codable {
+    let data: ReviewLinkageData
+}
+
+struct ReviewLinkageData: Codable {
+    let type: String = "customerReviews"
+    let id: String
+}
+

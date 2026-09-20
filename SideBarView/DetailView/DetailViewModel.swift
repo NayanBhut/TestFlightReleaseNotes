@@ -401,13 +401,17 @@ extension DetailViewModel {
         }
     }
 
-    /// GET /v1/apps/{id}/appEncryptionDeclarations — export compliance.
+    /// GET /v1/appEncryptionDeclarations?filter[app]={id} — export
+    /// compliance (top-level collection; no app-scoped subpath exists —
+    /// the relationship is not on apps). Single page, limit=200 (same as
+    /// version localizations): declarations per app are a handful.
     func fetchExportCompliance(appId: String) async {
         guard !Task.isCancelled else { return }
         exportComplianceState = .loading
 
         guard let request = APIClient.shared.getRequest(
-            api: .get(name: .getAllApps, queryParams: ["limit": "200"], path: "\(appId)/appEncryptionDeclarations"),
+            api: .get(name: .getAppEncryptionDeclarations,
+                      queryParams: ["filter[app]": appId, "limit": "200"]),
             apiVersion: .v1) else {
             exportComplianceState = .error("No team selected. Add a team to load export compliance.")
             return

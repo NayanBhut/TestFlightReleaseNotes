@@ -271,8 +271,9 @@ struct AppCategoryModel: Equatable {
     @ResourceAttribute var platforms: [String]?
 }
 
-/// GET /v1/apps/{id}/appEncryptionDeclarations — the read-only source for
-/// the app's export compliance state.
+/// GET /v1/appEncryptionDeclarations?filter[app]={id} — the read-only
+/// source for the app's export compliance state. Top-level collection:
+/// no /v1/apps/{id}/appEncryptionDeclarations subpath exists.
 @ResourceWrapper(type: "appEncryptionDeclarations")
 struct AppEncryptionDeclarationModel: Equatable {
     static func == (lhs: AppEncryptionDeclarationModel, rhs: AppEncryptionDeclarationModel) -> Bool {
@@ -291,5 +292,5 @@ struct AppEncryptionDeclarationModel: Equatable {
 }
 
 typealias AppInfosDocument = CompoundDocument<[AppInfoModel], NoMeta>
-typealias AppEncryptionDeclarationsDocument = CompoundDocument<[AppEncryptionDeclarationModel], NoMeta>
+typealias AppEncryptionDeclarationsDocument = CompoundDocument<[AppEncryptionDeclarationModel], Meta>
 typealias AppStoreVersionLocalizationsDocument = CompoundDocument<[AppStoreVersionLocalizationsModel], NoMeta>
