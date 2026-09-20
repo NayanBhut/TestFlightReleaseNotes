@@ -65,6 +65,13 @@ class DetailViewModel: ObservableObject {
     private var buildsFetchTask: Task<Void, Never>?
     /// Suppresses duplicate pagination requests while one page is loading.
     private var isPaginatingBuilds = false
+    /// Generation counter for builds fetches. Bumped on every selection
+    /// reset (app/team switch) and every new fetch; a fetch only applies
+    /// its result if the generation is unchanged. Defense-in-depth: the
+    /// async URLSession call throws on cancel and both exits check
+    /// Task.isCancelled, but those guards sit *after* the await — this
+    /// closes any window where a stale fetch could still write state.
+    private var buildsFetchGeneration = 0
 
     // MARK: - Batch C1 — App Info bookkeeping (stored here: extensions
     // must not contain stored properties)
@@ -148,10 +155,15 @@ class DetailViewModel: ObservableObject {
                 self.selectedApp = selectedApp
                 // Team / app switch clears versions + builds cleanly.
                 self.selectedVersion = nil
-                // Cancel the in-flight builds fetch: without this a late
-                // response from the previous app would set selectedVersion
-                // and buildsState for the wrong app after the switch.
+                // Cancel the in-flight builds fetch AND bump its generation:
+                // without both, a late response from the previous app could
+                // still write selectedVersion / buildsState for the wrong
+                // app after the switch (the cancel propagates through the
+                // async URLSession call, but the generation guard makes it
+                // impossible even if a cancellation lands late).
                 self.buildsFetchTask?.cancel()
+                self.buildsFetchTask = nil
+                self.buildsFetchGeneration += 1
                 self.buildsState = .idle
                 self.nextPageCursor = nil
                 self.meta = nil
@@ -210,10 +222,14 @@ extension DetailViewModel {
         // Cancel any in-flight fetch so a stale response (older version's
         // builds) can never overwrite the state for the newer selection.
         buildsFetchTask?.cancel()
-        buildsFetchTask = Task { await fetchBuilds(app: app, version: version, cursor: cursor) }
+        // A new fetch invalidates any predecessor still in flight: only the
+        // newest generation may apply results.
+        buildsFetchGeneration += 1
+        let generation = buildsFetchGeneration
+        buildsFetchTask = Task { await fetchBuilds(app: app, version: version, cursor: cursor, generation: generation) }
     }
 
-    func fetchBuilds(app: AppsData, version: PreReleaseVersionsModel, cursor: String? = nil) async {
+    func fetchBuilds(app: AppsData, version: PreReleaseVersionsModel, cursor: String? = nil, generation: Int? = nil) async {
         let isPaginating = cursor != nil
         if isPaginating {
             isPaginatingBuilds = true
@@ -244,8 +260,12 @@ extension DetailViewModel {
         do {
             let data = try await APIClient.shared.callAPI(with: request)
             let model = try getDecoder().decode(BuildsDocument.self, from: data)
-            // Ignore stale responses superseded by a newer fetch.
-            guard !Task.isCancelled else { return }
+            // Ignore stale responses superseded by a newer fetch or a
+            // selection reset: the generation is bumped on both, so a
+            // predecessor that slipped past Task.isCancelled (e.g. cancellation
+            // landing between the guard and the state writes) still can't
+            // apply results for the wrong app/version.
+            guard !Task.isCancelled, generation == nil || generation == buildsFetchGeneration else { return }
             selectedVersion = version
 
             let merged: [BuildsModel]
@@ -265,7 +285,7 @@ extension DetailViewModel {
         } catch {
             // A cancelled fetch means a newer one took over - don't surface
             // its failure or overwrite the newer state.
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, generation == nil || generation == buildsFetchGeneration else { return }
             detailLogger.error("Failed to load builds: \(error.localizedDescription)")
             if !isPaginating {
                 selectedVersion = version

@@ -22,16 +22,20 @@ struct ReviewsView: View {
                     Divider()
                     // Side-by-side columns, each with its own scroll: a tall
                     // submissions list can no longer push reviews off-screen.
+                    // Horizontal padding lives here, not inside the
+                    // ScrollViews, so the inter-column gap is exactly the
+                    // HStack spacing (16pt) instead of padding+spacing+padding.
                     HStack(alignment: .top, spacing: 16) {
                         ScrollView {
                             submissionsSection
-                                .padding(20)
+                                .padding(.vertical, 20)
                         }
                         ScrollView {
                             reviewsSection
-                                .padding(20)
+                                .padding(.vertical, 20)
                         }
                     }
+                    .padding(.horizontal, 20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
                 .onAppear {
