@@ -10,7 +10,6 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var viewModel: SideBarViewModel
     @StateObject var detailViewModel: DetailViewModel
-    @EnvironmentObject var exportManager: ExportManager
     @EnvironmentObject var navigationManager: NavigationManager
     @State var showAlertView: Bool = false
     @State var isNewAccountAdded: Bool = false
@@ -28,7 +27,6 @@ struct ContentView: View {
             } detail: {
                 VStack(alignment: .center){
                     DetailView(viewModel: detailViewModel)
-                        .environmentObject(exportManager)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

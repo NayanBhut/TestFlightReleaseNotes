@@ -45,6 +45,7 @@ struct SideBarView: View {
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(viewModel.isAppsLoading)
                     .help("Refresh (Cmd+R)")
+                    .accessibilityLabel("Refresh Apps")
                 }
 
                 teamSelector()
@@ -267,7 +268,7 @@ struct SideBarView: View {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.caption)
-                Text("Sort")
+                Text("Sort: \(viewModel.selectedSortOption.displayName)")
                     .font(.caption)
             }
             .padding(.horizontal, 10)
@@ -297,26 +298,7 @@ struct SideBarView: View {
         case .loaded:
             VStack(spacing: 0) {
                 if viewModel.filteredApps.isEmpty {
-                    // Loaded apps exist but none match the current search.
-                    VStack(spacing: 16) {
-                        Spacer()
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 40))
-                            .foregroundColor(.secondary)
-                        Text("No Matching Apps")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                        Text("No apps match the current search")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Button("Clear Search") {
-                            viewModel.clearSearch()
-                        }
-                        .buttonStyle(.bordered)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
+                    noMatchesView
                 } else {
                     List(viewModel.filteredApps, id: \.id) { app in
                         AppRowView(app: app, isSelected: app.isSelected)
@@ -332,9 +314,10 @@ struct SideBarView: View {
                             Divider()
                             ProgressView()
                                 .scaleEffect(0.8)
-                                .onAppear {
-                                    // The VM guards against duplicate
-                                    // concurrent page fetches.
+                                // .task(id:) re-runs each time a new cursor
+                                // arrives, so pagination can't stall when the
+                                // spinner stays on screen after a page loads.
+                                .task(id: nextCursor) {
                                     viewModel.loadMoreApps(cursor: nextCursor)
                                 }
                         }
@@ -342,24 +325,30 @@ struct SideBarView: View {
                 }
             }
         case .empty:
-            VStack(spacing: 16) {
-                Spacer()
-                Image(systemName: "app.dashed")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary)
-                Text("No Apps Found")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                Text("No iOS apps are available for this team")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Button("Refresh") {
-                    viewModel.retryApps()
+            if !viewModel.searchText.isEmpty {
+                // A server-side search with no hits: same feedback as local
+                // no-matches instead of the generic "team has no apps" UI.
+                noMatchesView
+            } else {
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: "app.dashed")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    Text("No Apps Found")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                    Text("No iOS apps are available for this team")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Button("Refresh") {
+                        viewModel.retryApps()
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
                 }
-                .buttonStyle(.bordered)
-                Spacer()
+                .padding()
             }
-            .padding()
         case .error(let message):
             ErrorRetryView(
                 title: "Couldn't Load Apps",
@@ -369,6 +358,29 @@ struct SideBarView: View {
                 viewModel.retryApps()
             }
         }
+    }
+
+    /// Feedback shown when loaded apps exist but nothing matches the search.
+    private var noMatchesView: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary)
+            Text("No Matching Apps")
+                .font(.title3)
+                .fontWeight(.medium)
+            Text("No apps match the current search")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Button("Clear Search") {
+                viewModel.clearSearch()
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
     }
 }
 
@@ -437,7 +449,8 @@ struct AppRowView: View {
     private var appIconView: some View {
         let iconSize: CGFloat = 32
         // Request 2x pixels on Retina so icons render sharp instead of blurry.
-        let pixelSize = Int(iconSize * (NSScreen.main?.backingScaleFactor ?? 2))
+        let backingScale = NSApp.keyWindow?.screen?.backingScaleFactor ?? 2
+        let pixelSize = Int(iconSize * backingScale)
         if let url = resolvedIconURL(template: app.iconURL, size: pixelSize) {
             AsyncImage(url: url) { phase in
                 switch phase {
@@ -451,6 +464,8 @@ struct AppRowView: View {
                 case .empty:
                     ProgressView()
                         .frame(width: iconSize, height: iconSize)
+                @unknown default:
+                    placeholderIcon(size: iconSize)
                 }
             }
         } else {

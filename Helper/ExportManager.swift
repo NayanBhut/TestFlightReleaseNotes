@@ -26,9 +26,10 @@ final class ExportManager: ObservableObject {
         .appendingPathComponent("BuildExports", isDirectory: true)
     /// Exports older than this are purged so the temp directory can't grow unbounded.
     private static let staleExportInterval: TimeInterval = 24 * 60 * 60
-    /// Longest sanitized file-name component; app name + version must fit
-    /// the 255-byte filename limit alongside the extension.
-    private static let maxFileNameComponentLength = 100
+    /// Longest sanitized file-name component, in UTF-8 **bytes**, so app name
+    /// + version can't exceed the 255-byte filename limit alongside the
+    /// extension even with 4-byte characters (emoji, CJK).
+    private static let maxFileNameComponentBytes = 100
 
     init() {
         purgeStaleExportsInBackground()
@@ -55,17 +56,28 @@ final class ExportManager: ObservableObject {
     }
 
     /// Replaces characters that are invalid or unsafe in file names and caps
-    /// the length so long app names + versions can't exceed the 255-byte limit.
+    /// the length (UTF-8 bytes) so long app names + versions can't exceed the
+    /// 255-byte filename limit.
     private func sanitizedFileNameComponent(_ value: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
             .union(.newlines)
             .union(.controlCharacters)
             .union(.illegalCharacters)
-        return String(value
+        let sanitized = value
             .replacingOccurrences(of: " ", with: "_")
             .components(separatedBy: invalidCharacters)
             .joined(separator: "-")
-            .prefix(Self.maxFileNameComponentLength))
+
+        // Truncate on a safe UTF-8 scalar boundary once the byte budget is spent.
+        var result = String.UnicodeScalarView()
+        var bytes = 0
+        for scalar in sanitized.unicodeScalars {
+            let width = UTF8.width(scalar)
+            if bytes + width > Self.maxFileNameComponentBytes { break }
+            bytes += width
+            result.append(scalar)
+        }
+        return String(result)
     }
 
     /// Removes exported files left over from previous sessions, off the main thread.
@@ -140,12 +152,14 @@ final class ExportManager: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
-    /// Quote-escapes a cell and neutralizes spreadsheet formula injection.
-    /// The `'` prefix is added inside the quotes so the cell stays a single,
-    /// well-formed CSV field even when it contains commas, quotes or newlines.
+    /// Quote-escapes a cell and neutralizes spreadsheet formula injection
+    /// (per OWASP, a value whose first *non-whitespace* character is `=`, `+`,
+    /// `-`, or `@` is prefixed with `'`). The prefix is added inside the
+    /// quotes so the cell stays a single well-formed CSV field.
     private func escapeCSVCell(_ value: String) -> String {
         var escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-        if let first = escaped.first, ["=", "+", "-", "@", "\t", "\r"].contains(first) {
+        let firstNonWhitespace = escaped.drop(while: { $0 == " " || $0 == "\t" || $0 == "\r" || $0 == "\n" }).first
+        if let first = firstNonWhitespace, ["=", "+", "-", "@"].contains(first) {
             escaped = "'" + escaped
         }
         return "\"\(escaped)\""

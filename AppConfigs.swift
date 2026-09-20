@@ -18,15 +18,9 @@ enum AppConfigs {
         case stateAscending = "stateAscending"
         case stateDescending = "stateDescending"
 
-        /// Server-side sort value. The apps endpoint only supports sorting by
-        /// name/bundleId/sku, so state sorting returns nil and is applied locally.
-        var queryValue: String? {
-            switch self {
-            case .nameAscending: return "name"
-            case .nameDescending: return "-name"
-            case .stateAscending, .stateDescending: return nil
-            }
-        }
+        // Sorting is applied locally over the loaded pages; the apps endpoint
+        // can't sort by state, and mixing a server sort with a cursor issued
+        // under a different sort would silently skip rows.
 
         var displayName: String {
             switch self {

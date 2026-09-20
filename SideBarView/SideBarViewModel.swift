@@ -29,7 +29,7 @@ class SideBarViewModel: ObservableObject {
     /// current list and selection visible while in flight.
     @Published var searchText: String = "" {
         didSet {
-            guard searchText != oldValue else { return }
+            guard !suppressFilterObservers, searchText != oldValue else { return }
             scheduleServerSearch()
         }
     }
@@ -37,7 +37,7 @@ class SideBarViewModel: ObservableObject {
     /// changing it triggers a fresh fetch so the list never mixes query epochs.
     @Published var selectedStateFilter: AppConfigs.AppStateFilter = .all {
         didSet {
-            guard selectedStateFilter != oldValue else { return }
+            guard !suppressFilterObservers, selectedStateFilter != oldValue else { return }
             getiOSApps()
         }
     }
@@ -75,18 +75,13 @@ class SideBarViewModel: ObservableObject {
     private var versionsFetchTask: Task<Void, Never>?
     /// Debounces the server-side search triggered by typing.
     private var searchDebounceTask: Task<Void, Never>?
+    /// Suppresses didSet-triggered fetches while batch-resetting filter state
+    /// (e.g. on team switch) so exactly one explicit fetch runs.
+    private var suppressFilterObservers = false
     /// Suppresses duplicate pagination requests while one page is loading.
     private var isPaginatingApps = false
 
     // MARK: - Convenience accessors for views
-
-    var arrApps: [AppsData] {
-        appsState.loadedValue ?? []
-    }
-
-    var arrVersion: [PreReleaseVersionsModel] {
-        versionsState.loadedValue ?? []
-    }
 
     var isAppsLoading: Bool {
         appsState.isLoading
@@ -130,19 +125,16 @@ class SideBarViewModel: ObservableObject {
             if isPaginating { isPaginatingApps = false }
         }
 
-        // Phase 5: app icons, configurable limit, server-side sort,
-        // name search and app-store-state filter.
+        // Phase 5: app icons, configurable limit, server-side name search
+        // and app-store-state filter. Sorting is intentionally local-only:
+        // a server sort + a cursor issued under a different sort would
+        // silently skip rows during pagination.
         var queryParams: [String: String] = [
             "include": "appStoreVersions,appStoreIcon",
             "filter[appStoreVersions.platform]": "IOS",
             "fields[builds]": "icons",
             "limit": String(AppConfigs.appListLimit)
         ]
-
-        // The API only sorts by name (state sorting is applied locally).
-        if let serverSort = selectedSortOption.queryValue {
-            queryParams["sort"] = serverSort
-        }
 
         if !searchText.isEmpty {
             queryParams["filter[name]"] = searchText
@@ -255,13 +247,13 @@ class SideBarViewModel: ObservableObject {
     }
 
     func updateTeam() {
-        // Phase 5: reset search/filter state on team switch. didSet guards
-        // keep unchanged values from firing extra fetches; the debounced
-        // search task is cancelled so no delayed refetch follows.
-        searchDebounceTask?.cancel()
+        // Reset search/filter state without firing per-field observers; the
+        // single explicit fetch below is the only request for the new team.
+        suppressFilterObservers = true
         allLoadedApps = []
         searchText = ""
         selectedStateFilter = .all
+        suppressFilterObservers = false
         searchDebounceTask?.cancel()
         getiOSApps()
     }
@@ -325,11 +317,11 @@ class SideBarViewModel: ObservableObject {
             let model = try getDecoder().decode([PreReleaseVersionsModel].self, from: data)
             // Ignore stale responses superseded by a newer fetch.
             guard !Task.isCancelled else { return }
-            let limited = model.count > AppConfigs.versionLimit ? Array(model.prefix(AppConfigs.versionLimit)) : model
-            if limited.isEmpty {
+            // The server already honors the limit param — no client-side truncation.
+            if model.isEmpty {
                 versionsState = .empty
             } else {
-                versionsState = .loaded(limited)
+                versionsState = .loaded(model)
             }
         } catch {
             // A cancelled fetch means a newer one took over - don't surface
