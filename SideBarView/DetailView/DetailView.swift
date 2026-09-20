@@ -10,11 +10,38 @@ import SwiftUI
 struct DetailView: View {
     @ObservedObject var viewModel: DetailViewModel
     @StateObject private var betaViewModel = BetaViewModel()
+    @StateObject private var reviewsViewModel = ReviewsViewModel()
     @State private var selectedTab: DetailTab = .builds
+    /// Batch C flag: one switch that shows/hides the App Info and Reviews
+    /// tabs (and the sidebar's Resources section — same UserDefaults key).
+    @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
 
     enum DetailTab: String, CaseIterable {
         case builds = "Builds"
         case betaGroups = "Beta Groups"
+        case appInfo = "App Info"
+        case reviews = "Reviews"
+
+        /// Batch C tabs — hidden when the extended-info flag is off.
+        var requiresExtendedInfo: Bool {
+            switch self {
+            case .appInfo, .reviews: return true
+            case .builds, .betaGroups: return false
+            }
+        }
+    }
+
+    /// The tabs the picker renders for the current flag state.
+    private var visibleTabs: [DetailTab] {
+        DetailTab.allCases.filter { showExtendedInfo || !$0.requiresExtendedInfo }
+    }
+
+    /// The tab actually rendered. Clamps independently of the picker's
+    /// onChange clamp, which can't fire when the flag is toggled while no
+    /// app is selected (the picker doesn't exist then) — otherwise a
+    /// hidden tab's view could render and even fetch via onAppear.
+    private var effectiveTab: DetailTab {
+        visibleTabs.contains(selectedTab) ? selectedTab : .builds
     }
 
     init(viewModel: DetailViewModel) {
@@ -63,6 +90,14 @@ struct DetailView: View {
                     getBuildList()
                     Spacer()
                 }
+            }
+        }
+        // Reviews VM reset lives here, not in ReviewsView: the tab view only
+        // exists while its tab is selected, but a team switch can happen on
+        // any tab — this handler is installed whenever DetailView is.
+        .onChange(of: viewModel.selectedApp?.id) { _, newId in
+            if newId == nil {
+                reviewsViewModel.resetForTeamSwitch()
             }
         }
     }
@@ -164,7 +199,7 @@ struct DetailView: View {
     @ViewBuilder private func getBuildList() -> some View {
         if viewModel.selectedApp != nil {
             Picker("", selection: $selectedTab) {
-                ForEach(DetailTab.allCases, id: \.self) { tab in
+                ForEach(visibleTabs, id: \.self) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
             }
@@ -174,8 +209,15 @@ struct DetailView: View {
             .accessibilityLabel("Detail sections")
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
+            // Hiding the extended info while one of its tabs is selected
+            // would leave the picker on a tag it no longer renders.
+            .onChange(of: showExtendedInfo) { _, shown in
+                if !shown, !visibleTabs.contains(selectedTab) {
+                    selectedTab = .builds
+                }
+            }
 
-            switch selectedTab {
+            switch effectiveTab {
             case .builds:
                 BuildDetailsView(
                     viewModel: viewModel,
@@ -195,6 +237,16 @@ struct DetailView: View {
                     selectedApp: viewModel.selectedApp,
                     builds: viewModel.arrBuilds,
                     selectedVersionString: viewModel.selectedVersion?.version ?? ""
+                )
+            case .appInfo:
+                AppInfoView(
+                    viewModel: viewModel,
+                    selectedApp: viewModel.selectedApp
+                )
+            case .reviews:
+                ReviewsView(
+                    reviewsViewModel: reviewsViewModel,
+                    selectedApp: viewModel.selectedApp
                 )
             }
         } else {

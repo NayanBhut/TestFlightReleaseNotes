@@ -67,6 +67,10 @@ extension ViewState: Equatable where T: Equatable {
 
 struct UserDefaultsKeys {
     static let isLoggedIn = "isLoggedIn"
+    /// Batch C flag: one switch that shows/hides the App Info tab, the
+    /// Reviews tab and the Resources sidebar section. Read via @AppStorage
+    /// so every view observes UserDefaults and stays in sync.
+    static let showExtendedInfo = "showExtendedInfo"
 }
 
 // MARK: - Shared error + Retry view

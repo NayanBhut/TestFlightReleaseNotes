@@ -11,6 +11,11 @@ enum AppConfigs {
     static let appListLimit: Int = 10
     static let versionLimit: Int = 10
     static let buildLimit: Int = 5
+    /// Batch C: page size for customer reviews and review submissions.
+    static let reviewLimit: Int = 50
+    /// Batch C: page size for team-scoped resources (devices, certificates,
+    /// bundle IDs, profiles, users).
+    static let resourceLimit: Int = 50
 
     enum SortOption: String, CaseIterable {
         case nameAscending = "nameAscending"
