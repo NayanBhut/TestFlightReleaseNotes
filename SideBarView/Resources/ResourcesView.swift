@@ -69,6 +69,7 @@ struct ResourcesSectionView: View {
 struct ResourceListContentView: View {
     let kind: ResourcesViewModel.Kind
     @ObservedObject var viewModel: ResourcesViewModel
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
@@ -101,6 +102,19 @@ struct ResourceListContentView: View {
             }
             .buttonStyle(.bordered)
             .accessibilityLabel("Refresh \(kind.displayName)")
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .clipShape(Circle())
+            .help("Close (Esc)")
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
