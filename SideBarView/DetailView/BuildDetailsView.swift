@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct BuildDetailsView: View {
     @ObservedObject var viewModel: DetailViewModel
@@ -176,6 +177,8 @@ struct BuildDetailsView: View {
                     .foregroundColor(.secondary)
             }
 
+            snippetsMenu
+
             Button(action: {
                 refreshBuildList?()
             }) {
@@ -188,6 +191,25 @@ struct BuildDetailsView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    /// Single snippets menu — copies selected text to clipboard
+    /// so the user can paste it into any build's release notes.
+    private var snippetsMenu: some View {
+        Menu {
+            ForEach(ReleaseNoteSnippets.all, id: \.self) { snippet in
+                Button(ReleaseNoteSnippets.menuLabel(snippet)) {
+                    NSPasteboard.general.clear()
+                    NSPasteboard.general.setString(snippet, forType: .string)
+                }
+            }
+        } label: {
+            Label("Snippets", systemImage: "text.badge.plus")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .help("Copy a snippet to paste into release notes")
     }
 
     @ViewBuilder private func getBuildsList() -> some View {
@@ -334,6 +356,26 @@ enum BuildDisplayHelper {
         default:
             return ("", .clear)
         }
+    }
+}
+
+/// Canned release-note starting points — copied to clipboard
+/// from a single menu so they can be pasted into any build's
+/// release notes.
+enum ReleaseNoteSnippets {
+    static let all = [
+        "Bug fixes and performance improvements",
+        "New features:\n- Feature 1\n- Feature 2\n- Feature 3",
+        "Bug fixes:\n- Fixed issue with login\n- Fixed crash on startup\n- Improved stability",
+        "What's new in this version:\n- Enhanced UI\n- Better performance\n- Security updates",
+        "Release notes:\n- Added dark mode support\n- Fixed memory leaks\n- Updated dependencies"
+    ]
+
+    /// One-line menu label; ellipsis only when actually truncated.
+    static func menuLabel(_ snippet: String) -> String {
+        let flattened = snippet.replacingOccurrences(of: "\n", with: " ")
+        guard flattened.count > 40 else { return flattened }
+        return String(flattened.prefix(40)) + "…"
     }
 }
 
