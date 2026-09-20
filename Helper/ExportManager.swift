@@ -21,31 +21,32 @@ enum ExportFormat {
 final class ExportManager: ObservableObject {
     @Published var exportError: String?
 
-    /// Directory for exported files; stale files are purged on each export.
+    /// Directory for exported files; stale files are purged in the background.
     private static let exportsDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("BuildExports", isDirectory: true)
     /// Exports older than this are purged so the temp directory can't grow unbounded.
     private static let staleExportInterval: TimeInterval = 24 * 60 * 60
+    /// Longest sanitized file-name component; app name + version must fit
+    /// the 255-byte filename limit alongside the extension.
+    private static let maxFileNameComponentLength = 100
 
     init() {
-        purgeStaleExports()
+        purgeStaleExportsInBackground()
     }
 
     func exportBuilds(builds: [BuildsModel], version: PreReleaseVersionsModel, appName: String, format: ExportFormat) -> URL? {
-        let content = generateContent(builds: builds, version: version, appName: appName, format: format)
+        exportError = nil
 
-        guard let data = content.data(using: .utf8) else {
-            exportError = "Failed to encode content"
-            return nil
-        }
+        let content = generateContent(builds: builds, version: version, appName: appName, format: format)
+        let data = Data(content.utf8)
 
         let fileName = "\(sanitizedFileNameComponent(appName))_\(sanitizedFileNameComponent(version.version ?? "unknown")).\(format.fileExtension)"
 
         do {
             try FileManager.default.createDirectory(at: Self.exportsDirectory, withIntermediateDirectories: true)
-            purgeStaleExports()
             let fileURL = Self.exportsDirectory.appendingPathComponent(fileName)
-            try data.write(to: fileURL)
+            try data.write(to: fileURL, options: .atomic)
+            purgeStaleExportsInBackground()
             return fileURL
         } catch {
             exportError = error.localizedDescription
@@ -53,27 +54,35 @@ final class ExportManager: ObservableObject {
         }
     }
 
-    /// Replaces characters that are invalid or unsafe in file names.
+    /// Replaces characters that are invalid or unsafe in file names and caps
+    /// the length so long app names + versions can't exceed the 255-byte limit.
     private func sanitizedFileNameComponent(_ value: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
             .union(.newlines)
             .union(.controlCharacters)
             .union(.illegalCharacters)
-        return value
+        return String(value
             .replacingOccurrences(of: " ", with: "_")
             .components(separatedBy: invalidCharacters)
             .joined(separator: "-")
+            .prefix(Self.maxFileNameComponentLength))
     }
 
-    /// Removes exported files left over from previous sessions.
-    private func purgeStaleExports() {
+    /// Removes exported files left over from previous sessions, off the main thread.
+    private func purgeStaleExportsInBackground() {
+        Task.detached(priority: .utility) {
+            Self.purgeStaleExports()
+        }
+    }
+
+    private nonisolated static func purgeStaleExports() {
         let fileManager = FileManager.default
         guard let files = try? fileManager.contentsOfDirectory(
-            at: Self.exportsDirectory,
+            at: exportsDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey]
         ) else { return }
 
-        let cutoff = Date().addingTimeInterval(-Self.staleExportInterval)
+        let cutoff = Date().addingTimeInterval(-staleExportInterval)
         for fileURL in files {
             if let modifiedDate = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
                modifiedDate < cutoff {
@@ -94,7 +103,9 @@ final class ExportManager: ObservableObject {
     }
 
     private func generateMarkdown(builds: [BuildsModel]) -> String {
-        var lines = ["| Build | Date | Notes |", "|-------|------|-------|", ""]
+        // No blank line between the separator and the first data row —
+        // GFM (and most renderers) require contiguous table rows.
+        var lines = ["| Build | Date | Notes |", "|-------|------|-------|"]
 
         for build in builds {
             let buildVersion = escapeMarkdownCell(build.version ?? "")
@@ -129,20 +140,25 @@ final class ExportManager: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
-    /// Quote-escapes a cell and neutralizes spreadsheet formula injection
-    /// (values starting with `=`, `+`, `-`, or `@` are prefixed with `'`).
+    /// Quote-escapes a cell and neutralizes spreadsheet formula injection.
+    /// The `'` prefix is added inside the quotes so the cell stays a single,
+    /// well-formed CSV field even when it contains commas, quotes or newlines.
     private func escapeCSVCell(_ value: String) -> String {
-        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-        if let first = escaped.first, ["=", "+", "-", "@"].contains(first) {
-            return "'\(escaped)"
+        var escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        if let first = escaped.first, ["=", "+", "-", "@", "\t", "\r"].contains(first) {
+            escaped = "'" + escaped
         }
         return "\"\(escaped)\""
     }
 
-    func shareFile(url: URL) {
+    func shareFile(url: URL, from sourceView: NSView? = nil) {
         let activity = NSSharingServicePicker(items: [url])
-        // Fall back to any open window if the key window isn't set
-        // (e.g. right after app activation).
+        // Anchor to the triggering control when provided; otherwise fall back
+        // to the key window, or any open window right after activation.
+        if let sourceView {
+            activity.show(relativeTo: sourceView.bounds, of: sourceView, preferredEdge: .minY)
+            return
+        }
         let window = NSApplication.shared.keyWindow ?? NSApp.windows.first
         guard let view = window?.contentView else { return }
         activity.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)

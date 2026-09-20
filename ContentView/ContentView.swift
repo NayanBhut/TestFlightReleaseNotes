@@ -56,9 +56,7 @@ struct ContentView: View {
 }
 
 #Preview {
-    let viewModel = SideBarViewModel()
-    return ContentView(viewModel: viewModel)
+    ContentView(viewModel: SideBarViewModel())
         .environmentObject(NavigationManager())
         .environmentObject(ExportManager())
-        .environmentObject(viewModel)
 }

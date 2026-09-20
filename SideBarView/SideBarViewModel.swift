@@ -25,10 +25,11 @@ class SideBarViewModel: ObservableObject {
 
     /// Local search gives instant feedback; a debounced server-side
     /// `filter[name]` fetch follows so results cover all apps, not just
-    /// the pages loaded so far.
+    /// the pages loaded so far. The refresh is silent: it keeps the
+    /// current list and selection visible while in flight.
     @Published var searchText: String = "" {
         didSet {
-            applyFilters()
+            guard searchText != oldValue else { return }
             scheduleServerSearch()
         }
     }
@@ -40,13 +41,34 @@ class SideBarViewModel: ObservableObject {
             getiOSApps()
         }
     }
-    @Published var selectedSortOption: AppConfigs.SortOption = .nameDescending {
-        didSet { applyFilters() }
-    }
-    /// The list the sidebar renders: searched / sorted locally.
-    @Published var filteredApps: [AppsData] = []
-    /// Everything loaded so far (across pagination); filtering applies to this.
+    @Published var selectedSortOption: AppConfigs.SortOption = .nameDescending
+
+    /// Everything loaded so far (across pagination and search refreshes).
     private var allLoadedApps: [AppsData] = []
+
+    /// Apps the sidebar renders: everything loaded, searched and sorted locally.
+    /// Derived (not stored) so it can never drift out of sync with
+    /// allLoadedApps / searchText / selectedSortOption.
+    var filteredApps: [AppsData] {
+        var filtered = allLoadedApps
+
+        if !searchText.isEmpty {
+            filtered = filtered.filter(matchesSearch)
+        }
+
+        switch selectedSortOption {
+        case .nameAscending:
+            filtered.sort { ($0.name ?? "").localizedCaseInsensitiveCompare($1.name ?? "") == .orderedAscending }
+        case .nameDescending:
+            filtered.sort { ($0.name ?? "").localizedCaseInsensitiveCompare($1.name ?? "") == .orderedDescending }
+        case .stateAscending:
+            filtered.sort { $0.currentState.localizedCaseInsensitiveCompare($1.currentState) == .orderedAscending }
+        case .stateDescending:
+            filtered.sort { $0.currentState.localizedCaseInsensitiveCompare($1.currentState) == .orderedDescending }
+        }
+
+        return filtered
+    }
 
     /// In-flight fetches so a new fetch can cancel a stale one.
     private var appsFetchTask: Task<Void, Never>?
@@ -80,7 +102,7 @@ class SideBarViewModel: ObservableObject {
 
     // MARK: - Apps
 
-    func getiOSApps(nextPage: String? = nil) {
+    func getiOSApps(nextPage: String? = nil, isSearchRefresh: Bool = false) {
         let isPaginating = nextPage != nil
         // Ignore duplicate "Load more" taps while a page request is in flight
         // (double-tapping would otherwise append the same rows twice).
@@ -88,13 +110,16 @@ class SideBarViewModel: ObservableObject {
         // Cancel any in-flight fetch so a stale response can never overwrite
         // the state for a newer fetch.
         appsFetchTask?.cancel()
-        appsFetchTask = Task { await fetchApps(nextPage: nextPage) }
+        appsFetchTask = Task { await fetchApps(nextPage: nextPage, isSearchRefresh: isSearchRefresh) }
     }
 
-    func fetchApps(nextPage: String? = nil) async {
+    func fetchApps(nextPage: String? = nil, isSearchRefresh: Bool = false) async {
         let isPaginating = nextPage != nil
         if isPaginating {
             isPaginatingApps = true
+        } else if isSearchRefresh {
+            // Silent refresh (search): keep the current list and selection
+            // visible while the server query is in flight.
         } else {
             appsState = .loading
             // Team switch / refresh / filter change clears selection cleanly.
@@ -114,7 +139,10 @@ class SideBarViewModel: ObservableObject {
             "limit": String(AppConfigs.appListLimit)
         ]
 
-        queryParams["sort"] = selectedSortOption.queryValue
+        // The API only sorts by name (state sorting is applied locally).
+        if let serverSort = selectedSortOption.queryValue {
+            queryParams["sort"] = serverSort
+        }
 
         if !searchText.isEmpty {
             queryParams["filter[name]"] = searchText
@@ -129,7 +157,7 @@ class SideBarViewModel: ObservableObject {
         }
 
         guard let request = APIClient.shared.getRequest(api: .get(name: .getAllApps, queryParams: queryParams), apiVersion: .v1) else {
-            if !isPaginating {
+            if !isPaginating, !isSearchRefresh {
                 appsState = .error("No team selected. Add a team to load apps.")
             }
             return
@@ -140,13 +168,14 @@ class SideBarViewModel: ObservableObject {
             let model = try getDecoder().decode(AppsDocument.self, from: data)
             // Ignore stale responses superseded by a newer fetch.
             guard !Task.isCancelled else { return }
-            updateCurrentLiveVersion(responseApp: model, nextPage: nextPage)
+            updateCurrentLiveVersion(responseApp: model, nextPage: nextPage, isSearchRefresh: isSearchRefresh)
         } catch {
             // A cancelled fetch means a newer one took over - don't surface
             // its failure or overwrite the newer state.
             guard !Task.isCancelled else { return }
             sidebarLogger.error("Failed to load apps: \(error.localizedDescription)")
-            if !isPaginating {
+            // Silent refreshes keep the current list on failure.
+            if !isPaginating, !isSearchRefresh {
                 appsState = .error(friendlyMessage(for: error))
             }
         }
@@ -159,11 +188,18 @@ class SideBarViewModel: ObservableObject {
         searchDebounceTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
-            self?.getiOSApps()
+            self?.getiOSApps(isSearchRefresh: true)
         }
     }
 
-    private func updateCurrentLiveVersion(responseApp: AppsDocument, nextPage: String? = nil) {
+    /// True when an app matches the current search term (name or bundle ID).
+    private func matchesSearch(_ app: AppsData) -> Bool {
+        guard !searchText.isEmpty else { return true }
+        return (app.name ?? "").localizedCaseInsensitiveContains(searchText) ||
+            (app.bundleId ?? "").localizedCaseInsensitiveContains(searchText)
+    }
+
+    private func updateCurrentLiveVersion(responseApp: AppsDocument, nextPage: String? = nil, isSearchRefresh: Bool = false) {
         let processedApps = responseApp.data.map { appData -> AppsData in
             var tempApp = appData
             let currentVersion = appData.appStoreVersions.first
@@ -180,14 +216,29 @@ class SideBarViewModel: ObservableObject {
         }
 
         // Phase 5: keep a full backing list across pagination so local
-        // search/sort always sees every loaded app. Deduplicate by id so a
-        // double-fired cursor can never append the same rows twice.
-        if nextPage != nil {
+        // search/sort always sees every loaded app.
+        if isSearchRefresh {
+            // Union of the server's name matches and the already-loaded apps
+            // that match locally (by name OR bundle ID) so bundle-ID matches
+            // don't vanish once the server response arrives.
+            let localMatches = allLoadedApps.filter(matchesSearch)
+            let localIDs = Set(localMatches.map(\.id))
+            allLoadedApps = localMatches + processedApps.filter { !localIDs.contains($0.id) }
+        } else if nextPage != nil {
+            // Deduplicate by id so a double-fired cursor can never append
+            // the same rows twice.
             let existingIDs = Set(allLoadedApps.map(\.id))
-            let newApps = processedApps.filter { !existingIDs.contains($0.id) }
-            allLoadedApps.append(contentsOf: newApps)
+            allLoadedApps.append(contentsOf: processedApps.filter { !existingIDs.contains($0.id) })
         } else {
             allLoadedApps = processedApps
+        }
+
+        // Keep the current selection highlighted if the app is still present
+        // in the refreshed list.
+        if let selected = selectedApp {
+            for index in allLoadedApps.indices {
+                allLoadedApps[index].isSelected = (allLoadedApps[index].id == selected.id)
+            }
         }
 
         appMeta = responseApp.meta
@@ -196,34 +247,6 @@ class SideBarViewModel: ObservableObject {
         } else {
             appsState = .loaded(allLoadedApps)
         }
-        applyFilters()
-    }
-
-    /// Phase 5: local search + sort over everything loaded so far.
-    /// Server-side sort/filter also run in the query; state filtering is
-    /// intentionally server-side only (see selectedStateFilter).
-    func applyFilters() {
-        var filtered = allLoadedApps
-
-        if !searchText.isEmpty {
-            filtered = filtered.filter { app in
-                (app.name ?? "").localizedCaseInsensitiveContains(searchText) ||
-                (app.bundleId ?? "").localizedCaseInsensitiveContains(searchText)
-            }
-        }
-
-        switch selectedSortOption {
-        case .nameAscending:
-            filtered.sort { ($0.name ?? "").localizedCaseInsensitiveCompare($1.name ?? "") == .orderedAscending }
-        case .nameDescending:
-            filtered.sort { ($0.name ?? "").localizedCaseInsensitiveCompare($1.name ?? "") == .orderedDescending }
-        case .stateAscending:
-            filtered.sort { $0.currentState.localizedCaseInsensitiveCompare($1.currentState) == .orderedAscending }
-        case .stateDescending:
-            filtered.sort { $0.currentState.localizedCaseInsensitiveCompare($1.currentState) == .orderedDescending }
-        }
-
-        filteredApps = filtered
     }
 
     /// Clears the local search term (the debounced server fetch restores the full list).
@@ -232,9 +255,11 @@ class SideBarViewModel: ObservableObject {
     }
 
     func updateTeam() {
-        // Phase 5: reset search/filter state on team switch.
+        // Phase 5: reset search/filter state on team switch. didSet guards
+        // keep unchanged values from firing extra fetches; the debounced
+        // search task is cancelled so no delayed refetch follows.
+        searchDebounceTask?.cancel()
         allLoadedApps = []
-        filteredApps = []
         searchText = ""
         selectedStateFilter = .all
         searchDebounceTask?.cancel()
@@ -266,13 +291,12 @@ class SideBarViewModel: ObservableObject {
 
     private func markAppSelected(_ app: AppsData) {
         guard allLoadedApps.contains(where: { $0.id == app.id }) else { return }
-        // Mutate the backing list (the snapshot appsState mirrors it) so the
-        // rendered filteredApps snapshot stays in sync after applyFilters().
+        // Mutate the backing list and mirror it into appsState; filteredApps
+        // is derived, so the rendered list stays in sync automatically.
         for index in allLoadedApps.indices {
             allLoadedApps[index].isSelected = (allLoadedApps[index].id == app.id)
         }
         appsState = .loaded(allLoadedApps)
-        applyFilters()
     }
 
     private func getTestFlightVersions(app: AppsData) {

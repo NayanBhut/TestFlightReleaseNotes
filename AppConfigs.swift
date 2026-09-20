@@ -18,12 +18,13 @@ enum AppConfigs {
         case stateAscending = "stateAscending"
         case stateDescending = "stateDescending"
 
-        var queryValue: String {
+        /// Server-side sort value. The apps endpoint only supports sorting by
+        /// name/bundleId/sku, so state sorting returns nil and is applied locally.
+        var queryValue: String? {
             switch self {
             case .nameAscending: return "name"
             case .nameDescending: return "-name"
-            case .stateAscending: return "state"
-            case .stateDescending: return "-state"
+            case .stateAscending, .stateDescending: return nil
             }
         }
 
@@ -65,8 +66,10 @@ enum AppConfigs {
         }
 
         /// Human-readable label for menus, e.g. "Waiting for Export Compliance".
+        /// `.capitalized` (not `.localizedCapitalized`) keeps capitalization stable
+        /// across locales — these are English API enum values.
         var displayName: String {
-            self == .all ? "All States" : rawValue.replacingOccurrences(of: "_", with: " ").localizedCapitalized
+            self == .all ? "All States" : rawValue.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 }

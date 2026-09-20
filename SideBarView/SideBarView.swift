@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct SideBarView: View {
     @StateObject var viewModel: SideBarViewModel
@@ -435,7 +436,9 @@ struct AppRowView: View {
     @ViewBuilder
     private var appIconView: some View {
         let iconSize: CGFloat = 32
-        if let url = resolvedIconURL(template: app.iconURL, size: Int(iconSize)) {
+        // Request 2x pixels on Retina so icons render sharp instead of blurry.
+        let pixelSize = Int(iconSize * (NSScreen.main?.backingScaleFactor ?? 2))
+        if let url = resolvedIconURL(template: app.iconURL, size: pixelSize) {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):

@@ -15,9 +15,8 @@ struct App_StoreApp: App {
     
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(viewModel: viewModel)
                 .environmentObject(navigationManager)
-                .environmentObject(viewModel)
                 .environmentObject(exportManager)
         }
     }
@@ -25,8 +24,14 @@ struct App_StoreApp: App {
 
 struct RootView: View {
     @EnvironmentObject var navigationManager: NavigationManager
-    @EnvironmentObject var viewModel: SideBarViewModel
+    // Passed in directly — the sidebar view model flows through init params
+    // only; the environment carries objects shared by unrelated views.
+    private let viewModel: SideBarViewModel
     @State private var showOnboarding = true
+
+    init(viewModel: SideBarViewModel) {
+        self.viewModel = viewModel
+    }
 
     var body: some View {
         ContentView(viewModel: viewModel)
