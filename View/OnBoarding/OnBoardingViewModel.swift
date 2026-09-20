@@ -116,10 +116,20 @@ class OnBoardingViewModel: ObservableObject {
         return requestHeader
     }
     
-    func saveLoginState(isLoggedIn: Bool) {
-        UserDefaults.standard.set(isLoggedIn, forKey: UserDefaultsKeys.isLoggedIn)
+    /// Returns false when the keychain write fails — the caller must not
+    /// flip the logged-in state without a stored, working credential.
+    @discardableResult
+    func saveLoginState(isLoggedIn: Bool) -> Bool {
         let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
-        CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines), keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName)
+        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines), keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName) else {
+            errorMessage = "Couldn't save the team to the Keychain. Please try again."
+            return false
+        }
+        UserDefaults.standard.set(isLoggedIn, forKey: UserDefaultsKeys.isLoggedIn)
+        // Select immediately so API requests work, even when the sidebar's
+        // onAppear (which restores the default team) already ran before login.
+        CredentialStorage.shared.changeTeam = cleanTeamName
+        return true
     }
     
     func getPrivateKey(filePath: URL?) {

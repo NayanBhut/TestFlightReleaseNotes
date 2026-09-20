@@ -17,6 +17,10 @@ class SideBarViewModel: ObservableObject {
     @Published var appsState: ViewState<[AppsData]> = .idle
     @Published var versionsState: ViewState<[PreReleaseVersionsModel]> = .idle
     @Published var appMeta: Meta?
+    @Published var versionsMeta: Meta?
+    @Published var versionsNextCursor: String?
+    @Published var versionsPaginationFailed = false
+    @Published var isLoadingMoreVersions = false
     @Published var selectedApp: AppsData?
 
     @Published var isTeamChanged = false
@@ -83,6 +87,8 @@ class SideBarViewModel: ObservableObject {
     private var suppressFilterObservers = false
     /// Suppresses duplicate pagination requests while one page is loading.
     private var isPaginatingApps = false
+    /// Suppresses duplicate versions pagination requests while one page is loading.
+    private var isPaginatingVersions = false
 
     // MARK: - Convenience accessors for views
 
@@ -275,6 +281,29 @@ class SideBarViewModel: ObservableObject {
         getiOSApps()
     }
 
+    /// Full reset for logout (last team deleted): cancels in-flight work
+    /// and drops every cached list/selection so no stale apps, versions,
+    /// or builds linger behind the login sheet. DetailViewModel observes
+    /// selectedApp/versionsState and clears its own state in turn.
+    func clearOnLogout() {
+        appsFetchTask?.cancel()
+        versionsFetchTask?.cancel()
+        searchDebounceTask?.cancel()
+        suppressFilterObservers = true
+        allLoadedApps = []
+        searchText = ""
+        selectedStateFilter = .all
+        suppressFilterObservers = false
+        appMeta = nil
+        selectedApp = nil
+        appsState = .empty
+        versionsState = .idle
+        versionsMeta = nil
+        versionsNextCursor = nil
+        versionsPaginationFailed = false
+        paginationFailed = false
+    }
+
     func retryApps() {
         getiOSApps()
     }
@@ -308,44 +337,92 @@ class SideBarViewModel: ObservableObject {
         appsState = .loaded(allLoadedApps)
     }
 
-    private func getTestFlightVersions(app: AppsData) {
+    private func getTestFlightVersions(app: AppsData, cursor: String? = nil) {
+        let isPaginating = cursor != nil
+        // Ignore duplicate "Load more" taps while a page request is in flight
+        // (double-tapping would otherwise append the same rows twice).
+        if isPaginating, isPaginatingVersions { return }
         // Cancel any in-flight versions fetch so quickly switching apps
         // can't let a stale response overwrite the newer app's versions.
         versionsFetchTask?.cancel()
-        versionsFetchTask = Task { await fetchVersions(app: app) }
+        versionsFetchTask = Task { await fetchVersions(app: app, cursor: cursor) }
     }
 
-    func fetchVersions(app: AppsData) async {
-        versionsState = .loading
+    /// Loads the next versions page. Guarded against duplicate concurrent
+    /// requests via the isPaginatingVersions flag inside getTestFlightVersions.
+    func loadMoreVersions(cursor: String) {
+        guard let app = selectedApp else { return }
+        getTestFlightVersions(app: app, cursor: cursor)
+    }
 
-        let queryParams = [
+    func fetchVersions(app: AppsData, cursor: String? = nil) async {
+        let isPaginating = cursor != nil
+        if isPaginating {
+            isPaginatingVersions = true
+            // Visible in-flight feedback for the Load-more control.
+            isLoadingMoreVersions = true
+        } else {
+            versionsState = .loading
+            versionsNextCursor = nil
+            versionsMeta = nil
+        }
+        versionsPaginationFailed = false
+        defer {
+            if isPaginating {
+                isPaginatingVersions = false
+                isLoadingMoreVersions = false
+            }
+        }
+
+        var queryParams = [
             "filter[app]": app.id,
             "sort": "-version",
             "limit": String(AppConfigs.versionLimit)
         ]
+        if let cursor = cursor {
+            queryParams["cursor"] = cursor
+        }
 
         guard let request = APIClient.shared.getRequest(api: .get(name: .getAppVersions, queryParams: queryParams), apiVersion: .v1) else {
-            versionsState = .error("No team selected. Add a team to load versions.")
+            if !isPaginating {
+                versionsState = .error("No team selected. Add a team to load versions.")
+            }
             return
         }
 
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            let model = try getDecoder().decode([PreReleaseVersionsModel].self, from: data)
+            let model = try getDecoder().decode(PreReleaseVersionsDocument.self, from: data)
             // Ignore stale responses superseded by a newer fetch.
             guard !Task.isCancelled else { return }
-            // The server already honors the limit param — no client-side truncation.
-            if model.isEmpty {
+            let merged: [PreReleaseVersionsModel]
+            if isPaginating, let existing = versionsState.loadedValue {
+                // Deduplicate by id so a double-fired cursor can never append
+                // the same rows twice.
+                let existingIDs = Set(existing.map(\.id))
+                merged = existing + model.data.filter { !existingIDs.contains($0.id) }
+            } else {
+                merged = model.data
+            }
+            versionsMeta = model.meta
+            versionsNextCursor = model.meta.paging.nextCursor
+            if merged.isEmpty {
                 versionsState = .empty
             } else {
-                versionsState = .loaded(model)
+                versionsState = .loaded(merged)
             }
         } catch {
             // A cancelled fetch means a newer one took over - don't surface
             // its failure or overwrite the newer state.
             guard !Task.isCancelled else { return }
             sidebarLogger.error("Failed to load versions: \(error.localizedDescription)")
-            versionsState = .error(friendlyMessage(for: error))
+            if isPaginating {
+                // Surface pagination failure so the UI can offer a retry;
+                // the loaded list stays intact.
+                versionsPaginationFailed = true
+            } else {
+                versionsState = .error(friendlyMessage(for: error))
+            }
         }
     }
 

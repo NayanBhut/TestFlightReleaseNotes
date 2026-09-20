@@ -176,7 +176,26 @@ final class APIClient {
                 if httpResponse.statusCode == 401 {
                     clearAllJWTTokens()
                 }
-                throw APIError.httpError(statusCode: httpResponse.statusCode)
+                // Parse errors[] detail/title from response body for actionable messages.
+                var errorMessage = ""
+                if let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                   let errors = json["errors"] as? [[String: Any]] {
+                    errorMessage = errors.compactMap { $0["detail"] as? String ?? $0["title"] as? String }.joined(separator: "; ")
+                }
+                switch httpResponse.statusCode {
+                case 401:
+                    errorMessage = errorMessage.isEmpty ? "Invalid credentials" : errorMessage
+                case 429:
+                    let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? ""
+                    if !retryAfter.isEmpty {
+                        errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
+                    } else if errorMessage.isEmpty {
+                        errorMessage = "Rate limited"
+                    }
+                default:
+                    errorMessage = errorMessage.isEmpty ? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode) : errorMessage
+                }
+                throw APIError.apiErrorWithCode(error: errorMessage, httpResponse.statusCode)
             }
             return data
         } catch let apiError as APIError {
