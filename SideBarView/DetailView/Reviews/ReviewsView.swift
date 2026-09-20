@@ -2,9 +2,9 @@
 //  ReviewsView.swift
 //  App Store
 //
-//  Batch C3: read-only Reviews tab — customer reviews (rating/title/body)
-//  and review submissions (state). Replying via POST /customerReviewResponses
-//  is a follow-up.
+//  Batch C3: Reviews tab — customer reviews (rating/title/body) and
+//  review submissions (state). Reply via POST /customerReviewResponses
+//  is implemented in replyToReview().
 //
 
 import SwiftUI
@@ -18,6 +18,7 @@ struct ReviewsView: View {
             if let app = selectedApp {
                 VStack(spacing: 0) {
                     header(app: app)
+                    filterBar(app: app)
                     Divider()
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
@@ -62,6 +63,48 @@ struct ReviewsView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    // MARK: - Filter bar
+
+    private func filterBar(app: AppsData) -> some View {
+        HStack(spacing: 12) {
+            Picker("Rating", selection: $reviewsViewModel.ratingFilter) {
+                ForEach(AppConfigs.ratingOptions, id: \.self) { value in
+                    Text(value == 0 ? "All ratings" : "\(value) ★").tag(value)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 110)
+
+            Picker("State", selection: $reviewsViewModel.stateFilter) {
+                ForEach(AppConfigs.ReviewStateFilter.allCases, id: \.self) { filter in
+                    Text(filter.displayName).tag(filter)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 110)
+
+            TextField("Search title / body / author", text: $reviewsViewModel.searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+                .frame(maxWidth: 200)
+
+            Spacer()
+
+            if reviewsViewModel.ratingFilter > 0 || reviewsViewModel.stateFilter != .all || !reviewsViewModel.searchText.isEmpty {
+                Button("Clear") {
+                    reviewsViewModel.ratingFilter = 0
+                    reviewsViewModel.stateFilter = .all
+                    reviewsViewModel.searchText = ""
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Review submissions
@@ -141,22 +184,30 @@ struct ReviewsView: View {
                 sectionError(message: message) {
                     reviewsViewModel.retryReviews()
                 }
-            case .loaded(let reviews):
+            case .loaded:
                 VStack(alignment: .leading, spacing: 12) {
-                    if let total = reviewsViewModel.reviewsMeta?.paging.total {
-                        Text("\(total) total")
-                            .font(.caption2)
+                    let filtered = reviewsViewModel.filteredReviews
+                    if filtered.isEmpty {
+                        Text(reviewsViewModel.ratingFilter > 0 || reviewsViewModel.stateFilter != .all || !reviewsViewModel.searchText.isEmpty
+                              ? "No reviews match your filters" : "No customer reviews")
+                            .font(.caption)
                             .foregroundColor(.secondary)
+                    } else {
+                        if let total = reviewsViewModel.reviewsMeta?.paging.total {
+                            Text("\(filtered.count) of \(total) total")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        ForEach(filtered, id: \.id) { review in
+                            if review.id != filtered.first?.id { Divider() }
+                            reviewRow(review)
+                        }
+                        paginationControls(
+                            nextCursor: reviewsViewModel.reviewsNextCursor,
+                            paginationFailed: reviewsViewModel.reviewsPaginationFailed,
+                            onLoadMore: { cursor in reviewsViewModel.loadMoreReviews(cursor: cursor) }
+                        )
                     }
-                    ForEach(reviews, id: \.id) { review in
-                        if review.id != reviews.first?.id { Divider() }
-                        reviewRow(review)
-                    }
-                    paginationControls(
-                        nextCursor: reviewsViewModel.reviewsNextCursor,
-                        paginationFailed: reviewsViewModel.reviewsPaginationFailed,
-                        onLoadMore: { cursor in reviewsViewModel.loadMoreReviews(cursor: cursor) }
-                    )
                 }
             }
         }

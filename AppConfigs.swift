@@ -75,4 +75,22 @@ enum AppConfigs {
                 .replacingOccurrences(of: " For ", with: " for ")
         }
     }
+
+    /// Rating filter values for the Reviews tab (0 = All ratings).
+    static let ratingOptions: [Int] = [0, 1, 2, 3, 4, 5]
+
+    /// State filter for customer reviews in the Reviews tab.
+    enum ReviewStateFilter: String, CaseIterable {
+        case all = "All"
+        case replied = "Replied"
+        case unreplied = "Unreplied"
+
+        var displayName: String {
+            switch self {
+            case .all: return "All States"
+            case .replied: return "Replied"
+            case .unreplied: return "Unreplied"
+            }
+        }
+    }
 }

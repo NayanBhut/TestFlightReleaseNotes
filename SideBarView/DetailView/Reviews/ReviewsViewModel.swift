@@ -5,7 +5,7 @@
 //  Batch C3: Customer reviews + review submissions (read-only).
 //  Follows the BetaViewModel pattern: staleness via currentAppId, in-flight
 //  task cancellation, cursor pagination with a retry on failure.
-//  Replying (POST /customerReviewResponses) is a follow-up.
+//  Reply (POST /customerReviewResponses) is implemented in replyToReview().
 //
 
 import SwiftUI
@@ -52,6 +52,44 @@ final class ReviewsViewModel: ObservableObject {
     private var submissionsFetchTask: Task<Void, Never>?
     private var isPaginatingReviews = false
     private var isPaginatingSubmissions = false
+
+    // MARK: - Filters
+
+    /// Rating filter for customer reviews: 0 = All, 1–5 = specific rating.
+    @Published var ratingFilter: Int = 0
+    /// State filter: all / replied / unreplied (based on developer reply presence).
+    @Published var stateFilter: AppConfigs.ReviewStateFilter = .all
+    /// Local text search across title, body, and reviewer nickname.
+    @Published var searchText: String = ""
+
+    /// Customer reviews after applying active filters (rating, state, search).
+    var filteredReviews: [CustomerReviewModel] {
+        filterReviews(reviewsState.loadedValue ?? [])
+    }
+
+    private func filterReviews(_ reviews: [CustomerReviewModel]) -> [CustomerReviewModel] {
+        var result = reviews
+        if ratingFilter > 0 {
+            result = result.filter { ($0.rating ?? 0) == ratingFilter }
+        }
+        switch stateFilter {
+        case .replied:
+            result = result.filter { $0.response != nil }
+        case .unreplied:
+            result = result.filter { $0.response == nil }
+        default:
+            break
+        }
+        if !searchText.isEmpty {
+            let query = searchText.lowercased()
+            result = result.filter {
+                ($0.title ?? "").localizedCaseInsensitiveContains(query) ||
+                ($0.body ?? "").localizedCaseInsensitiveContains(query) ||
+                ($0.reviewerNickname ?? "").localizedCaseInsensitiveContains(query)
+            }
+        }
+        return result
+    }
 
     // MARK: - Loading
 

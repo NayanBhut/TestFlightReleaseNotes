@@ -5,8 +5,8 @@
 //  Batch C1: read-only App Info panel. Shows app identity (Apple ID,
 //  bundle ID, SKU, locale, content rights), the appInfos records
 //  (state, age rating, categories), app info localizations, the live
-//  version's localizations and export compliance. No PATCH — editing is a
-//  follow-up.
+//  version's localizations and export compliance. Write lifecycle
+//  deferred to Batch D4; no PATCH in this phase.
 //
 
 import SwiftUI

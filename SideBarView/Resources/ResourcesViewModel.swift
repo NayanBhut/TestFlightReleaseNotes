@@ -6,8 +6,8 @@
 //  Bundle IDs, Profiles, Users. Follows the BetaViewModel pattern:
 //  ViewState per list, in-flight task cancellation, cursor pagination
 //  with retry, friendly 403 hint (these endpoints need an API key with
-//  broader permissions than TestFlight-only). Create/revoke is a
-//  follow-up; this is read-only.
+//  broader permissions than TestFlight-only). Write lifecycle deferred
+//  to Batch D4; this is read-only.
 //
 
 import SwiftUI
