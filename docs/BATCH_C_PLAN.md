@@ -68,21 +68,36 @@ Implementation fixes worth knowing (already applied, don't revert):
 
 ## Key gotchas (verified — don't re-litigate)
 
-- **No `case getAppInfos = "/appInfos"`**: rawValue is a URL prefix → it would build `/v1/appInfos/{path}`, an invalid route. App-scoped routes (`/apps/{id}/appInfos`, `/apps/{id}/customerReviews`, `/apps/{id}/appEncryptionDeclarations`) are composed as `.get(name: .getAllApps, path: "\(appId)/appInfos")` — same precedent as `buildBetaDetail`. This is intentional, not a bug.
-- **`CompoundDocument<T, Meta>` requires `meta` in the response** unless `Meta == Unit` (library special-case). Small/fixed lists (appInfos, version localizations, encryption declarations) use the `NoMeta` alias; all cursor-paginated collections — including certificates — use the paging `Meta`.
+- **No `case getAppInfos = "/appInfos"`**: rawValue is a URL prefix → it would build `/v1/appInfos/{path}`, an invalid route. App-scoped routes (`/apps/{id}/appInfos`, `/apps/{id}/customerReviews`) are composed as `.get(name: .getAllApps, path: "\(appId)/appInfos")` — same precedent as `buildBetaDetail`. This is intentional, not a bug. ⚠️ Exception (Branch D correction): there is NO `/v1/apps/{id}/appEncryptionDeclarations` subpath — the relationship doesn't exist on apps (server 400s it). Export compliance is a top-level collection: `GET /v1/appEncryptionDeclarations?filter[app]={id}` via `case getAppEncryptionDeclarations = "/appEncryptionDeclarations"`.
+- **`CompoundDocument<T, Meta>` requires `meta` in the response** unless `Meta == Unit` (library special-case). Small/fixed lists (appInfos, version localizations) use the `NoMeta` alias; all cursor-paginated collections — including certificates AND appEncryptionDeclarations (Branch D: `AppEncryptionDeclarationsDocument` moved `NoMeta` → paging `Meta`) — use the paging `Meta`.
 - **Invalid include paths or wrong `@ResourceWrapper(type:)` fail/400 the whole document decode.** All include paths used are verified valid.
 - `reviewSubmissions` collection has **no sort param**; `customerReviews` sorts only by `rating`/`createdDate` (we use `-createdDate`).
 - 403 on narrow TestFlight-only keys is expected; VMs already append a permissions hint.
 - `SWIFT_STRICT_CONCURRENCY = complete`: VMs are `@MainActor`, `guard !Task.isCancelled` after every await (existing pattern — keep it).
 
 ## Follow-ups (explicitly NOT this batch)
-PATCH appInfo • POST /customerReviewResponses (review reply) • create/revoke devices/certificates/profiles • review filters.
+PATCH appInfo • create/revoke devices/certificates/profiles • review filters.
+(POST /customerReviewResponses review replies moved INTO Branch D — see below.)
 
 ## Round 1 review (kimi-k3:cloud) — triage outcome
 
 - FIXED: staleness ids recorded only on success (stuck-error auto-retry) • certificates paginate with real totals (was silently truncated >50) • `ReviewsViewModel.resetForTeamSwitch()` on deselection (cross-team staleness/cursor races) • App Info Refresh `||` • tab clamp independent of the picker • parallel App Info fetches (`async let`) • `ForEach` identity by `id` not offset • per-kind pagination-failure/in-flight flags • `StateChip` green for ENABLED/ACTIVE/VALID • `StarRating` collapsed VoiceOver element • `deinit` task cancellation in all 3 VMs • dead `force` params removed • CI comment decoupled from this doc • misnamed `emailFallback` extension inlined.
 - DEFERRED: unify `emptyState`/ViewState renderers across views (pure refactor) • eye-toggle placement (design choice; flag semantics intentional).
 - Not adopted: deleting this doc — kept deliberately as the batch record; CI no longer references it.
+
+## Branch D — review replies + endpoint corrections (this PR)
+
+| Area | File | Change |
+|---|---|---|
+| Fix | `Model/JSONAPIModels/APIManager.swift` | New cases: `getAppEncryptionDeclarations` (`/appEncryptionDeclarations`, top-level + `filter[app]`) and `postCustomerReviewResponse` (`/customerReviews`, POST `\(reviewId)/customerReviewResponses`) |
+| Fix | `Model/JSONAPIModels/APIModels.swift` | `AppEncryptionDeclarationsDocument`: `NoMeta` → paging `Meta` |
+| Fix | `SideBarView/DetailView/DetailViewModel.swift` | `fetchExportCompliance` now `GET /v1/appEncryptionDeclarations?filter[app]={id}&limit=200` |
+| C3 | `Model/JSONAPIModels/ReviewModels.swift` | `ReviewSubmissionModel` gains `appStoreVersion` + `submittedByActor` relationships; new `ActorModel` (type `actors`, `displayName` with email fallback) |
+| C3 | `SideBarView/DetailView/Reviews/ReviewsViewModel.swift` | `fetchSubmissions` requests `include=submittedByActor`; new `replyToReview(reviewId:responseBody:)` POST with in-row response update on success (composer stays open on failure). NOTE: list endpoint rejects `appStoreVersion` include, so that relationship stays nil on list rows |
+| C3 | `SideBarView/DetailView/Reviews/ReviewsView.swift` | Submission rows show version (when present) + submitter; review rows gain `ReplySection` composer (Reply → TextField → Cancel/Send, Send disabled while empty) |
+| CI | `.github/workflows/md-comment.yml` | **Removed** — PR body now comes from `.github/PULL_REQUEST_TEMPLATE.md`; Build + Ollama review workflows unchanged |
+
+Verify: `plutil -lint` OK, `xcodebuild … BUILD SUCCEEDED`.
 
 ## Round 2 review (kimi-k3:cloud) — triage outcome
 
