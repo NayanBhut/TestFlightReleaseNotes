@@ -32,8 +32,9 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
-      # From BATCH_C_PLAN.md Verify section: the pbxproj parses as a plist;
-      # unbalanced parens/braces from hand-edits fail here instead of at build time.
+      # Parse-check the project file: pbxproj is a plist, so hand-edit
+      # syntax errors (unbalanced parens/braces) fail fast here instead of
+      # deep in the build step.
       - name: Lint project file
         run: plutil -lint "App Store.xcodeproj/project.pbxproj"
       - name: Build

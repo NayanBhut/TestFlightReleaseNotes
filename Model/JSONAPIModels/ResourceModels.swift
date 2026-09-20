@@ -94,11 +94,11 @@ struct UserModel: Equatable {
     @ResourceAttribute var provisioningAllowed: Bool?
 }
 
-// Documents: devices/bundleIds/profiles/users are cursor-paginated
-// collections (paging meta always returned alongside limit), certificates
-// are not (no meta in the spec'd response) — hence NoMeta for certificates.
+// Documents: all five collections are cursor-paginated and return paging
+// meta alongside limit (verified against Apple's OpenAPI spec), so all
+// use the paging Meta — "Load more" and real totals work for every kind.
 typealias DevicesDocument = CompoundDocument<[DeviceModel], Meta>
-typealias CertificatesDocument = CompoundDocument<[CertificateModel], NoMeta>
+typealias CertificatesDocument = CompoundDocument<[CertificateModel], Meta>
 typealias BundleIdsDocument = CompoundDocument<[BundleIdModel], Meta>
 typealias ProfilesDocument = CompoundDocument<[ProfileModel], Meta>
 typealias UsersDocument = CompoundDocument<[UserModel], Meta>

@@ -20,6 +20,11 @@ private let detailLogger = Logger(subsystem: "com.appstore.release-notes", categ
 
 @MainActor
 class DetailViewModel: ObservableObject {
+    deinit {
+        // A stuck network call must not keep the VM alive.
+        appInfoFetchTask?.cancel()
+        buildsFetchTask?.cancel()
+    }
     @Published var versionsState: ViewState<[PreReleaseVersionsModel]> = .idle
     @Published var buildsState: ViewState<[BuildsModel]> = .idle
     @Published var currentTeam: Credential?
@@ -292,9 +297,15 @@ extension DetailViewModel {
     }
 
     private func fetchAllAppInfo(app: AppsData) async {
-        await fetchAppInfos(appId: app.id)
-        await fetchVersionLocalizations(versionId: app.currentLiveVersion.0)
-        await fetchExportCompliance(appId: app.id)
+        // Independent endpoints — fetch in parallel, not sequentially.
+        // Each fetch sets only its own state and guards Task.isCancelled,
+        // so semantics (incl. cancellation) match the sequential version.
+        async let infos: Void = fetchAppInfos(appId: app.id)
+        async let localizations: Void = fetchVersionLocalizations(versionId: app.currentLiveVersion.0)
+        async let compliance: Void = fetchExportCompliance(appId: app.id)
+        await infos
+        await localizations
+        await compliance
     }
 
     /// GET /v1/apps/{id}/appInfos — composed with the /apps prefix plus
@@ -304,7 +315,6 @@ extension DetailViewModel {
     func fetchAppInfos(appId: String) async {
         // A cancelled predecessor must not issue work (see ResourcesViewModel.fetch).
         guard !Task.isCancelled else { return }
-        appInfoLoadedAppId = appId
         appInfoState = .loading
 
         let queryParams = [
@@ -322,6 +332,10 @@ extension DetailViewModel {
             let data = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return }
             let model = try getDecoder().decode(AppInfosDocument.self, from: data)
+            // Staleness id only on success: recording it before the fetch
+            // would mark a failed load as "loaded" and suppress the
+            // automatic retry on next appear (stuck on error forever).
+            appInfoLoadedAppId = appId
             appInfoState = model.data.isEmpty ? .empty : .loaded(model.data)
         } catch {
             guard !Task.isCancelled else { return }
@@ -335,8 +349,10 @@ extension DetailViewModel {
     /// locales arrive in one page.
     func fetchVersionLocalizations(versionId: String) async {
         guard !Task.isCancelled else { return }
-        versionLocalizationsLoadedVersionId = versionId
         guard !versionId.isEmpty else {
+            // Terminal state (no live version) — record it so we don't
+            // re-evaluate on every appear.
+            versionLocalizationsLoadedVersionId = versionId
             versionLocalizationsState = .empty
             return
         }
@@ -353,6 +369,8 @@ extension DetailViewModel {
             let data = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return }
             let model = try getDecoder().decode(AppStoreVersionLocalizationsDocument.self, from: data)
+            // Staleness id only on success (see fetchAppInfos).
+            versionLocalizationsLoadedVersionId = versionId
             versionLocalizationsState = model.data.isEmpty ? .empty : .loaded(model.data)
         } catch {
             guard !Task.isCancelled else { return }
@@ -364,7 +382,6 @@ extension DetailViewModel {
     /// GET /v1/apps/{id}/appEncryptionDeclarations — export compliance.
     func fetchExportCompliance(appId: String) async {
         guard !Task.isCancelled else { return }
-        exportComplianceLoadedAppId = appId
         exportComplianceState = .loading
 
         guard let request = APIClient.shared.getRequest(
@@ -378,6 +395,8 @@ extension DetailViewModel {
             let data = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return }
             let model = try getDecoder().decode(AppEncryptionDeclarationsDocument.self, from: data)
+            // Staleness id only on success (see fetchAppInfos).
+            exportComplianceLoadedAppId = appId
             exportComplianceState = model.data.isEmpty ? .empty : .loaded(model.data)
         } catch {
             guard !Task.isCancelled else { return }

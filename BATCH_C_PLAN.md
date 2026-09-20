@@ -21,7 +21,7 @@ OpenAPI spec** (`github.com/api-evangelist/ios`) — don't guess params.
 | C3 | `Model/JSONAPIModels/ReviewModels.swift` (new) | `CustomerReviewModel` (rel: `response`), `CustomerReviewResponseModel`, `ReviewSubmissionModel`, Meta documents |
 | C3 | `SideBarView/DetailView/Reviews/ReviewsViewModel.swift` (new) | Both fetches, staleness `currentAppId`, cursor pagination + retry, 403 hint |
 | C3 | `SideBarView/DetailView/Reviews/ReviewsView.swift` (new) | Submissions card + reviews card (stars/title/body/reply), Load-more, `StarRating`, `StateChip` |
-| C2 | `Model/JSONAPIModels/ResourceModels.swift` (new) | `DeviceModel`, `CertificateModel`, `BundleIdModel`, `ProfileModel`, `UserModel`; documents (certificates = `Unit` meta) |
+| C2 | `Model/JSONAPIModels/ResourceModels.swift` (new) | `DeviceModel`, `CertificateModel`, `BundleIdModel`, `ProfileModel`, `UserModel`; all five documents use the paging `Meta` (verified: certificates response includes paging meta too) |
 | C2 | `SideBarView/Resources/ResourcesViewModel.swift` (new) | `Kind` enum (apiName + verified sort param per kind), per-kind `ViewState`, staleness `loadedKinds`, dedup cursor merge, 403 hint |
 | Config | `AppConfigs.swift` | `reviewLimit = 50`, `resourceLimit = 50` |
 
@@ -69,7 +69,7 @@ Implementation fixes worth knowing (already applied, don't revert):
 ## Key gotchas (verified — don't re-litigate)
 
 - **No `case getAppInfos = "/appInfos"`**: rawValue is a URL prefix → it would build `/v1/appInfos/{path}`, an invalid route. App-scoped routes (`/apps/{id}/appInfos`, `/apps/{id}/customerReviews`, `/apps/{id}/appEncryptionDeclarations`) are composed as `.get(name: .getAllApps, path: "\(appId)/appInfos")` — same precedent as `buildBetaDetail`. This is intentional, not a bug.
-- **`CompoundDocument<T, Meta>` requires `meta` in the response** unless `Meta == Unit` (library special-case). Small/fixed lists (appInfos, version localizations, encryption declarations, certificates) use `Unit`; paginated collections use the paging `Meta`.
+- **`CompoundDocument<T, Meta>` requires `meta` in the response** unless `Meta == Unit` (library special-case). Small/fixed lists (appInfos, version localizations, encryption declarations) use the `NoMeta` alias; all cursor-paginated collections — including certificates — use the paging `Meta`.
 - **Invalid include paths or wrong `@ResourceWrapper(type:)` fail/400 the whole document decode.** All include paths used are verified valid.
 - `reviewSubmissions` collection has **no sort param**; `customerReviews` sorts only by `rating`/`createdDate` (we use `-createdDate`).
 - 403 on narrow TestFlight-only keys is expected; VMs already append a permissions hint.
@@ -77,3 +77,9 @@ Implementation fixes worth knowing (already applied, don't revert):
 
 ## Follow-ups (explicitly NOT this batch)
 PATCH appInfo • POST /customerReviewResponses (review reply) • create/revoke devices/certificates/profiles • review filters.
+
+## Round 1 review (kimi-k3:cloud) — triage outcome
+
+- FIXED: staleness ids recorded only on success (stuck-error auto-retry) • certificates paginate with real totals (was silently truncated >50) • `ReviewsViewModel.resetForTeamSwitch()` on deselection (cross-team staleness/cursor races) • App Info Refresh `||` • tab clamp independent of the picker • parallel App Info fetches (`async let`) • `ForEach` identity by `id` not offset • per-kind pagination-failure/in-flight flags • `StateChip` green for ENABLED/ACTIVE/VALID • `StarRating` collapsed VoiceOver element • `deinit` task cancellation in all 3 VMs • dead `force` params removed • CI comment decoupled from this doc • misnamed `emailFallback` extension inlined.
+- DEFERRED: unify `emptyState`/ViewState renderers across views (pure refactor) • eye-toggle placement (design choice; flag semantics intentional).
+- Not adopted: deleting this doc — kept deliberately as the batch record; CI no longer references it.

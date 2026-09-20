@@ -39,6 +39,13 @@ struct ReviewsView: View {
                            subtitle: "Select an app from the sidebar to view its reviews")
             }
         }
+        // App deselection (team switch) passes through selectedApp == nil —
+        // cancel in-flight fetches and drop cross-team state/cursors there.
+        .onChange(of: selectedApp?.id) { _, newId in
+            if newId == nil {
+                reviewsViewModel.resetForTeamSwitch()
+            }
+        }
     }
 
     // MARK: - Header
@@ -86,8 +93,8 @@ struct ReviewsView: View {
                 }
             case .loaded(let submissions):
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(submissions.enumerated()), id: \.offset) { index, submission in
-                        if index > 0 { Divider() }
+                    ForEach(submissions, id: \.id) { submission in
+                        if submission.id != submissions.first?.id { Divider() }
                         HStack(alignment: .top, spacing: 10) {
                             StateChip(text: submission.state ?? "UNKNOWN")
                             VStack(alignment: .leading, spacing: 2) {
@@ -138,8 +145,8 @@ struct ReviewsView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    ForEach(Array(reviews.enumerated()), id: \.offset) { index, review in
-                        if index > 0 { Divider() }
+                    ForEach(reviews, id: \.id) { review in
+                        if review.id != reviews.first?.id { Divider() }
                         reviewRow(review)
                     }
                     paginationControls(
@@ -269,6 +276,9 @@ struct StarRating: View {
                     .foregroundColor(star <= rating ? .yellow : .secondary)
             }
         }
+        // Collapse the five star images into one VoiceOver element so
+        // each image isn't announced separately.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(rating) of 5 stars")
     }
 }
@@ -282,7 +292,7 @@ struct StateChip: View {
 
     private var color: Color {
         switch text.uppercased() {
-        case "COMPLETE", "APPROVED", "ACCEPTED":
+        case "COMPLETE", "APPROVED", "ACCEPTED", "ENABLED", "ACTIVE", "VALID":
             return .green
         case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
             return .yellow

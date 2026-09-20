@@ -36,6 +36,14 @@ struct DetailView: View {
         DetailTab.allCases.filter { showExtendedInfo || !$0.requiresExtendedInfo }
     }
 
+    /// The tab actually rendered. Clamps independently of the picker's
+    /// onChange clamp, which can't fire when the flag is toggled while no
+    /// app is selected (the picker doesn't exist then) — otherwise a
+    /// hidden tab's view could render and even fetch via onAppear.
+    private var effectiveTab: DetailTab {
+        visibleTabs.contains(selectedTab) ? selectedTab : .builds
+    }
+
     init(viewModel: DetailViewModel) {
         self.viewModel = viewModel
     }
@@ -201,7 +209,7 @@ struct DetailView: View {
                 }
             }
 
-            switch selectedTab {
+            switch effectiveTab {
             case .builds:
                 BuildDetailsView(
                     viewModel: viewModel,

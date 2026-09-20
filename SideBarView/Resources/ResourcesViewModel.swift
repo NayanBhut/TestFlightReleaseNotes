@@ -18,6 +18,10 @@ private let resourcesLogger = Logger(subsystem: "com.appstore.release-notes", ca
 
 @MainActor
 final class ResourcesViewModel: ObservableObject {
+    deinit {
+        // A stuck network call must not keep the VM alive.
+        for task in fetchTasks.values { task.cancel() }
+    }
 
     // MARK: - Kinds
 
@@ -95,21 +99,25 @@ final class ResourcesViewModel: ObservableObject {
     @Published var nextCursors: [Kind: String] = [:]
     /// Total count per kind from paging meta.
     @Published var totals: [Kind: Int] = [:]
-    /// True when a pagination request failed, so the list can offer a retry.
-    @Published var paginationFailed = false
+    /// Kinds whose pagination request failed, so only that kind's list
+    /// offers a retry (a shared flag leaks one kind's failure into another's
+    /// footer).
+    @Published var paginationFailedKinds: Set<Kind> = []
 
     /// Kinds already loaded (or failed) — guards so re-opening a list
     /// doesn't refetch what's already there.
     private var loadedKinds: Set<Kind> = []
     private var fetchTasks: [Kind: Task<Void, Never>] = [:]
-    private var isPaginating = false
+    /// Kinds with a page request in flight — per-kind so paginating one
+    /// kind never swallows another kind's Load-more tap.
+    private var isPaginatingKinds: Set<Kind> = []
 
     // MARK: - Loading
 
-    /// Loads a kind's first page once per team session; `force` (Refresh)
-    /// always refetches.
-    func load(_ kind: Kind, force: Bool = false) {
-        if loadedKinds.contains(kind), !force { return }
+    /// Loads a kind's first page once per team session; the Refresh
+    /// button refetches via retry(_:).
+    func load(_ kind: Kind) {
+        if loadedKinds.contains(kind) { return }
         fetchTasks[kind]?.cancel()
         fetchTasks[kind] = Task { await fetch(kind) }
     }
@@ -134,16 +142,15 @@ final class ResourcesViewModel: ObservableObject {
         guard !Task.isCancelled else { return }
         let paginating = cursor != nil
         // Ignore duplicate "Load more" taps while a page is in flight.
-        if paginating, isPaginating { return }
+        if paginating, isPaginatingKinds.contains(kind) { return }
         if paginating {
-            isPaginating = true
+            isPaginatingKinds.insert(kind)
         } else {
             setLoading(for: kind)
         }
-        paginationFailed = false
+        paginationFailedKinds.remove(kind)
         defer {
-            if paginating { self.isPaginating = false }
-            loadedKinds.insert(kind)
+            if paginating { self.isPaginatingKinds.remove(kind) }
         }
 
         var queryParams = ["limit": String(AppConfigs.resourceLimit)]
@@ -171,7 +178,7 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             resourcesLogger.error("Failed to load \(kind.rawValue): \(error.localizedDescription)")
             if paginating {
-                paginationFailed = true
+                paginationFailedKinds.insert(kind)
             } else {
                 setError(friendlyMessage(for: error), for: kind)
             }
@@ -194,10 +201,8 @@ final class ResourcesViewModel: ObservableObject {
             let model = try decoder.decode(CertificatesDocument.self, from: data)
             let existing = certificatesState.loadedValue ?? []
             let merged = merge(existing: existing, incoming: model.data, isPaginating: isPaginating, id: \.id)
-            // Certificates have no paging meta (see CertificatesDocument) —
-            // one page, limit covers the whole team's certificates.
-            nextCursors[kind] = nil
-            totals[kind] = merged.count
+            nextCursors[kind] = model.meta.paging.nextCursor
+            totals[kind] = model.meta.paging.total
             certificatesState = merged.isEmpty ? .empty : .loaded(merged)
         case .bundleIds:
             let model = try decoder.decode(BundleIdsDocument.self, from: data)
@@ -221,6 +226,9 @@ final class ResourcesViewModel: ObservableObject {
             totals[kind] = model.meta.paging.total
             usersState = merged.isEmpty ? .empty : .loaded(merged)
         }
+        // Staleness only on success: a failed load must NOT mark the kind
+        // loaded, or reopening the list would never auto-retry the error.
+        loadedKinds.insert(kind)
     }
 
     private func merge<T>(existing: [T], incoming: [T], isPaginating: Bool, id: KeyPath<T, String>) -> [T] {
@@ -245,8 +253,8 @@ final class ResourcesViewModel: ObservableObject {
         usersState = .idle
         nextCursors = [:]
         totals = [:]
-        paginationFailed = false
-        isPaginating = false
+        paginationFailedKinds = []
+        isPaginatingKinds = []
     }
 
     // MARK: - Per-kind state helpers

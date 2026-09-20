@@ -63,8 +63,8 @@ struct AppInfoView: View {
             }
             .buttonStyle(.bordered)
             .disabled(viewModel.appInfoState.isLoading
-                      && viewModel.versionLocalizationsState.isLoading
-                      && viewModel.exportComplianceState.isLoading)
+                      || viewModel.versionLocalizationsState.isLoading
+                      || viewModel.exportComplianceState.isLoading)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -106,9 +106,9 @@ struct AppInfoView: View {
     @ViewBuilder private var appInfosSection: some View {
         section(state: viewModel.appInfoState, title: "App Store Info", systemImage: "doc.text") { info in
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(info.enumerated()), id: \.offset) { index, appInfo in
+                ForEach(info, id: \.id) { appInfo in
                     VStack(alignment: .leading, spacing: 8) {
-                        if index > 0 { Divider() }
+                        if appInfo.id != info.first?.id { Divider() }
                         InfoRow(label: "State", value: appInfo.state)
                         InfoRow(label: "Age Rating", value: ageRatingLabel(appInfo))
                         InfoRow(label: "Kids Age Band", value: appInfo.kidsAgeBand)
@@ -159,10 +159,10 @@ struct AppInfoView: View {
         if !localizations.isEmpty {
             Card(title: "App Info Localizations", systemImage: "globe") {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(localizations.enumerated()), id: \.offset) { index, loc in
-                        VStack(alignment: .leading, spacing: 8) {
-                            if index > 0 { Divider() }
-                            InfoRow(label: loc.locale ?? "Locale", value: loc.name, valueFont: .body)
+                ForEach(localizations, id: \.id) { loc in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if loc.id != localizations.first?.id { Divider() }
+                        InfoRow(label: loc.locale ?? "Locale", value: loc.name, valueFont: .body)
                             InfoRow(label: "Subtitle", value: loc.subtitle)
                             InfoRow(label: "Privacy Policy URL", value: loc.privacyPolicyUrl)
                             InfoRow(label: "Privacy Choices URL", value: loc.privacyChoicesUrl)
@@ -185,9 +185,9 @@ struct AppInfoView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                ForEach(Array(localizations.enumerated()), id: \.offset) { index, loc in
+                ForEach(localizations, id: \.id) { loc in
                     VStack(alignment: .leading, spacing: 8) {
-                        if index > 0 { Divider() }
+                        if loc.id != localizations.first?.id { Divider() }
                         Text(loc.locale ?? "Locale")
                             .font(.subheadline)
                             .fontWeight(.medium)
@@ -210,9 +210,9 @@ struct AppInfoView: View {
                 title: "Export Compliance",
                 systemImage: "lock.shield") { declarations in
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(declarations.enumerated()), id: \.offset) { index, declaration in
+                ForEach(declarations, id: \.id) { declaration in
                     VStack(alignment: .leading, spacing: 8) {
-                        if index > 0 { Divider() }
+                        if declaration.id != declarations.first?.id { Divider() }
                         InfoRow(label: "State", value: declaration.appEncryptionDeclarationState)
                         InfoRow(label: "Uses Encryption", value: boolLabel(declaration.usesEncryption))
                         InfoRow(label: "Exempt from Export Compliance", value: boolLabel(declaration.exempt))

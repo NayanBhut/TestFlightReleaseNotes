@@ -16,6 +16,11 @@ private let reviewsLogger = Logger(subsystem: "com.appstore.release-notes", cate
 
 @MainActor
 final class ReviewsViewModel: ObservableObject {
+    deinit {
+        // A stuck network call must not keep the VM alive.
+        reviewsFetchTask?.cancel()
+        submissionsFetchTask?.cancel()
+    }
     // MARK: - Customer reviews
 
     @Published var reviewsState: ViewState<[CustomerReviewModel]> = .idle
@@ -44,17 +49,32 @@ final class ReviewsViewModel: ObservableObject {
 
     /// Loads both lists for the app. Safe to call from onAppear on every
     /// tab switch — the staleness guard skips a redundant refetch.
-    func load(app: AppsData, force: Bool = false) {
-        if force {
-            currentAppId = app.id
-        } else {
-            guard currentAppId != app.id else { return }
-        }
+    func load(app: AppsData) {
+        guard currentAppId != app.id else { return }
         currentAppId = app.id
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
         reviewsFetchTask = Task { await fetchReviews(appId: app.id) }
         submissionsFetchTask = Task { await fetchSubmissions(appId: app.id) }
+    }
+
+    /// App deselection / team switch / logout: cancel in-flight fetches and
+    /// drop everything (cursors included — they're only valid for the query
+    /// epoch that issued them). Without this, a fetch from the previous
+    /// team could still apply results, and a same-id app under the new team
+    /// would hit the staleness guard and show stale cross-team data.
+    func resetForTeamSwitch() {
+        reviewsFetchTask?.cancel()
+        submissionsFetchTask?.cancel()
+        currentAppId = nil
+        reviewsState = .idle
+        submissionsState = .idle
+        reviewsMeta = nil
+        reviewsNextCursor = nil
+        submissionsMeta = nil
+        submissionsNextCursor = nil
+        reviewsPaginationFailed = false
+        submissionsPaginationFailed = false
     }
 
     func retryAll() {

@@ -195,7 +195,7 @@ struct ResourceListContentView: View {
         if let nextCursor = viewModel.nextCursors[kind] {
             HStack {
                 Spacer()
-                if viewModel.paginationFailed {
+                if viewModel.paginationFailedKinds.contains(kind) {
                     Button("Couldn't load more — Retry") {
                         viewModel.loadMore(kind, cursor: nextCursor)
                     }
@@ -404,7 +404,7 @@ private struct UserRow: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(user.username ?? user.emailFallback)
+                Text(user.username ?? "Unknown user")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .textSelection(.enabled)
@@ -441,10 +441,6 @@ private struct UserRow: View {
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
     }
-}
-
-extension UserModel {
-    var emailFallback: String { "Unknown user" }
 }
 
 #Preview {
