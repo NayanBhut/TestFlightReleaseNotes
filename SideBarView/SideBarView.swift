@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct SideBarView: View {
     @StateObject var viewModel: SideBarViewModel
@@ -17,7 +18,6 @@ struct SideBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header section
             VStack(spacing: 12) {
                 HStack {
                     Text("Apps")
@@ -34,22 +34,62 @@ struct SideBarView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Add Team")
+
+                    Button(action: {
+                        viewModel.retryApps()
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .disabled(viewModel.isAppsLoading)
+                    .help("Refresh (Cmd+R)")
+                    .accessibilityLabel("Refresh Apps")
                 }
 
-                // Team selector
                 teamSelector()
 
-                // Refresh button
-                HStack {
-                    Button(action: {
-                        viewModel.getiOSApps()
-                    }) {
-                        Label("Refresh Apps", systemImage: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(viewModel.appsState.isLoading)
+                // Search field
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                        .accessibilityHidden(true)
 
+                    TextField("Search apps...", text: $viewModel.searchText)
+                        .textFieldStyle(.plain)
+                        .font(.subheadline)
+
+                    if !viewModel.searchText.isEmpty {
+                        Button {
+                            viewModel.clearSearch()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear search")
+                        .help("Clear search")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+
+                // State filter and sort side by side
+                HStack(spacing: 8) {
+                    stateFilterDropdown()
+                    sortToggle()
+                }
+
+                HStack {
                     Spacer()
 
                     if let total = viewModel.appMeta?.paging.total {
@@ -176,6 +216,77 @@ struct SideBarView: View {
         }
     }
 
+    private func stateFilterDropdown() -> some View {
+        Menu {
+            ForEach(AppConfigs.AppStateFilter.allCases, id: \.self) { state in
+                Button(action: {
+                    viewModel.selectedStateFilter = state
+                }) {
+                    HStack {
+                        Text(state.displayName)
+                        if viewModel.selectedStateFilter == state {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.caption)
+                Text("Filter: \(viewModel.selectedStateFilter.displayName)")
+                    .font(.caption)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    private func sortToggle() -> some View {
+        Menu {
+            ForEach(AppConfigs.SortOption.allCases, id: \.self) { option in
+                Button(action: {
+                    viewModel.selectedSortOption = option
+                }) {
+                    HStack {
+                        Text(option.displayName)
+                        if viewModel.selectedSortOption == option {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.caption)
+                Text("Sort: \(viewModel.selectedSortOption.displayName)")
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+
     @ViewBuilder private func appList() -> some View {
         switch viewModel.appsState {
         case .idle, .loading:
@@ -188,47 +299,76 @@ struct SideBarView: View {
                     .foregroundColor(.secondary)
                 Spacer()
             }
-        case .loaded(let apps):
+        case .loaded:
             VStack(spacing: 0) {
-                List(apps, id: \.id) { app in
-                    AppRowView(app: app, isSelected: app.isSelected)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.setSelectedAppAndGetVersions(app: app)
-                        }
-                }
-                .listStyle(.sidebar)
+                if viewModel.filteredApps.isEmpty {
+                    noMatchesView
+                } else {
+                    List(viewModel.filteredApps, id: \.id) { app in
+                        AppRowView(app: app, isSelected: app.isSelected)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                viewModel.setSelectedAppAndGetVersions(app: app)
+                            }
+                            .onAppear {
+                                // Lazy List renders only visible rows, so this
+                                // fires when the last row scrolls into view
+                                // (or while the list is shorter than the
+                                // viewport) — pages load on demand instead of
+                                // auto-chaining the whole catalog.
+                                if app.id == viewModel.filteredApps.last?.id,
+                                   let nextCursor = viewModel.appMeta?.paging.nextCursor {
+                                    viewModel.loadMoreApps(cursor: nextCursor)
+                                }
+                            }
+                    }
+                    .listStyle(.sidebar)
 
-                if viewModel.appMeta?.paging.nextCursor != nil {
-                    VStack {
-                        Divider()
-                        Button("Load More Apps") {
-                            viewModel.getiOSApps(nextPage: viewModel.appMeta?.paging.nextCursor)
+                    if let nextCursor = viewModel.appMeta?.paging.nextCursor {
+                        VStack {
+                            Divider()
+                            if viewModel.paginationFailed {
+                                Button("Couldn't load more — Retry") {
+                                    viewModel.loadMoreApps(cursor: nextCursor)
+                                }
+                                .buttonStyle(.plain)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .padding(.vertical, 4)
+                            } else {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .padding(.vertical, 4)
+                            }
                         }
-                        .buttonStyle(.bordered)
-                        .padding(.vertical, 12)
                     }
                 }
             }
         case .empty:
-            VStack(spacing: 16) {
-                Spacer()
-                Image(systemName: "app.dashed")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary)
-                Text("No Apps Found")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                Text("No iOS apps are available for this team")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Button("Refresh") {
-                    viewModel.retryApps()
+            if !viewModel.searchText.isEmpty {
+                // A server-side search with no hits: same feedback as local
+                // no-matches instead of the generic "team has no apps" UI.
+                noMatchesView
+            } else {
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: "app.dashed")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    Text("No Apps Found")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                    Text("No iOS apps are available for this team")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Button("Refresh") {
+                        viewModel.retryApps()
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
                 }
-                .buttonStyle(.bordered)
-                Spacer()
+                .padding()
             }
-            .padding()
         case .error(let message):
             ErrorRetryView(
                 title: "Couldn't Load Apps",
@@ -239,6 +379,29 @@ struct SideBarView: View {
             }
         }
     }
+
+    /// Feedback shown when loaded apps exist but nothing matches the search.
+    private var noMatchesView: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary)
+            Text("No Matching Apps")
+                .font(.title3)
+                .fontWeight(.medium)
+            Text("No apps match the current search")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Button("Clear Search") {
+                viewModel.clearSearch()
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+    }
 }
 
 struct AppRowView: View {
@@ -247,11 +410,12 @@ struct AppRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            appIconView
+
             // Selection indicator
             RoundedRectangle(cornerRadius: 2)
                 .fill(isSelected ? Color.accentColor : Color.clear)
                 .frame(width: 3)
-
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.name ?? "Unknown App")
                     .font(.headline)
@@ -301,18 +465,76 @@ struct AppRowView: View {
         )
     }
 
+    @ViewBuilder
+    private var appIconView: some View {
+        let iconSize: CGFloat = 32
+        // Always request 2x pixels: Apple's CDN serves arbitrary sizes, the
+        // extra resolution is harmless on 1x displays, and it avoids reading
+        // window/screen state during view construction.
+        let pixelSize = Int(iconSize * 2)
+        if let url = resolvedIconURL(template: app.iconURL, size: pixelSize) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: iconSize, height: iconSize)
+                        .cornerRadius(6)
+                case .failure:
+                    placeholderIcon(size: iconSize)
+                case .empty:
+                    ProgressView()
+                        .frame(width: iconSize, height: iconSize)
+                @unknown default:
+                    placeholderIcon(size: iconSize)
+                }
+            }
+        } else {
+            placeholderIcon(size: iconSize)
+        }
+    }
+
+    private func placeholderIcon(size: CGFloat) -> some View {
+        Image(systemName: "app.fill")
+            .font(.system(size: size - 4, weight: .medium))
+            .foregroundColor(.gray)
+            .frame(width: size, height: size)
+    }
+
+    /// Resolves an App Store Connect icon template URL (e.g.
+    /// `{w}x{h}bb.{f}`) to a concrete size and format.
+    private func resolvedIconURL(template: String?, size: Int) -> URL? {
+        guard var template = template, !template.isEmpty else { return nil }
+        template = template.replacingOccurrences(of: "{w}x{h}bb", with: "\(size)x\(size)bb")
+        template = template.replacingOccurrences(of: "{w}x{h}", with: "\(size)x\(size)")
+        template = template.replacingOccurrences(of: "{w}", with: "\(size)")
+        template = template.replacingOccurrences(of: "{h}", with: "\(size)")
+        template = template.replacingOccurrences(of: "{f}", with: "png")
+        return URL(string: template)
+    }
+
     private func getStateColor(_ state: String) -> Color {
         switch state.uppercased() {
-        case "READY_FOR_SALE", "READY FOR SALE":
+        case "READY_FOR_SALE":
             return .green
-        case "PENDING_DEVELOPER_RELEASE", "PENDING DEVELOPER RELEASE":
+        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE":
             return .orange
-        case "IN_REVIEW", "IN REVIEW":
+        case "IN_REVIEW":
             return .blue
-        case "WAITING_FOR_REVIEW", "WAITING FOR REVIEW":
+        case "WAITING_FOR_REVIEW":
             return .yellow
         case "REJECTED":
             return .red
+        case "PROCESSING_FOR_APP_STORE":
+            return .purple
+        case "ACCEPTED", "READY_FOR_REVIEW":
+            return .mint
+        case "METADATA_REJECTED", "INVALID_BINARY":
+            return .red.opacity(0.7)
+        case "DEVELOPER_REJECTED", "DEVELOPER_REMOVED_FROM_SALE", "REMOVED_FROM_SALE":
+            return .gray
+        case "WAITING_FOR_EXPORT_COMPLIANCE":
+            return .cyan
         default:
             return .secondary
         }

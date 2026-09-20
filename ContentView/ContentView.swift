@@ -8,18 +8,17 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var viewModel = SideBarViewModel()
-    @StateObject private var detailViewModel: DetailViewModel
+    @ObservedObject var viewModel: SideBarViewModel
+    @StateObject var detailViewModel: DetailViewModel
     @EnvironmentObject var navigationManager: NavigationManager
     @State var showAlertView: Bool = false
     @State var isNewAccountAdded: Bool = false
-    
-    init() {
-        let sidebarVM = SideBarViewModel()
-        _viewModel = StateObject(wrappedValue: sidebarVM)
-        _detailViewModel = StateObject(wrappedValue: DetailViewModel(sidebarViewModel: sidebarVM))
+
+    init(viewModel: SideBarViewModel) {
+        self.viewModel = viewModel
+        _detailViewModel = StateObject(wrappedValue: DetailViewModel(sidebarViewModel: viewModel))
     }
-    
+
     var body: some View {
         ZStack {
             NavigationSplitView {
@@ -31,14 +30,14 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            
+
             if showAlertView {
                 Color.black.opacity(0.8)
                     .edgesIgnoringSafeArea(.all)
                     .onTapGesture {
                         showAlertView = false
                     }
-                
+
                 OnBoardingView(isLoggedIn: $isNewAccountAdded)
                     .frame(width: 500)
                     .background(Color.clear)
@@ -55,6 +54,17 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
-        .environmentObject(NavigationManager())
+    // A @StateObject holder mirrors production ownership so the preview
+    // object survives re-renders instead of resetting while iterating.
+    ContentViewPreview()
+}
+
+private struct ContentViewPreview: View {
+    @StateObject private var viewModel = SideBarViewModel()
+
+    var body: some View {
+        ContentView(viewModel: viewModel)
+            .environmentObject(NavigationManager())
+            .environmentObject(ExportManager())
+    }
 }

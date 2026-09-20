@@ -149,7 +149,7 @@ extension DetailViewModel {
                            "filter[preReleaseVersion]": version.id,
                            "sort": "-version",
                            "include": "appStoreVersion,betaBuildLocalizations,preReleaseVersion",
-                           "limit": "5"]
+                           "limit": String(AppConfigs.buildLimit)]
 
         if let cursor = cursor {
             queryParams["cursor"] = cursor

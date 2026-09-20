@@ -20,10 +20,12 @@ struct AppsData: Equatable {
     @ResourceAttribute var bundleId: String?
     @ResourceAttribute var sku: String?
     @ResourceRelationship var appStoreVersions: [AppStoreVersionsModel]
+    @ResourceRelationship var appStoreIcon: AppIcon?
     
     var currentLiveVersion = ("", "") // id, versionString
     var currentState = ""
     var isSelected = false
+    var iconURL: String?
 }
 
 @ResourceWrapper(type: "preReleaseVersions")
@@ -56,6 +58,21 @@ struct StoreIcon: Equatable, Codable {
     var templateUrl: String?
     var width: Int?
     var height: Int?
+}
+
+// The resource type is "buildIcons" (Apple reuses it for app icons), but the
+// relationship on apps is appStoreIcon, hence the Swift name.
+@ResourceWrapper(type: "buildIcons")
+struct AppIcon: Equatable {
+    var id: String
+    @ResourceAttribute var iconAsset: IconAsset?
+}
+
+struct IconAsset: Equatable, Codable {
+    var templateUrl: String?
+    var width: Int?
+    var height: Int?
+    var assetType: String?
 }
 
 @ResourceWrapper(type: "builds")
