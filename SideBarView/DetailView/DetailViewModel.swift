@@ -26,6 +26,11 @@ class DetailViewModel: ObservableObject {
     @Published var selectedVersion: PreReleaseVersionsModel?
     @Published var selectedApp: AppsData?
 
+    // MARK: Batch C1 — App Info (read-only)
+    @Published var appInfoState: ViewState<[AppInfoModel]> = .idle
+    @Published var versionLocalizationsState: ViewState<[AppStoreVersionLocalizationsModel]> = .idle
+    @Published var exportComplianceState: ViewState<[AppEncryptionDeclarationModel]> = .idle
+
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
     @Published var versionsNextCursor: String?
@@ -53,6 +58,18 @@ class DetailViewModel: ObservableObject {
     private var buildsFetchTask: Task<Void, Never>?
     /// Suppresses duplicate pagination requests while one page is loading.
     private var isPaginatingBuilds = false
+
+    // MARK: - Batch C1 — App Info bookkeeping (stored here: extensions
+    // must not contain stored properties)
+
+    /// In-flight App Info fetch so an app switch cancels a stale one.
+    private var appInfoFetchTask: Task<Void, Never>?
+    /// Staleness guards so switching tabs (which destroys tab @State) never
+    /// refetches data already loaded for the current app — same idea as
+    /// BetaViewModel.currentAppId.
+    private(set) var appInfoLoadedAppId: String?
+    private(set) var versionLocalizationsLoadedVersionId: String?
+    private(set) var exportComplianceLoadedAppId: String?
 
     // MARK: - Convenience accessors for views
 
@@ -124,6 +141,15 @@ class DetailViewModel: ObservableObject {
                 self.buildsState = .idle
                 self.nextPageCursor = nil
                 self.meta = nil
+                // Batch C1: app switch clears the App Info panel cleanly —
+                // the App Info tab refetches on appear for the new app.
+                self.appInfoFetchTask?.cancel()
+                self.appInfoState = .idle
+                self.versionLocalizationsState = .idle
+                self.exportComplianceState = .idle
+                self.appInfoLoadedAppId = nil
+                self.versionLocalizationsLoadedVersionId = nil
+                self.exportComplianceLoadedAppId = nil
             }
             .store(in: &cancellables)
     }
@@ -244,6 +270,133 @@ extension DetailViewModel {
     /// always exists in the list once the user types (so "missing locale"
     /// can never signal "needs POST").
     private static let tempLocalizationPrefix = "temp-"
+
+    // MARK: - App Info (Batch C1, read-only)
+
+    /// Loads everything the App Info tab shows. Guarded by the staleness
+    /// ids so it is safe to call from onAppear on every tab switch.
+    func loadAppInfo(force: Bool = false) {
+        guard let app = selectedApp else { return }
+        let needsFetch = force
+            || appInfoLoadedAppId != app.id
+            || exportComplianceLoadedAppId != app.id
+            || versionLocalizationsLoadedVersionId != app.currentLiveVersion.0
+        guard needsFetch else { return }
+
+        appInfoFetchTask?.cancel()
+        appInfoFetchTask = Task { await fetchAllAppInfo(app: app) }
+    }
+
+    func retryAppInfo() {
+        loadAppInfo(force: true)
+    }
+
+    private func fetchAllAppInfo(app: AppsData) async {
+        await fetchAppInfos(appId: app.id)
+        await fetchVersionLocalizations(versionId: app.currentLiveVersion.0)
+        await fetchExportCompliance(appId: app.id)
+    }
+
+    /// GET /v1/apps/{id}/appInfos — composed with the /apps prefix plus
+    /// `path` (see APIName.Batch C note): no `case getAppInfos = "/appInfos"`
+    /// exists because that raw value would build /v1/appInfos/{path}, which
+    /// is not a valid route.
+    func fetchAppInfos(appId: String) async {
+        // A cancelled predecessor must not issue work (see ResourcesViewModel.fetch).
+        guard !Task.isCancelled else { return }
+        appInfoLoadedAppId = appId
+        appInfoState = .loading
+
+        let queryParams = [
+            "include": "ageRatingDeclaration,appInfoLocalizations,primaryCategory,primarySubcategoryOne,primarySubcategoryTwo,secondaryCategory,secondarySubcategoryOne,secondarySubcategoryTwo",
+            "limit[appInfoLocalizations]": "50"
+        ]
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAllApps, queryParams: queryParams, path: "\(appId)/appInfos"),
+            apiVersion: .v1) else {
+            appInfoState = .error("No team selected. Add a team to load app info.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(AppInfosDocument.self, from: data)
+            appInfoState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load app infos: \(error.localizedDescription)")
+            appInfoState = .error(appInfoErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations for the
+    /// app's current live version. limit=200 (the endpoint maximum) so all
+    /// locales arrive in one page.
+    func fetchVersionLocalizations(versionId: String) async {
+        guard !Task.isCancelled else { return }
+        versionLocalizationsLoadedVersionId = versionId
+        guard !versionId.isEmpty else {
+            versionLocalizationsState = .empty
+            return
+        }
+        versionLocalizationsState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAppStoreVersions, queryParams: ["limit": "200"], path: "\(versionId)/appStoreVersionLocalizations"),
+            apiVersion: .v1) else {
+            versionLocalizationsState = .error("No team selected. Add a team to load version info.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(AppStoreVersionLocalizationsDocument.self, from: data)
+            versionLocalizationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load version localizations: \(error.localizedDescription)")
+            versionLocalizationsState = .error(appInfoErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/apps/{id}/appEncryptionDeclarations — export compliance.
+    func fetchExportCompliance(appId: String) async {
+        guard !Task.isCancelled else { return }
+        exportComplianceLoadedAppId = appId
+        exportComplianceState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAllApps, queryParams: ["limit": "200"], path: "\(appId)/appEncryptionDeclarations"),
+            apiVersion: .v1) else {
+            exportComplianceState = .error("No team selected. Add a team to load export compliance.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(AppEncryptionDeclarationsDocument.self, from: data)
+            exportComplianceState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load export compliance: \(error.localizedDescription)")
+            exportComplianceState = .error(appInfoErrorMessage(for: error))
+        }
+    }
+
+    /// Read-only App Info endpoints can 403 with a narrow (TestFlight-only)
+    /// API key — surface a hint instead of a bare server message.
+    private func appInfoErrorMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            if apiError.statusCode == 403 {
+                return "\(apiError.details) — this section may need an API key with broader permissions (e.g. App Manager)."
+            }
+            return apiError.details
+        }
+        return error.localizedDescription
+    }
 
     func updateBuildWhatsNew(buildId: String, locale: String, whatsNew: String) {
         guard case .loaded(var builds) = buildsState,

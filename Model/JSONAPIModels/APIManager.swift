@@ -392,6 +392,27 @@ enum APIName: String {
     case getBetaTesters = "/betaTesters"
     case patchBuildBetaDetail = "/buildBetaDetails"
     case postBetaAppReviewSubmission = "/betaAppReviewSubmissions"
+
+    // MARK: Batch C endpoints (read-only)
+    //
+    // NOTE: app-scoped subpaths under /apps — GET /v1/apps/{id}/appInfos,
+    // /v1/apps/{id}/customerReviews and /v1/apps/{id}/appEncryptionDeclarations
+    // — are composed with the existing `/apps` prefix (getAllApps) plus a
+    // `path` argument, e.g. .get(name: .getAllApps, path: "\(appId)/appInfos"),
+    // mirroring the existing /builds/{id}/buildBetaDetail pattern. Enum raw
+    // values must be unique, so `/apps` cannot have a second case (a literal
+    // `case getAppInfos = "/appInfos"` would build /v1/appInfos/{path},
+    // which is not a valid collection route and would 404).
+    // GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations via `path`.
+    case getAppStoreVersions = "/appStoreVersions"
+    // GET /v1/reviewSubmissions?filter[app]=... (top-level collection).
+    case getReviewSubmissions = "/reviewSubmissions"
+    // C2: team-scoped resources (top-level collections).
+    case getDevices = "/devices"
+    case getCertificates = "/certificates"
+    case getBundleIds = "/bundleIds"
+    case getProfiles = "/profiles"
+    case getUsers = "/users"
 }
 
 enum APIVersion: String {

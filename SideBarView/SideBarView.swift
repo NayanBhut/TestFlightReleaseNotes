@@ -10,11 +10,19 @@ import AppKit
 
 struct SideBarView: View {
     @StateObject var viewModel: SideBarViewModel
+    /// Batch C2: owned here (not inside ResourcesSectionView) so team
+    /// switches can reset it — a sheet-scoped VM would keep showing the
+    /// previous team's resources.
+    @StateObject private var resourcesViewModel = ResourcesViewModel()
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject var navigationManager: NavigationManager
     @Binding var isAddNewTeam: Bool
     @Binding var isNewAccountAdded: Bool
     @State var showTeams = false
+    /// Batch C flag: one switch that shows/hides the Resources section here
+    /// plus the App Info and Reviews tabs in DetailView (same UserDefaults
+    /// key, kept in sync by @AppStorage).
+    @AppStorage(UserDefaultsKeys.showExtendedInfo) var showExtendedInfo = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +33,19 @@ struct SideBarView: View {
                         .fontWeight(.semibold)
 
                     Spacer()
+
+                    // Batch C: show/hide App Info, Reviews and Resources.
+                    Button(action: {
+                        showExtendedInfo.toggle()
+                    }) {
+                        Image(systemName: showExtendedInfo ? "eye.fill" : "eye.slash")
+                            .font(.system(size: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .help(showExtendedInfo
+                          ? "Hide App Info, Reviews and Resources"
+                          : "Show App Info, Reviews and Resources")
+                    .accessibilityLabel(showExtendedInfo ? "Hide extended info" : "Show extended info")
 
                     Button(action: {
                         isAddNewTeam = true
@@ -106,6 +127,15 @@ struct SideBarView: View {
 
             // Apps list
             appList()
+
+            // Batch C2: team-scoped Resources below apps (like AppDab's
+            // Resources group), gated by the extended-info flag.
+            if showExtendedInfo {
+                Divider()
+                ResourcesSectionView(viewModel: resourcesViewModel)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
         }
         .onAppear {
             if CredentialStorage.shared.selectedTeam == nil {
@@ -136,6 +166,7 @@ struct SideBarView: View {
         .onChange(of: viewModel.isTeamChanged) { oldValue, newValue in
             if newValue {
                 viewModel.updateTeam()
+                resourcesViewModel.resetForTeamSwitch()
                 viewModel.isTeamChanged = false
             }
         }
@@ -149,10 +180,12 @@ struct SideBarView: View {
         CredentialStorage.shared.deleteCredential(for: team)
         if CredentialStorage.shared.getTeams.isEmpty {
             viewModel.clearOnLogout()
+            resourcesViewModel.resetForTeamSwitch()
             navigationManager.isLoggedIn = false
         } else if wasSelected {
             CredentialStorage.shared.restoreDefaultTeam()
             viewModel.updateTeam()
+            resourcesViewModel.resetForTeamSwitch()
         }
     }
 
