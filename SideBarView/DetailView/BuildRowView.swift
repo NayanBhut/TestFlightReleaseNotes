@@ -49,7 +49,6 @@ struct BuildRowView: View {
             headerView
             localeTabsView
             textEditorView
-            characterCounterView
         }
         .padding(.vertical, 4)
     }
@@ -249,44 +248,6 @@ struct BuildRowView: View {
             }
     }
 
-    private var characterCounterView: some View {
-        HStack {
-            // Snippets insert directly into this row's editor — the user's
-            // clipboard is never clobbered.
-            Menu {
-                ForEach(ReleaseNoteSnippets.all, id: \.self) { snippet in
-                    Button(ReleaseNoteSnippets.menuLabel(snippet)) {
-                        appendSnippet(snippet)
-                    }
-                }
-            } label: {
-                Label("Snippets", systemImage: "text.badge.plus")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .help("Insert a release-notes snippet into this build")
-            Spacer()
-            Text("\(whatsNewText.count)/\(maxLength)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 8)
-    }
-
-    /// Insert a snippet into this row's editor, respecting the length cap
-    /// and registering the change like a manual edit.
-    private func appendSnippet(_ snippet: String) {
-        let separator = whatsNewText.isEmpty ? "" : "\n"
-        var combined = whatsNewText + separator + snippet
-        if combined.count > maxLength {
-            combined = String(combined.prefix(maxLength))
-        }
-        whatsNewText = combined
-        hasChanges = combined != committedText
-        scheduleDebouncedTextChange(combined, locale: selectedLocale)
-    }
-
     /// Immediately propagate any pending (debounced) text change to the
     /// view model, cancelling the debounce timer.
     private func flushPendingTextChange() {
@@ -310,21 +271,3 @@ struct BuildRowView: View {
     }
 }
 
-/// Canned release-note starting points, inserted directly into the row's
-/// editor (never clobbering the user's clipboard).
-enum ReleaseNoteSnippets {
-    static let all = [
-        "Bug fixes and performance improvements",
-        "New features:\n- Feature 1\n- Feature 2\n- Feature 3",
-        "Bug fixes:\n- Fixed issue with login\n- Fixed crash on startup\n- Improved stability",
-        "What's new in this version:\n- Enhanced UI\n- Better performance\n- Security updates",
-        "Release notes:\n- Added dark mode support\n- Fixed memory leaks\n- Updated dependencies"
-    ]
-
-    /// One-line menu label; ellipsis only when actually truncated.
-    static func menuLabel(_ snippet: String) -> String {
-        let flattened = snippet.replacingOccurrences(of: "\n", with: " ")
-        guard flattened.count > 40 else { return flattened }
-        return String(flattened.prefix(40)) + "…"
-    }
-}
