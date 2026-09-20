@@ -31,23 +31,18 @@ struct BuildDetailsView: View {
                     if viewModel.selectedVersion == nil {
                         noVersionSelectedView
                     } else {
-                        Spacer()
+                        EmptyView()
                     }
                 case .loading:
-                    // Show full screen loading when fetching builds
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 16) {
-                            Spacer()
-                            ProgressView()
-                                .scaleEffect(1.2)
-                            Text("Loading builds...")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        Spacer()
+                    // Full screen loading when fetching builds.
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Loading builds...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .error(let message):
                     ErrorRetryView(
                         title: "Couldn't Load Builds",
@@ -56,6 +51,7 @@ struct BuildDetailsView: View {
                     ) {
                         viewModel.retryBuilds()
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .empty:
                     if viewModel.selectedVersion == nil {
                         noVersionSelectedView
@@ -124,30 +120,24 @@ struct BuildDetailsView: View {
     }
 
     private var noVersionSelectedView: some View {
-        HStack {
-            Spacer()
-            VStack(spacing: 16) {
-                Spacer()
-                Image(systemName: "cube.box")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary)
-                Text("No Version Selected")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                Text("Select a version above to view its builds")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                Spacer()
-            }
-            .padding()
-            Spacer()
+        VStack(spacing: 16) {
+            Image(systemName: "cube.box")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+            Text("No Version Selected")
+                .font(.title3)
+                .fontWeight(.medium)
+            Text("Select a version above to view its builds")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
         }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var noBuildsView: some View {
         VStack(spacing: 16) {
-            Spacer()
             Image(systemName: "tray")
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
@@ -158,9 +148,9 @@ struct BuildDetailsView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-            Spacer()
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func buildsHeader() -> some View {

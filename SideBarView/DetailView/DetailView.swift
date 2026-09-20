@@ -53,14 +53,13 @@ struct DetailView: View {
             if viewModel.selectedApp != nil && viewModel.versionsState.isLoading && viewModel.arrVersions.isEmpty {
                 // Full screen loading state
                 VStack(spacing: 16) {
-                    Spacer()
                     ProgressView()
                         .scaleEffect(1.2)
                     Text("Loading versions...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    Spacer()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     // Header section
@@ -88,8 +87,13 @@ struct DetailView: View {
                     }
 
                     getBuildList()
-                    Spacer()
                 }
+                // Expand to the full detail area and top-align content.
+                // Without this the VStack hugs its width/height, so the
+                // loading/empty states inside child tabs cannot center —
+                // they render top-left (a trailing Spacer here would also
+                // split the space with the loader and push it off-center).
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         // Reviews VM reset lives here, not in ReviewsView: the tab view only
@@ -251,7 +255,6 @@ struct DetailView: View {
             }
         } else {
             VStack(spacing: 16) {
-                Spacer()
                 Image(systemName: "app.badge")
                     .font(.system(size: 48))
                     .foregroundColor(.secondary)
@@ -262,9 +265,9 @@ struct DetailView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                Spacer()
             }
             .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
