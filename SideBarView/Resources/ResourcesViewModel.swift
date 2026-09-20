@@ -128,7 +128,10 @@ final class ResourcesViewModel: ObservableObject {
     }
 
     func loadMore(_ kind: Kind, cursor: String) {
-        guard !cursor.isEmpty else { return }
+        // In-flight check BEFORE cancelling: the successor task starts
+        // before the cancelled predecessor runs its defer, so the internal
+        // guard would no-op the tap while leaving the first request killed.
+        guard !cursor.isEmpty, !isPaginatingKinds.contains(kind) else { return }
         fetchTasks[kind]?.cancel()
         fetchTasks[kind] = Task { await fetch(kind, cursor: cursor) }
     }

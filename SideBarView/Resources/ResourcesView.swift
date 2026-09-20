@@ -287,10 +287,18 @@ private struct CertificateRow: View {
     let certificate: CertificateModel
 
     private static let expiryParser = ISO8601DateFormatter()
+    /// App Store Connect returns fractional seconds on some endpoints;
+    /// the plain parser silently fails on those, so try it as a fallback.
+    private static let expiryParserFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private var isExpired: Bool {
         guard let date = certificate.expirationDate else { return false }
-        return Self.expiryParser.date(from: date).map { $0 < Date() } ?? false
+        let parsed = Self.expiryParserFractional.date(from: date) ?? Self.expiryParser.date(from: date)
+        return parsed.map { $0 < Date() } ?? false
     }
 
     var body: some View {

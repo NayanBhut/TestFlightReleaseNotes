@@ -22,7 +22,7 @@ struct SideBarView: View {
     /// Batch C flag: one switch that shows/hides the Resources section here
     /// plus the App Info and Reviews tabs in DetailView (same UserDefaults
     /// key, kept in sync by @AppStorage).
-    @AppStorage(UserDefaultsKeys.showExtendedInfo) var showExtendedInfo = true
+    @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
 
     var body: some View {
         VStack(spacing: 0) {

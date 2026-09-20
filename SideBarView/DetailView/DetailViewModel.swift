@@ -23,6 +23,8 @@ class DetailViewModel: ObservableObject {
     deinit {
         // A stuck network call must not keep the VM alive.
         appInfoFetchTask?.cancel()
+        versionLocalizationsFetchTask?.cancel()
+        exportComplianceFetchTask?.cancel()
         buildsFetchTask?.cancel()
     }
     @Published var versionsState: ViewState<[PreReleaseVersionsModel]> = .idle
@@ -67,8 +69,11 @@ class DetailViewModel: ObservableObject {
     // MARK: - Batch C1 — App Info bookkeeping (stored here: extensions
     // must not contain stored properties)
 
-    /// In-flight App Info fetch so an app switch cancels a stale one.
+    /// One task per section so a retry/refresh of one never cancels the
+    /// others, and each runs in parallel naturally.
     private var appInfoFetchTask: Task<Void, Never>?
+    private var versionLocalizationsFetchTask: Task<Void, Never>?
+    private var exportComplianceFetchTask: Task<Void, Never>?
     /// Staleness guards so switching tabs (which destroys tab @State) never
     /// refetches data already loaded for the current app — same idea as
     /// BetaViewModel.currentAppId.
@@ -149,6 +154,8 @@ class DetailViewModel: ObservableObject {
                 // Batch C1: app switch clears the App Info panel cleanly —
                 // the App Info tab refetches on appear for the new app.
                 self.appInfoFetchTask?.cancel()
+                self.versionLocalizationsFetchTask?.cancel()
+                self.exportComplianceFetchTask?.cancel()
                 self.appInfoState = .idle
                 self.versionLocalizationsState = .idle
                 self.exportComplianceState = .idle
@@ -278,34 +285,49 @@ extension DetailViewModel {
 
     // MARK: - App Info (Batch C1, read-only)
 
-    /// Loads everything the App Info tab shows. Guarded by the staleness
-    /// ids so it is safe to call from onAppear on every tab switch.
+    /// Loads every App Info section that is stale for the selected app.
+    /// Guarded by the per-section staleness ids so it is safe to call from
+    /// onAppear on every tab switch — only unloaded/failed sections fetch.
     func loadAppInfo(force: Bool = false) {
         guard let app = selectedApp else { return }
-        let needsFetch = force
-            || appInfoLoadedAppId != app.id
-            || exportComplianceLoadedAppId != app.id
-            || versionLocalizationsLoadedVersionId != app.currentLiveVersion.0
-        guard needsFetch else { return }
 
-        appInfoFetchTask?.cancel()
-        appInfoFetchTask = Task { await fetchAllAppInfo(app: app) }
+        if force || appInfoLoadedAppId != app.id {
+            appInfoFetchTask?.cancel()
+            appInfoFetchTask = Task { await fetchAppInfos(appId: app.id) }
+        }
+        if force || versionLocalizationsLoadedVersionId != app.currentLiveVersion.0 {
+            versionLocalizationsFetchTask?.cancel()
+            versionLocalizationsFetchTask = Task { await fetchVersionLocalizations(versionId: app.currentLiveVersion.0) }
+        }
+        if force || exportComplianceLoadedAppId != app.id {
+            exportComplianceFetchTask?.cancel()
+            exportComplianceFetchTask = Task { await fetchExportCompliance(appId: app.id) }
+        }
     }
 
+    /// Full refresh (App Info header button): refetches all three sections.
     func retryAppInfo() {
         loadAppInfo(force: true)
     }
 
-    private func fetchAllAppInfo(app: AppsData) async {
-        // Independent endpoints — fetch in parallel, not sequentially.
-        // Each fetch sets only its own state and guards Task.isCancelled,
-        // so semantics (incl. cancellation) match the sequential version.
-        async let infos: Void = fetchAppInfos(appId: app.id)
-        async let localizations: Void = fetchVersionLocalizations(versionId: app.currentLiveVersion.0)
-        async let compliance: Void = fetchExportCompliance(appId: app.id)
-        await infos
-        await localizations
-        await compliance
+    /// Per-section retry, wired to each section's own Retry button — a
+    /// failing section no longer drags the other two along.
+    func retryAppInfos() {
+        guard let app = selectedApp else { return }
+        appInfoFetchTask?.cancel()
+        appInfoFetchTask = Task { await fetchAppInfos(appId: app.id) }
+    }
+
+    func retryVersionLocalizations() {
+        guard let app = selectedApp else { return }
+        versionLocalizationsFetchTask?.cancel()
+        versionLocalizationsFetchTask = Task { await fetchVersionLocalizations(versionId: app.currentLiveVersion.0) }
+    }
+
+    func retryExportCompliance() {
+        guard let app = selectedApp else { return }
+        exportComplianceFetchTask?.cancel()
+        exportComplianceFetchTask = Task { await fetchExportCompliance(appId: app.id) }
     }
 
     /// GET /v1/apps/{id}/appInfos — composed with the /apps prefix plus

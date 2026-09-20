@@ -39,13 +39,6 @@ struct ReviewsView: View {
                            subtitle: "Select an app from the sidebar to view its reviews")
             }
         }
-        // App deselection (team switch) passes through selectedApp == nil —
-        // cancel in-flight fetches and drop cross-team state/cursors there.
-        .onChange(of: selectedApp?.id) { _, newId in
-            if newId == nil {
-                reviewsViewModel.resetForTeamSwitch()
-            }
-        }
     }
 
     // MARK: - Header
@@ -74,7 +67,7 @@ struct ReviewsView: View {
     // MARK: - Review submissions
 
     @ViewBuilder private var submissionsSection: some View {
-        Card(title: "Review Submissions", systemImage: "doc.badge.gearshape") {
+        InfoCard(title: "Review Submissions", systemImage: "doc.badge.gearshape") {
             switch reviewsViewModel.submissionsState {
             case .idle, .loading:
                 HStack(spacing: 8) {
@@ -121,7 +114,7 @@ struct ReviewsView: View {
     // MARK: - Customer reviews
 
     @ViewBuilder private var reviewsSection: some View {
-        Card(title: "Customer Reviews", systemImage: "star.bubble") {
+        InfoCard(title: "Customer Reviews", systemImage: "star.bubble") {
             switch reviewsViewModel.reviewsState {
             case .idle, .loading:
                 HStack(spacing: 8) {
@@ -295,7 +288,9 @@ struct StateChip: View {
         case "COMPLETE", "APPROVED", "ACCEPTED", "ENABLED", "ACTIVE", "VALID":
             return .green
         case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
-            return .yellow
+            // Orange, not yellow: yellow on yellow.opacity(0.15) fails
+            // contrast against light-mode surfaces.
+            return .orange
         case "IN_REVIEW":
             return .blue
         case "UNRESOLVED_ISSUES", "REJECTED", "INVALID":

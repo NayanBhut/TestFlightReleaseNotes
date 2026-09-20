@@ -14,7 +14,7 @@ struct DetailView: View {
     @State private var selectedTab: DetailTab = .builds
     /// Batch C flag: one switch that shows/hides the App Info and Reviews
     /// tabs (and the sidebar's Resources section — same UserDefaults key).
-    @AppStorage(UserDefaultsKeys.showExtendedInfo) var showExtendedInfo = true
+    @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
 
     enum DetailTab: String, CaseIterable {
         case builds = "Builds"
@@ -90,6 +90,14 @@ struct DetailView: View {
                     getBuildList()
                     Spacer()
                 }
+            }
+        }
+        // Reviews VM reset lives here, not in ReviewsView: the tab view only
+        // exists while its tab is selected, but a team switch can happen on
+        // any tab — this handler is installed whenever DetailView is.
+        .onChange(of: viewModel.selectedApp?.id) { _, newId in
+            if newId == nil {
+                reviewsViewModel.resetForTeamSwitch()
             }
         }
     }

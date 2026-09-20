@@ -74,7 +74,7 @@ struct AppInfoView: View {
     // MARK: - General
 
     private func generalSection(app: AppsData) -> some View {
-        Card(title: "General", systemImage: "app.badge") {
+        InfoCard(title: "General", systemImage: "app.badge") {
             InfoRow(label: "Apple ID", value: app.id)
             InfoRow(label: "Bundle ID", value: app.bundleId)
             InfoRow(label: "SKU", value: app.sku)
@@ -104,7 +104,8 @@ struct AppInfoView: View {
     // MARK: - App Infos (state, age rating, categories)
 
     @ViewBuilder private var appInfosSection: some View {
-        section(state: viewModel.appInfoState, title: "App Store Info", systemImage: "doc.text") { info in
+        section(state: viewModel.appInfoState, title: "App Store Info", systemImage: "doc.text",
+                retry: { viewModel.retryAppInfos() }) { info in
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(info, id: \.id) { appInfo in
                     VStack(alignment: .leading, spacing: 8) {
@@ -119,24 +120,28 @@ struct AppInfoView: View {
         }
     }
 
-    /// App Store age rating: the deprecated-but-returned appStoreAgeRating
-    /// attribute (e.g. FOUR_PLUS) is the cheapest display value; fall back
-    /// to the included age rating declaration's override.
+    /// App Store age rating — one explicit mapping for both sources, so
+    /// values like FOUR_PLUS render as "4+", not "FOUR+".
     private func ageRatingLabel(_ info: AppInfoModel) -> String? {
-        if let rating = info.appStoreAgeRating {
-            return rating.replacingOccurrences(of: "_PLUS", with: "+")
+        let raw = info.appStoreAgeRating
+            ?? info.ageRatingDeclaration?.ageRatingOverrideV2
+        return Self.ageRatingDisplay(raw)
+    }
+
+    private static func ageRatingDisplay(_ raw: String?) -> String? {
+        switch raw {
+        case "FOUR_PLUS": return "4+"
+        case "NINE_PLUS": return "9+"
+        case "THIRTEEN_PLUS": return "13+"
+        case "FOURTEEN_PLUS": return "14+"
+        case "SIXTEEN_PLUS": return "16+"
+        case "SEVENTEEN_PLUS": return "17+"
+        case "EIGHTEEN_PLUS": return "18+"
+        case "NINETEEN_PLUS": return "19+"
+        case "NONE": return "None"
+        case nil: return nil
+        default: return raw
         }
-        if let override = info.ageRatingDeclaration?.ageRatingOverrideV2 {
-            switch override {
-            case "NINE_PLUS": return "9+"
-            case "THIRTEEN_PLUS": return "13+"
-            case "SIXTEEN_PLUS": return "16+"
-            case "EIGHTEEN_PLUS": return "18+"
-            case "NONE": return "None"
-            default: return override.replacingOccurrences(of: "_PLUS", with: "+")
-            }
-        }
-        return nil
     }
 
     @ViewBuilder private func categoryRows(_ info: AppInfoModel) -> some View {
@@ -157,7 +162,7 @@ struct AppInfoView: View {
     @ViewBuilder private var appInfoLocalizationsSection: some View {
         let localizations = viewModel.appInfoState.loadedValue?.flatMap { $0.appInfoLocalizations } ?? []
         if !localizations.isEmpty {
-            Card(title: "App Info Localizations", systemImage: "globe") {
+            InfoCard(title: "App Info Localizations", systemImage: "globe") {
                 VStack(alignment: .leading, spacing: 12) {
                 ForEach(localizations, id: \.id) { loc in
                     VStack(alignment: .leading, spacing: 8) {
@@ -178,7 +183,8 @@ struct AppInfoView: View {
     @ViewBuilder private func versionLocalizationsSection(app: AppsData) -> some View {
         section(state: viewModel.versionLocalizationsState,
                 title: "Version Localizations",
-                systemImage: "doc.plaintext") { localizations in
+                systemImage: "doc.plaintext",
+                retry: { viewModel.retryVersionLocalizations() }) { localizations in
             VStack(alignment: .leading, spacing: 12) {
                 if !app.currentLiveVersion.1.isEmpty {
                     Text("Version \(app.currentLiveVersion.1)")
@@ -208,7 +214,8 @@ struct AppInfoView: View {
     @ViewBuilder private var exportComplianceSection: some View {
         section(state: viewModel.exportComplianceState,
                 title: "Export Compliance",
-                systemImage: "lock.shield") { declarations in
+                systemImage: "lock.shield",
+                retry: { viewModel.retryExportCompliance() }) { declarations in
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(declarations, id: \.id) { declaration in
                     VStack(alignment: .leading, spacing: 8) {
@@ -232,10 +239,11 @@ struct AppInfoView: View {
     private func section<T>(state: ViewState<[T]>,
                            title: String,
                            systemImage: String,
+                           retry: @escaping () -> Void,
                            @ViewBuilder content: @escaping ([T]) -> some View) -> some View {
         switch state {
         case .idle, .loading:
-            Card(title: title, systemImage: systemImage) {
+            InfoCard(title: title, systemImage: systemImage) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Loading...")
@@ -244,24 +252,24 @@ struct AppInfoView: View {
                 }
             }
         case .empty:
-            Card(title: title, systemImage: systemImage) {
+            InfoCard(title: title, systemImage: systemImage) {
                 Text("No data")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
         case .error(let message):
-            Card(title: title, systemImage: systemImage) {
+            InfoCard(title: title, systemImage: systemImage) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(message)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Button("Retry") { viewModel.retryAppInfo() }
+                    Button("Retry", action: retry)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
             }
         case .loaded(let items):
-            Card(title: title, systemImage: systemImage) {
+            InfoCard(title: title, systemImage: systemImage) {
                 content(items)
             }
         }
@@ -296,8 +304,10 @@ struct AppInfoView: View {
 
 // MARK: - Reusable card + row
 
-/// A bordered, read-only grouping used across the App Info tab.
-struct Card<Content: View>: View {
+/// A bordered, read-only grouping used across the App Info and Reviews
+/// tabs. Scoped name (`InfoCard`, not `Card`) so it can't collide with
+/// other generic card views in the module.
+struct InfoCard<Content: View>: View {
     let title: String
     let systemImage: String
     @ViewBuilder var content: Content

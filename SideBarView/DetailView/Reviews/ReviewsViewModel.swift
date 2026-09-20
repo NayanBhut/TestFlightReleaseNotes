@@ -31,15 +31,23 @@ final class ReviewsViewModel: ObservableObject {
     // MARK: - Review submissions
 
     @Published var submissionsState: ViewState<[ReviewSubmissionModel]> = .idle
-    @Published var submissionsMeta: Meta?
     @Published var submissionsNextCursor: String?
     @Published var submissionsPaginationFailed = false
 
     // MARK: - Staleness / in-flight bookkeeping
 
-    /// Guards so switching tabs (which destroys tab @State) never refetches
-    /// data already loaded for the current app.
+    /// The app whose lists are in flight / last requested (loadMore target).
     private(set) var currentAppId: String?
+    /// Per-list staleness ids, set only on SUCCESS — a failed load must
+    /// auto-retry on the next appear instead of sticking on the error state
+    /// (round-1 lesson applied per list here, mirroring DetailViewModel).
+    private(set) var reviewsLoadedAppId: String?
+    private(set) var submissionsLoadedAppId: String?
+    /// Suppresses cancel+respawn churn while a fetch for the same app is
+    /// already in flight (cleared in each fetch's defer).
+    private var reviewsInFlightAppId: String?
+    private var submissionsInFlightAppId: String?
+
     private var reviewsFetchTask: Task<Void, Never>?
     private var submissionsFetchTask: Task<Void, Never>?
     private var isPaginatingReviews = false
@@ -48,14 +56,21 @@ final class ReviewsViewModel: ObservableObject {
     // MARK: - Loading
 
     /// Loads both lists for the app. Safe to call from onAppear on every
-    /// tab switch — the staleness guard skips a redundant refetch.
+    /// tab switch: only lists that are stale (not yet loaded successfully)
+    /// for this app are (re)fetched, and in-flight fetches for the same app
+    /// are not cancelled-and-restarted.
     func load(app: AppsData) {
-        guard currentAppId != app.id else { return }
         currentAppId = app.id
-        reviewsFetchTask?.cancel()
-        submissionsFetchTask?.cancel()
-        reviewsFetchTask = Task { await fetchReviews(appId: app.id) }
-        submissionsFetchTask = Task { await fetchSubmissions(appId: app.id) }
+        if reviewsLoadedAppId != app.id, reviewsInFlightAppId != app.id {
+            reviewsFetchTask?.cancel()
+            reviewsInFlightAppId = app.id
+            reviewsFetchTask = Task { await fetchReviews(appId: app.id) }
+        }
+        if submissionsLoadedAppId != app.id, submissionsInFlightAppId != app.id {
+            submissionsFetchTask?.cancel()
+            submissionsInFlightAppId = app.id
+            submissionsFetchTask = Task { await fetchSubmissions(appId: app.id) }
+        }
     }
 
     /// App deselection / team switch / logout: cancel in-flight fetches and
@@ -67,11 +82,14 @@ final class ReviewsViewModel: ObservableObject {
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
         currentAppId = nil
+        reviewsLoadedAppId = nil
+        submissionsLoadedAppId = nil
+        reviewsInFlightAppId = nil
+        submissionsInFlightAppId = nil
         reviewsState = .idle
         submissionsState = .idle
         reviewsMeta = nil
         reviewsNextCursor = nil
-        submissionsMeta = nil
         submissionsNextCursor = nil
         reviewsPaginationFailed = false
         submissionsPaginationFailed = false
@@ -81,6 +99,8 @@ final class ReviewsViewModel: ObservableObject {
         guard let appId = currentAppId else { return }
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
+        reviewsInFlightAppId = appId
+        submissionsInFlightAppId = appId
         reviewsFetchTask = Task { await fetchReviews(appId: appId) }
         submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
     }
@@ -88,24 +108,31 @@ final class ReviewsViewModel: ObservableObject {
     func retryReviews() {
         guard let appId = currentAppId else { return }
         reviewsFetchTask?.cancel()
+        reviewsInFlightAppId = appId
         reviewsFetchTask = Task { await fetchReviews(appId: appId) }
     }
 
     func retrySubmissions() {
         guard let appId = currentAppId else { return }
         submissionsFetchTask?.cancel()
+        submissionsInFlightAppId = appId
         submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
     }
 
     func loadMoreReviews(cursor: String) {
-        guard let appId = currentAppId else { return }
+        // In-flight check BEFORE cancelling: the successor task starts
+        // before the cancelled predecessor runs its defer, so the internal
+        // guard would no-op the tap while leaving the first request killed.
+        guard let appId = currentAppId, !isPaginatingReviews else { return }
         reviewsFetchTask?.cancel()
+        reviewsInFlightAppId = appId
         reviewsFetchTask = Task { await fetchReviews(appId: appId, cursor: cursor) }
     }
 
     func loadMoreSubmissions(cursor: String) {
-        guard let appId = currentAppId else { return }
+        guard let appId = currentAppId, !isPaginatingSubmissions else { return }
         submissionsFetchTask?.cancel()
+        submissionsInFlightAppId = appId
         submissionsFetchTask = Task { await fetchSubmissions(appId: appId, cursor: cursor) }
     }
 
@@ -129,6 +156,7 @@ final class ReviewsViewModel: ObservableObject {
         reviewsPaginationFailed = false
         defer {
             if isPaginating { isPaginatingReviews = false }
+            reviewsInFlightAppId = nil
         }
 
         var queryParams = [
@@ -163,6 +191,8 @@ final class ReviewsViewModel: ObservableObject {
             }
             reviewsMeta = model.meta
             reviewsNextCursor = model.meta.paging.nextCursor
+            // Staleness id only on success (see load(app:)).
+            reviewsLoadedAppId = appId
             reviewsState = merged.isEmpty ? .empty : .loaded(merged)
         } catch {
             guard !Task.isCancelled else { return }
@@ -190,6 +220,7 @@ final class ReviewsViewModel: ObservableObject {
         submissionsPaginationFailed = false
         defer {
             if isPaginating { isPaginatingSubmissions = false }
+            submissionsInFlightAppId = nil
         }
 
         var queryParams = [
@@ -221,7 +252,9 @@ final class ReviewsViewModel: ObservableObject {
             } else {
                 merged = model.data
             }
-            submissionsMeta = model.meta
+            // Staleness id only on success (see load(app:)); the paging
+            // meta itself isn't rendered, only the cursor is consumed.
+            submissionsLoadedAppId = appId
             submissionsNextCursor = model.meta.paging.nextCursor
             submissionsState = merged.isEmpty ? .empty : .loaded(merged)
         } catch {
