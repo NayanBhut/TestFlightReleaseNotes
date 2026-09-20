@@ -68,16 +68,18 @@ final class ExportManager: ObservableObject {
             .components(separatedBy: invalidCharacters)
             .joined(separator: "-")
 
-        // Truncate on a safe UTF-8 scalar boundary once the byte budget is spent.
-        var result = String.UnicodeScalarView()
+        // Truncate on Character (grapheme) boundaries while tracking the
+        // UTF-8 byte budget — scalar-level truncation could split emoji or
+        // combining sequences.
+        var result = ""
         var bytes = 0
-        for scalar in sanitized.unicodeScalars {
-            let width = UTF8.width(scalar)
+        for character in sanitized {
+            let width = character.utf8.count
             if bytes + width > Self.maxFileNameComponentBytes { break }
             bytes += width
-            result.append(scalar)
+            result.append(character)
         }
-        return String(result)
+        return result.isEmpty ? "App" : result
     }
 
     /// Removes exported files left over from previous sessions, off the main thread.

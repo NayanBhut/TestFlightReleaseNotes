@@ -46,15 +46,18 @@ class SideBarViewModel: ObservableObject {
     /// Everything loaded so far (across pagination and search refreshes).
     private var allLoadedApps: [AppsData] = []
 
+    /// True while a pagination request failed, so the sidebar can offer a retry.
+    @Published var paginationFailed = false
+
     /// Apps the sidebar renders: everything loaded, searched and sorted locally.
     /// Derived (not stored) so it can never drift out of sync with
     /// allLoadedApps / searchText / selectedSortOption.
     var filteredApps: [AppsData] {
         var filtered = allLoadedApps
 
-        if !searchText.isEmpty {
-            filtered = filtered.filter(matchesSearch)
-        }
+        // matchesSearch returns true for everything when the trimmed
+        // search term is empty.
+        filtered = filtered.filter(matchesSearch)
 
         switch selectedSortOption {
         case .nameAscending:
@@ -121,6 +124,7 @@ class SideBarViewModel: ObservableObject {
             selectedApp = nil
             versionsState = .idle
         }
+        paginationFailed = false
         defer {
             if isPaginating { isPaginatingApps = false }
         }
@@ -136,8 +140,8 @@ class SideBarViewModel: ObservableObject {
             "limit": String(AppConfigs.appListLimit)
         ]
 
-        if !searchText.isEmpty {
-            queryParams["filter[name]"] = searchText
+        if !trimmedSearchText.isEmpty {
+            queryParams["filter[name]"] = trimmedSearchText
         }
 
         if let stateFilter = selectedStateFilter.apiValue {
@@ -166,11 +170,23 @@ class SideBarViewModel: ObservableObject {
             // its failure or overwrite the newer state.
             guard !Task.isCancelled else { return }
             sidebarLogger.error("Failed to load apps: \(error.localizedDescription)")
+            if isPaginating {
+                // Surface pagination failure so the sidebar can offer a retry;
+                // the loaded list stays intact.
+                paginationFailed = true
+            }
             // Silent refreshes keep the current list on failure.
             if !isPaginating, !isSearchRefresh {
                 appsState = .error(friendlyMessage(for: error))
             }
         }
+    }
+
+    /// The search term with surrounding whitespace removed, used for both
+    /// the server query and local matching so whitespace-only input can't
+    /// fire a query that matches nothing.
+    var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Debounces the server-side name search so typing doesn't fire a
@@ -186,9 +202,10 @@ class SideBarViewModel: ObservableObject {
 
     /// True when an app matches the current search term (name or bundle ID).
     private func matchesSearch(_ app: AppsData) -> Bool {
-        guard !searchText.isEmpty else { return true }
-        return (app.name ?? "").localizedCaseInsensitiveContains(searchText) ||
-            (app.bundleId ?? "").localizedCaseInsensitiveContains(searchText)
+        let term = trimmedSearchText
+        guard !term.isEmpty else { return true }
+        return (app.name ?? "").localizedCaseInsensitiveContains(term) ||
+            (app.bundleId ?? "").localizedCaseInsensitiveContains(term)
     }
 
     private func updateCurrentLiveVersion(responseApp: AppsDocument, nextPage: String? = nil, isSearchRefresh: Bool = false) {

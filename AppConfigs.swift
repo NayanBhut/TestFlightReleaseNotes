@@ -63,7 +63,11 @@ enum AppConfigs {
         /// `.capitalized` (not `.localizedCapitalized`) keeps capitalization stable
         /// across locales — these are English API enum values.
         var displayName: String {
-            self == .all ? "All States" : rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+            guard self != .all else { return "All States" }
+            return rawValue
+                .replacingOccurrences(of: "_", with: " ")
+                .capitalized
+                .replacingOccurrences(of: " For ", with: " for ")
         }
     }
 }

@@ -54,7 +54,17 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(viewModel: SideBarViewModel())
-        .environmentObject(NavigationManager())
-        .environmentObject(ExportManager())
+    // A @StateObject holder mirrors production ownership so the preview
+    // object survives re-renders instead of resetting while iterating.
+    ContentViewPreview()
+}
+
+private struct ContentViewPreview: View {
+    @StateObject private var viewModel = SideBarViewModel()
+
+    var body: some View {
+        ContentView(viewModel: viewModel)
+            .environmentObject(NavigationManager())
+            .environmentObject(ExportManager())
+    }
 }

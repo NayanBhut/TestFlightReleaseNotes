@@ -55,6 +55,7 @@ struct SideBarView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
                         .font(.caption)
+                        .accessibilityHidden(true)
 
                     TextField("Search apps...", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
@@ -69,6 +70,7 @@ struct SideBarView: View {
                                 .font(.caption)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Clear search")
                         .help("Clear search")
                     }
                 }
@@ -234,6 +236,7 @@ struct SideBarView: View {
                     .font(.caption)
                 Text("Filter: \(viewModel.selectedStateFilter.displayName)")
                     .font(.caption)
+                    .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -270,6 +273,7 @@ struct SideBarView: View {
                     .font(.caption)
                 Text("Sort: \(viewModel.selectedSortOption.displayName)")
                     .font(.caption)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -306,20 +310,36 @@ struct SideBarView: View {
                             .onTapGesture {
                                 viewModel.setSelectedAppAndGetVersions(app: app)
                             }
+                            .onAppear {
+                                // Lazy List renders only visible rows, so this
+                                // fires when the last row scrolls into view
+                                // (or while the list is shorter than the
+                                // viewport) — pages load on demand instead of
+                                // auto-chaining the whole catalog.
+                                if app.id == viewModel.filteredApps.last?.id,
+                                   let nextCursor = viewModel.appMeta?.paging.nextCursor {
+                                    viewModel.loadMoreApps(cursor: nextCursor)
+                                }
+                            }
                     }
                     .listStyle(.sidebar)
 
                     if let nextCursor = viewModel.appMeta?.paging.nextCursor {
                         VStack {
                             Divider()
-                            ProgressView()
-                                .scaleEffect(0.8)
-                                // .task(id:) re-runs each time a new cursor
-                                // arrives, so pagination can't stall when the
-                                // spinner stays on screen after a page loads.
-                                .task(id: nextCursor) {
+                            if viewModel.paginationFailed {
+                                Button("Couldn't load more — Retry") {
                                     viewModel.loadMoreApps(cursor: nextCursor)
                                 }
+                                .buttonStyle(.plain)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .padding(.vertical, 4)
+                            } else {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .padding(.vertical, 4)
+                            }
                         }
                     }
                 }
@@ -448,9 +468,10 @@ struct AppRowView: View {
     @ViewBuilder
     private var appIconView: some View {
         let iconSize: CGFloat = 32
-        // Request 2x pixels on Retina so icons render sharp instead of blurry.
-        let backingScale = NSApp.keyWindow?.screen?.backingScaleFactor ?? 2
-        let pixelSize = Int(iconSize * backingScale)
+        // Always request 2x pixels: Apple's CDN serves arbitrary sizes, the
+        // extra resolution is harmless on 1x displays, and it avoids reading
+        // window/screen state during view construction.
+        let pixelSize = Int(iconSize * 2)
         if let url = resolvedIconURL(template: app.iconURL, size: pixelSize) {
             AsyncImage(url: url) { phase in
                 switch phase {
