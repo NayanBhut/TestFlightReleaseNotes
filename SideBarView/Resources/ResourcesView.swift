@@ -4,8 +4,8 @@
 //
 //  Batch C2: team-scoped Resources section in the sidebar (like AppDab's
 //  Resources group), shown below the apps list when the extended-info flag
-//  is on. Tapping a kind opens a sheet with the read-only list. Create /
-//  revoke is a follow-up.
+//  is on. Tapping a kind opens a sheet with the read-only list. Write
+//  lifecycle deferred to Batch D4.
 //
 
 import SwiftUI
