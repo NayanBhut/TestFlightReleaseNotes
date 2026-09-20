@@ -8,20 +8,16 @@
 import Foundation
 
 enum AppConfigs {
-    static var appListLimit: Int = 10
-    static var versionLimit: Int = 10
-    static var buildLimit: Int = 5
-    
-    static var appListSort: SortOption = .nameDescending
-    static var filterName: String = ""
-    static var filterState: AppStateFilter = .all
-    
+    static let appListLimit: Int = 10
+    static let versionLimit: Int = 10
+    static let buildLimit: Int = 5
+
     enum SortOption: String, CaseIterable {
         case nameAscending = "nameAscending"
         case nameDescending = "nameDescending"
         case stateAscending = "stateAscending"
         case stateDescending = "stateDescending"
-        
+
         var queryValue: String {
             switch self {
             case .nameAscending: return "name"
@@ -30,7 +26,7 @@ enum AppConfigs {
             case .stateDescending: return "-state"
             }
         }
-        
+
         var displayName: String {
             switch self {
             case .nameAscending: return "Name (A-Z)"
@@ -40,9 +36,9 @@ enum AppConfigs {
             }
         }
     }
-    
+
     enum AppStateFilter: String, CaseIterable {
-        case all = "All"
+        case all = "all"
         case accepted = "ACCEPTED"
         case developerRejected = "DEVELOPER_REJECTED"
         case developerRemovedFromSale = "DEVELOPER_REMOVED_FROM_SALE"
@@ -62,30 +58,15 @@ enum AppConfigs {
         case removedFromSale = "REMOVED_FROM_SALE"
         case waitingForExportCompliance = "WAITING_FOR_EXPORT_COMPLIANCE"
         case waitingForReview = "WAITING_FOR_REVIEW"
-        
+
+        /// The App Store Connect API value; nil means "no filter".
         var apiValue: String? {
-            switch self {
-            case .all: return nil
-            case .accepted: return "ACCEPTED"
-            case .developerRejected: return "DEVELOPER_REJECTED"
-            case .developerRemovedFromSale: return "DEVELOPER_REMOVED_FROM_SALE"
-            case .inReview: return "IN_REVIEW"
-            case .invalidBinary: return "INVALID_BINARY"
-            case .metadataRejected: return "METADATA_REJECTED"
-            case .notApplicable: return "NOT_APPLICABLE"
-            case .pendingAppleRelease: return "PENDING_APPLE_RELEASE"
-            case .pendingContract: return "PENDING_CONTRACT"
-            case .pendingDeveloperRelease: return "PENDING_DEVELOPER_RELEASE"
-            case .preorderReadyForSale: return "PREORDER_READY_FOR_SALE"
-            case .prepareForSubmission: return "PREPARE_FOR_SUBMISSION"
-            case .processingForAppStore: return "PROCESSING_FOR_APP_STORE"
-            case .readyForReview: return "READY_FOR_REVIEW"
-            case .readyForSale: return "READY_FOR_SALE"
-            case .rejected: return "REJECTED"
-            case .removedFromSale: return "REMOVED_FROM_SALE"
-            case .waitingForExportCompliance: return "WAITING_FOR_EXPORT_COMPLIANCE"
-            case .waitingForReview: return "WAITING_FOR_REVIEW"
-            }
+            self == .all ? nil : rawValue
+        }
+
+        /// Human-readable label for menus, e.g. "Waiting for Export Compliance".
+        var displayName: String {
+            self == .all ? "All States" : rawValue.replacingOccurrences(of: "_", with: " ").localizedCapitalized
         }
     }
 }

@@ -26,11 +26,10 @@ struct App_StoreApp: App {
 struct RootView: View {
     @EnvironmentObject var navigationManager: NavigationManager
     @EnvironmentObject var viewModel: SideBarViewModel
-    @EnvironmentObject var exportManager: ExportManager
     @State private var showOnboarding = true
 
     var body: some View {
-        ContentView(viewModel: viewModel, exportManager: exportManager)
+        ContentView(viewModel: viewModel)
             .environmentObject(navigationManager)
             .sheet(isPresented: $showOnboarding) {
                 OnBoardingView(isLoggedIn: $navigationManager.isLoggedIn)

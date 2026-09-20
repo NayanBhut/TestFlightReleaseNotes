@@ -14,8 +14,7 @@ struct SideBarView: View {
     @Binding var isAddNewTeam: Bool
     @Binding var isNewAccountAdded: Bool
     @State var showTeams = false
-    @State var showStateFilterMenu = false
-    
+
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
@@ -34,39 +33,41 @@ struct SideBarView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Add Team")
-                    
+
                     Button(action: {
-                        viewModel.getiOSApps()
+                        viewModel.retryApps()
                     }) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 16))
-                            .help("Refresh (Cmd+R)")
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut("r", modifiers: .command)
+                    .disabled(viewModel.isAppsLoading)
+                    .help("Refresh (Cmd+R)")
                 }
-                
+
                 teamSelector()
-                
+
                 // Search field
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
                         .font(.caption)
-                    
+
                     TextField("Search apps...", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
                         .font(.subheadline)
-                    
+
                     if !viewModel.searchText.isEmpty {
                         Button {
-                            viewModel.searchText = ""
+                            viewModel.clearSearch()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.secondary)
                                 .font(.caption)
                         }
                         .buttonStyle(.plain)
+                        .help("Clear search")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -77,25 +78,14 @@ struct SideBarView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                 )
-                
+
                 // State filter and sort side by side
                 HStack(spacing: 8) {
                     stateFilterDropdown()
                     sortToggle()
                 }
-                
-                // Team selector
-                // Refresh button
-                HStack {
-                    Button(action: {
-                        viewModel.getiOSApps()
-                    }) {
-                        Label("Refresh Apps", systemImage: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(viewModel.appsState.isLoading)
 
+                HStack {
                     Spacer()
 
                     if let total = viewModel.appMeta?.paging.total {
@@ -109,7 +99,7 @@ struct SideBarView: View {
             .background(Color(nsColor: .controlBackgroundColor))
 
             Divider()
-            
+
             // Apps list
             appList()
         }
@@ -221,7 +211,7 @@ struct SideBarView: View {
             }
         }
     }
-    
+
     private func stateFilterDropdown() -> some View {
         Menu {
             ForEach(AppConfigs.AppStateFilter.allCases, id: \.self) { state in
@@ -229,7 +219,7 @@ struct SideBarView: View {
                     viewModel.selectedStateFilter = state
                 }) {
                     HStack {
-                        Text(state.rawValue == "all" ? "All States" : state.rawValue.replacingOccurrences(of: "_", with: " "))
+                        Text(state.displayName)
                         if viewModel.selectedStateFilter == state {
                             Image(systemName: "checkmark")
                         }
@@ -240,7 +230,7 @@ struct SideBarView: View {
             HStack(spacing: 4) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.caption)
-                Text(viewModel.selectedStateFilter.rawValue == "all" ? "Filter: All" : "Filter: \(viewModel.selectedStateFilter.rawValue.replacingOccurrences(of: "_", with: " "))")
+                Text("Filter: \(viewModel.selectedStateFilter.displayName)")
                     .font(.caption)
                 Image(systemName: "chevron.down")
                     .font(.caption)
@@ -257,7 +247,7 @@ struct SideBarView: View {
         }
         .menuStyle(.borderlessButton)
     }
-    
+
     private func sortToggle() -> some View {
         Menu {
             ForEach(AppConfigs.SortOption.allCases, id: \.self) { option in
@@ -290,7 +280,7 @@ struct SideBarView: View {
         }
         .menuStyle(.borderlessButton)
     }
-    
+
     @ViewBuilder private func appList() -> some View {
         switch viewModel.appsState {
         case .idle, .loading:
@@ -303,27 +293,50 @@ struct SideBarView: View {
                     .foregroundColor(.secondary)
                 Spacer()
             }
-        case .loaded(let apps):
+        case .loaded:
             VStack(spacing: 0) {
-                List(viewModel.filteredApps, id: \.id) { app in
-                    AppRowView(app: app, isSelected: app.isSelected)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.setSelectedAppAndGetVersions(app: app)
+                if viewModel.filteredApps.isEmpty {
+                    // Loaded apps exist but none match the current search.
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 40))
+                            .foregroundColor(.secondary)
+                        Text("No Matching Apps")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                        Text("No apps match the current search")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Button("Clear Search") {
+                            viewModel.clearSearch()
                         }
-                }
-                .listStyle(.sidebar)
-                
-                if let nextCursor = viewModel.appMeta?.paging.nextCursor {
-                    VStack {
-                        Divider()
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .onAppear {
-                                Task {
-                                    await viewModel.loadMoreApps(cursor: nextCursor)
-                                }
+                        .buttonStyle(.bordered)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                } else {
+                    List(viewModel.filteredApps, id: \.id) { app in
+                        AppRowView(app: app, isSelected: app.isSelected)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                viewModel.setSelectedAppAndGetVersions(app: app)
                             }
+                    }
+                    .listStyle(.sidebar)
+
+                    if let nextCursor = viewModel.appMeta?.paging.nextCursor {
+                        VStack {
+                            Divider()
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .onAppear {
+                                    // The VM guards against duplicate
+                                    // concurrent page fetches.
+                                    viewModel.loadMoreApps(cursor: nextCursor)
+                                }
+                        }
                     }
                 }
             }
@@ -365,7 +378,7 @@ struct AppRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             appIconView
-            
+
             // Selection indicator
             RoundedRectangle(cornerRadius: 2)
                 .fill(isSelected ? Color.accentColor : Color.clear)
@@ -418,50 +431,54 @@ struct AppRowView: View {
                 .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
         )
     }
-    
+
+    @ViewBuilder
     private var appIconView: some View {
         let iconSize: CGFloat = 32
-        let iconSizeInt = Int(iconSize)
-        var iconUrlString = app.appStoreIcon?.iconAsset?.templateUrl ?? ""
-        iconUrlString = iconUrlString.replacingOccurrences(of: "{w}x{h}bb", with: "\(iconSizeInt)x\(iconSizeInt)bb")
-        iconUrlString = iconUrlString.replacingOccurrences(of: "{w}x{h}", with: "\(iconSizeInt)x\(iconSizeInt)")
-        iconUrlString = iconUrlString.replacingOccurrences(of: "{w}", with: "\(iconSizeInt)")
-        iconUrlString = iconUrlString.replacingOccurrences(of: "{h}", with: "\(iconSizeInt)")
-        iconUrlString = iconUrlString.replacingOccurrences(of: "{f}", with: "png")
-        if !iconUrlString.isEmpty, let url = URL(string: iconUrlString) {
-            return AnyView(
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: iconSize, height: iconSize)
-                            .cornerRadius(6)
-                    case .failure:
-                        Image(systemName: "app.fill")
-                            .font(.system(size: 28, weight: .medium))
-                            .foregroundColor(.gray)
-                            .frame(width: iconSize, height: iconSize)
-                    case .empty:
-                        ProgressView()
-                            .frame(width: iconSize, height: iconSize)
-                    }
+        if let url = resolvedIconURL(template: app.iconURL, size: Int(iconSize)) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: iconSize, height: iconSize)
+                        .cornerRadius(6)
+                case .failure:
+                    placeholderIcon(size: iconSize)
+                case .empty:
+                    ProgressView()
+                        .frame(width: iconSize, height: iconSize)
                 }
-            )
+            }
+        } else {
+            placeholderIcon(size: iconSize)
         }
-        return AnyView(
-            Image(systemName: "app.fill")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundColor(.gray)
-                .frame(width: iconSize, height: iconSize)
-        )
     }
-    
+
+    private func placeholderIcon(size: CGFloat) -> some View {
+        Image(systemName: "app.fill")
+            .font(.system(size: size - 4, weight: .medium))
+            .foregroundColor(.gray)
+            .frame(width: size, height: size)
+    }
+
+    /// Resolves an App Store Connect icon template URL (e.g.
+    /// `{w}x{h}bb.{f}`) to a concrete size and format.
+    private func resolvedIconURL(template: String?, size: Int) -> URL? {
+        guard var template = template, !template.isEmpty else { return nil }
+        template = template.replacingOccurrences(of: "{w}x{h}bb", with: "\(size)x\(size)bb")
+        template = template.replacingOccurrences(of: "{w}x{h}", with: "\(size)x\(size)")
+        template = template.replacingOccurrences(of: "{w}", with: "\(size)")
+        template = template.replacingOccurrences(of: "{h}", with: "\(size)")
+        template = template.replacingOccurrences(of: "{f}", with: "png")
+        return URL(string: template)
+    }
+
     private func getStateColor(_ state: String) -> Color {
         switch state.uppercased() {
         case "READY_FOR_SALE":
             return .green
-        case "PENDING_DEVELOPER_RELEASE":
+        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE":
             return .orange
         case "IN_REVIEW":
             return .blue
@@ -477,8 +494,6 @@ struct AppRowView: View {
             return .red.opacity(0.7)
         case "DEVELOPER_REJECTED", "DEVELOPER_REMOVED_FROM_SALE", "REMOVED_FROM_SALE":
             return .gray
-        case "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "PENDING_DEVELOPER_RELEASE":
-            return .orange
         case "WAITING_FOR_EXPORT_COMPLIANCE":
             return .cyan
         default:

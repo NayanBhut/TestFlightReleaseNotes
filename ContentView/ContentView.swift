@@ -8,19 +8,18 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject var viewModel: SideBarViewModel
+    @ObservedObject var viewModel: SideBarViewModel
     @StateObject var detailViewModel: DetailViewModel
     @EnvironmentObject var exportManager: ExportManager
     @EnvironmentObject var navigationManager: NavigationManager
     @State var showAlertView: Bool = false
     @State var isNewAccountAdded: Bool = false
-    
-    init(viewModel: SideBarViewModel, exportManager: ExportManager) {
-        _viewModel = StateObject(wrappedValue: viewModel)
-        let sidebarVM = viewModel
-        _detailViewModel = StateObject(wrappedValue: DetailViewModel(sidebarViewModel: sidebarVM))
+
+    init(viewModel: SideBarViewModel) {
+        self.viewModel = viewModel
+        _detailViewModel = StateObject(wrappedValue: DetailViewModel(sidebarViewModel: viewModel))
     }
-    
+
     var body: some View {
         ZStack {
             NavigationSplitView {
@@ -33,14 +32,14 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            
+
             if showAlertView {
                 Color.black.opacity(0.8)
                     .edgesIgnoringSafeArea(.all)
                     .onTapGesture {
                         showAlertView = false
                     }
-                
+
                 OnBoardingView(isLoggedIn: $isNewAccountAdded)
                     .frame(width: 500)
                     .background(Color.clear)
@@ -57,7 +56,9 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(viewModel: SideBarViewModel(), exportManager: ExportManager())
+    let viewModel = SideBarViewModel()
+    return ContentView(viewModel: viewModel)
         .environmentObject(NavigationManager())
         .environmentObject(ExportManager())
+        .environmentObject(viewModel)
 }
