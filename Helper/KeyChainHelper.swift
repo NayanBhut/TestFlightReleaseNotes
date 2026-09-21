@@ -5,6 +5,7 @@
 //  Created by Nayan Bhut on 16/05/25.
 //
 
+import Combine
 import Foundation
 import Security
 import OSLog
@@ -18,7 +19,7 @@ struct Credential: Codable {
     let keyID: String
 }
 
-final class CredentialStorage {
+final class CredentialStorage: ObservableObject {
     static var shared: CredentialStorage = .init()
 
     /// Scopes every keychain item to this service so credentials from
@@ -26,8 +27,16 @@ final class CredentialStorage {
     private static let service = "com.appstore.release-notes"
     private static let accountPrefix = "App_Store_Connect_API_"
 
+    /// In-memory mirror of the keychain's team names. Published so SwiftUI
+    /// views re-render when teams are added/removed (a bare
+    /// `CredentialStorage.shared.getTeams` read inside body is an
+    /// untracked dependency), and cached so body evaluations never hit
+    /// the keychain. Refreshed by the membership-changing mutations below.
+    @Published private(set) var teams: [String] = []
+
     private init() {
         migrateLegacyUnscopedItems()
+        refreshTeams()
         if selectedTeam == nil {
             restoreDefaultTeam()
         }
@@ -114,8 +123,15 @@ final class CredentialStorage {
         return result as? Data
     }
 
+    /// Cached team names (kept for existing call sites). No keychain I/O.
     var getTeams: [String] {
-        return getAllKeysFromKeychain()
+        teams
+    }
+
+    /// Re-reads the keychain's team list into the published cache. Called
+    /// only on membership-changing mutations (init/migration/save/delete).
+    private func refreshTeams() {
+        teams = getAllKeysFromKeychain()
             .map { $0.replacingOccurrences(of: Self.accountPrefix, with: "") }
     }
 
@@ -150,6 +166,7 @@ final class CredentialStorage {
                 keychainLogger.error("Keychain write failed for '\(teamName, privacy: .public)' (OSStatus \(status))")
                 return false
             }
+            refreshTeams()
             return true
         } catch {
             keychainLogger.error("Credential encoding failed for '\(teamName, privacy: .public)'")
@@ -190,10 +207,13 @@ final class CredentialStorage {
     func deleteCredential(for key: String) -> Bool {
         // errSecItemNotFound → false preserves the old "already gone" contract.
         let deleted = SecItemDelete(Self.baseQuery(forKey: key) as CFDictionary) == errSecSuccess
-        // Drop the in-memory credential too: otherwise a stale selectedTeam
-        // keeps signing API requests after its keychain entry is gone.
-        if deleted, selectedTeam?.key == key {
-            selectedTeam = nil
+        if deleted {
+            // Drop the in-memory credential too: otherwise a stale selectedTeam
+            // keeps signing API requests after its keychain entry is gone.
+            if selectedTeam?.key == key {
+                selectedTeam = nil
+            }
+            refreshTeams()
         }
         return deleted
     }

@@ -11,6 +11,12 @@ struct DetailView: View {
     @ObservedObject var viewModel: DetailViewModel
     @StateObject private var betaViewModel = BetaViewModel()
     @StateObject private var reviewsViewModel = ReviewsViewModel()
+    /// Observed (published) team list — the placeholder reads it, so it
+    /// must update reactively when the first team is added.
+    @ObservedObject private var credentialStorage = CredentialStorage.shared
+    /// Opens the Add Team flow. The overlay lives in ContentView, so it
+    /// injects this; previews omit it and the button simply hides.
+    var onAddTeam: (() -> Void)? = nil
     @State private var selectedTab: DetailTab = .builds
     /// Batch C flag: one switch that shows/hides the App Info and Reviews
     /// tabs (and the sidebar's Resources section — same UserDefaults key).
@@ -44,8 +50,9 @@ struct DetailView: View {
         visibleTabs.contains(selectedTab) ? selectedTab : .builds
     }
 
-    init(viewModel: DetailViewModel) {
+    init(viewModel: DetailViewModel, onAddTeam: (() -> Void)? = nil) {
         self.viewModel = viewModel
+        self.onAddTeam = onAddTeam
     }
 
     var body: some View {
@@ -261,12 +268,23 @@ struct DetailView: View {
                 Text("No App Selected")
                     .font(.title3)
                     .fontWeight(.medium)
-                Text(CredentialStorage.shared.getTeams.isEmpty
-                    ? "Add a team to get started"
-                    : "Select an app from the sidebar to view versions and builds")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
+                if credentialStorage.teams.isEmpty {
+                    // Instructional text alone strands the user — offer the
+                    // same Add Team entry point the sidebar has.
+                    Text("Add a team to get started")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    if let onAddTeam {
+                        Button("Add Team", action: onAddTeam)
+                            .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    Text("Select an app from the sidebar to view versions and builds")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)

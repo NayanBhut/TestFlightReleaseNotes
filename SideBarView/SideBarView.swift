@@ -15,7 +15,10 @@ struct SideBarView: View {
     /// previous team's resources.
     @StateObject private var resourcesViewModel = ResourcesViewModel()
     @Environment(\.colorScheme) var colorScheme
-    @EnvironmentObject var navigationManager: NavigationManager
+    /// Observed (published) team list — a bare CredentialStorage.shared
+    /// read in body is an untracked dependency: the Add Team buttons and
+    /// empty-state copy would go stale after the first team is added.
+    @ObservedObject private var credentialStorage = CredentialStorage.shared
     @Binding var isAddNewTeam: Bool
     @Binding var isNewAccountAdded: Bool
     @State var showTeams = false
@@ -138,28 +141,20 @@ struct SideBarView: View {
             }
         }
         .onAppear {
+            // CredentialStorage.init already restored the default team; this
+            // extra attempt covers mid-session edge cases (keychain wiped
+            // externally). Login state derives from the published team list —
+            // there is no flag left to reconcile here.
             if CredentialStorage.shared.selectedTeam == nil {
-                // restoreDefaultTeam() returns true on SUCCESS (a team was
-                // restored) — log out only when nothing could be restored.
-                if !CredentialStorage.shared.restoreDefaultTeam() {
-                    navigationManager.isLoggedIn = false
-                }
+                CredentialStorage.shared.restoreDefaultTeam()
             }
             viewModel.getiOSApps()
         }
+        // A newly added team (first or subsequent) selects itself in
+        // saveLoginState; refresh the list for it. Launch is covered by
+        // onAppear, deletions by deleteTeam.
         .onChange(of: isNewAccountAdded) { oldValue, newValue in
             if newValue {
-                viewModel.getiOSApps()
-            }
-        }
-        .onChange(of: navigationManager.isLoggedIn) { _, isLoggedIn in
-            // First login happens under this view: onAppear already ran
-            // (with an empty keychain) before the team was saved, so a
-            // fresh login must select the team and fetch explicitly.
-            if isLoggedIn {
-                if CredentialStorage.shared.selectedTeam == nil {
-                    CredentialStorage.shared.restoreDefaultTeam()
-                }
                 viewModel.getiOSApps()
             }
         }
@@ -178,10 +173,12 @@ struct SideBarView: View {
     private func deleteTeam(_ team: String) {
         let wasSelected = CredentialStorage.shared.selectedTeam?.key == team
         CredentialStorage.shared.deleteCredential(for: team)
-        if CredentialStorage.shared.getTeams.isEmpty {
+        // deleteCredential refreshed the published list, so the observed
+        // cache already reflects the deletion. NavigationManager.isLoggedIn
+        // derives from the same list — nothing to signal manually.
+        if credentialStorage.teams.isEmpty {
             viewModel.clearOnLogout()
             resourcesViewModel.resetForTeamSwitch()
-            navigationManager.isLoggedIn = false
         } else if wasSelected {
             CredentialStorage.shared.restoreDefaultTeam()
             viewModel.updateTeam()
@@ -224,7 +221,7 @@ struct SideBarView: View {
 
             if showTeams {
                 VStack(spacing: 4) {
-                    ForEach(CredentialStorage.shared.getTeams, id: \.self) { team in
+                    ForEach(credentialStorage.teams, id: \.self) { team in
                         HStack {
                             Text(team)
                                 .font(.subheadline)
@@ -421,18 +418,28 @@ struct SideBarView: View {
                     Image(systemName: "app.dashed")
                         .font(.system(size: 48))
                         .foregroundColor(.secondary)
-                    Text("No Apps Found")
-                        .font(.title3)
-                        .fontWeight(.medium)
-                    Text("No iOS apps are available for this team")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    if CredentialStorage.shared.getTeams.isEmpty {
+                    // Branch the copy: with no teams at all, "no apps for
+                    // this team" is misleading — the real problem is that
+                    // no team exists yet.
+                    if credentialStorage.teams.isEmpty {
+                        Text("No Teams Yet")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                        Text("Add a team to load its apps")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                         Button("Add Team") {
                             isAddNewTeam = true
                         }
                         .buttonStyle(.borderedProminent)
                         .padding(.vertical, 4)
+                    } else {
+                        Text("No Apps Found")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                        Text("No iOS apps are available for this team")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
                     Button("Refresh") {
                         viewModel.retryApps()
@@ -448,8 +455,9 @@ struct SideBarView: View {
                 message: message,
                 retryTitle: "Retry",
                 onRetry: { viewModel.retryApps() },
-                extraButtonTitle: CredentialStorage.shared.getTeams.isEmpty ? "Add Team" : "",
-                extraButtonAction: { isAddNewTeam = true }
+                extraButton: credentialStorage.teams.isEmpty
+                    ? (title: "Add Team", action: { isAddNewTeam = true })
+                    : nil
             )
         }
     }

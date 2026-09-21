@@ -26,7 +26,7 @@ struct ContentView: View {
                     .environmentObject(navigationManager)
             } detail: {
                 VStack(alignment: .center){
-                    DetailView(viewModel: detailViewModel)
+                    DetailView(viewModel: detailViewModel, onAddTeam: { showAlertView = true })
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
