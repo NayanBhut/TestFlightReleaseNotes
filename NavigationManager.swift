@@ -6,9 +6,32 @@
 //
 
 import SwiftUI
+import Combine
 
+/// Login state is DERIVED from the keychain: CredentialStorage's published
+/// team list is the single source of truth. There is no persisted
+/// "isLoggedIn" flag anymore — a wiped keychain can never leave a stale
+/// logged-in state behind, and adding/removing the last team flips this
+/// automatically.
 class NavigationManager: ObservableObject {
-    @Published var isLoggedIn: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKeys.isLoggedIn)
+    @Published private(set) var isLoggedIn: Bool = !CredentialStorage.shared.teams.isEmpty
+
+    private var teamsCancellable: AnyCancellable?
+
+    init() {
+        // Re-derive whenever the team list changes. Delivered on main so
+        // the @Published mutation stays co-ordinated with view updates.
+        teamsCancellable = CredentialStorage.shared.$teams
+            .receive(on: DispatchQueue.main)
+            .map { !$0.isEmpty }
+            .sink { [weak self] loggedIn in
+                guard let self, self.isLoggedIn != loggedIn else { return }
+                self.isLoggedIn = loggedIn
+            }
+        // One-time cleanup: earlier versions persisted this flag; the
+        // keychain is now the only source of truth.
+        UserDefaults.standard.removeObject(forKey: "isLoggedIn")
+    }
 }
 
 // MARK: - Unified view state
@@ -54,7 +77,6 @@ extension ViewState: Equatable where T: Equatable {
 }
 
 struct UserDefaultsKeys {
-    static let isLoggedIn = "isLoggedIn"
     /// Batch C flag: one switch that shows/hides the App Info tab, the
     /// Reviews tab and the Resources sidebar section. Read via @AppStorage
     /// so every view observes UserDefaults and stays in sync.
@@ -71,11 +93,11 @@ struct ErrorRetryView: View {
     let message: String
     let retryTitle: String
     let onRetry: () -> Void
-    /// An optional action shown between the retry button and the
-    /// bottom spacer — e.g. "Add Team" so it sits next to Retry
-    /// instead of being orphaned at the bottom.
-    var extraButtonTitle: String = ""
-    var extraButtonAction: (() -> Void)? = nil
+    /// An optional secondary action shown between the retry button and
+    /// the bottom spacer (e.g. "Add Team") so it sits next to Retry
+    /// instead of being orphaned at the bottom. One optional value so
+    /// the button is either fully configured or absent.
+    var extraButton: (title: String, action: () -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12) {
@@ -92,8 +114,8 @@ struct ErrorRetryView: View {
                 .padding(.horizontal)
             Button(retryTitle, action: onRetry)
                 .buttonStyle(.borderedProminent)
-            if let extraButtonAction = extraButtonAction, !extraButtonTitle.isEmpty {
-                Button(extraButtonTitle, action: extraButtonAction)
+            if let extraButton {
+                Button(extraButton.title, action: extraButton.action)
                     .buttonStyle(.bordered)
                     .padding(.vertical, 2)
             }

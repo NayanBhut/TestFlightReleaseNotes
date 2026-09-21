@@ -8,7 +8,10 @@
 import SwiftUI
 
 struct OnBoardingView: View {
-    @ObservedObject var viewModel = OnBoardingViewModel()
+    // @StateObject (not @ObservedObject): the view owns this object, so a
+    // parent re-creating the view struct must not wipe the partially
+    // entered form (team name, issuer ID, private key).
+    @StateObject var viewModel = OnBoardingViewModel()
     @EnvironmentObject var navigationManager: NavigationManager
     @Binding var isLoggedIn: Bool
     @Binding var isShowing: Bool
@@ -34,7 +37,9 @@ struct OnBoardingView: View {
                     isShowing = false
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
+                        // Semantic sizing so the symbol follows Dynamic
+                        // Type / accessibility settings, not a fixed size.
+                        .imageScale(.large)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -122,7 +127,7 @@ struct OnBoardingView: View {
 
                 Button("Continue") {
                     viewModel.getAllApps(completion: { isSuccess in
-                        if isSuccess, viewModel.saveLoginState(isLoggedIn: true) {
+                        if isSuccess, viewModel.saveLoginState() {
                             isLoggedIn = true
                         }
                     })
