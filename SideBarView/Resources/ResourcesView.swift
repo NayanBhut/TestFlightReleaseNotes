@@ -7,13 +7,19 @@
 //  is on. Tapping a kind opens a sheet with the read-only list. Write
 //  lifecycle deferred to Batch D4.
 //
+//  Batch F (#6): per-kind search field in the list sheet (local filter),
+//  "No matches" state, and a filtering-aware row count in the header.
+//
+//  Batch F fix: the sheet window is bounded to the screen and resizable.
+//
 
 import SwiftUI
+import AppKit
 
 /// Sidebar section listing the five team-scoped resource kinds.
 struct ResourcesSectionView: View {
     @ObservedObject var viewModel: ResourcesViewModel
-    @State private var isExpanded = false
+    @State private var isExpanded = true
     @State private var selectedKind: ResourcesViewModel.Kind?
 
     var body: some View {
@@ -77,10 +83,22 @@ struct ResourceListContentView: View {
             Divider()
             content
         }
-        .frame(minWidth: 480, minHeight: 420)
+        // min→max ranges make the sheet window resizable; the screen-
+        // derived height cap keeps it fully on screen. Without a cap the
+        // ScrollView's ideal height sizes the window past the bottom edge
+        // (Load-more footer unreachable; scrolling just moves content
+        // inside the off-screen part of the window).
+        .frame(minWidth: 480, idealWidth: 540,
+               minHeight: 420, idealHeight: 560, maxHeight: maxSheetHeight)
         .onAppear {
             viewModel.load(kind)
         }
+    }
+
+    /// Screen fit minus a margin for the title bar / Dock rounding;
+    /// floored so the cap can never dip below minHeight.
+    private var maxSheetHeight: CGFloat {
+        max(460, (NSScreen.main?.visibleFrame.height ?? 1_000) - 120)
     }
 
     // MARK: - Header
@@ -92,9 +110,17 @@ struct ResourceListContentView: View {
                 .fontWeight(.semibold)
             Spacer()
             if let total = viewModel.totals[kind] {
-                Text("\(total) total")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // Local search only covers loaded rows — show "N of M loaded"
+                // while filtering so the count can't read as a server total.
+                if viewModel.hasActiveSearch(kind) {
+                    Text("\(viewModel.filteredCount(for: kind)) of \(viewModel.loadedCount(for: kind)) loaded")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("\(total) total")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             Button(action: { viewModel.retry(kind) }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
@@ -159,36 +185,111 @@ struct ResourceListContentView: View {
                 viewModel.retry(kind)
             }
         case .loaded:
-            ScrollView {
-                VStack(spacing: 0) {
-                    rows
-                    paginationFooter
+            VStack(spacing: 0) {
+                searchField
+                Divider()
+                if viewModel.hasActiveSearch(kind), viewModel.filteredCount(for: kind) == 0 {
+                    noMatchesView
+                } else {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            rows
+                        }
+                        .padding(12)
+                    }
                 }
-                .padding(12)
+                // Pinned outside the ScrollView (same as the Builds tab's
+                // "Load More Builds"): an inline footer scrolls away with
+                // the rows, so Load-more seemed to disappear after
+                // scrolling.
+                paginationFooter
             }
         }
+    }
+
+    // MARK: - Search (Batch F #6)
+
+    /// Same capsule style as the sidebar's app search field.
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .accessibilityHidden(true)
+
+            TextField("Search \(kind.displayName.lowercased())", text: viewModel.searchBinding(for: kind))
+                .textFieldStyle(.plain)
+                .font(.subheadline)
+
+            if !viewModel.searchText(for: kind).isEmpty {
+                Button {
+                    viewModel.searchBinding(for: kind).wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+                .help("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .textBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// Shown when loaded rows exist but none match the active query.
+    private var noMatchesView: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary)
+            Text("No Matches")
+                .font(.title3)
+                .fontWeight(.medium)
+            Text("No \(kind.displayName.lowercased()) match \"\(viewModel.searchText(for: kind))\"")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Clear Search") {
+                viewModel.searchBinding(for: kind).wrappedValue = ""
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder private var rows: some View {
         switch kind {
         case .devices:
-            ForEach(viewModel.devicesState.loadedValue ?? [], id: \.id) { device in
+            ForEach(viewModel.filteredDevices, id: \.id) { device in
                 DeviceRow(device: device)
             }
         case .certificates:
-            ForEach(viewModel.certificatesState.loadedValue ?? [], id: \.id) { certificate in
+            ForEach(viewModel.filteredCertificates, id: \.id) { certificate in
                 CertificateRow(certificate: certificate)
             }
         case .bundleIds:
-            ForEach(viewModel.bundleIdsState.loadedValue ?? [], id: \.id) { bundleId in
+            ForEach(viewModel.filteredBundleIds, id: \.id) { bundleId in
                 BundleIdRow(bundleId: bundleId)
             }
         case .profiles:
-            ForEach(viewModel.profilesState.loadedValue ?? [], id: \.id) { profile in
+            ForEach(viewModel.filteredProfiles, id: \.id) { profile in
                 ProfileRow(profile: profile)
             }
         case .users:
-            ForEach(viewModel.usersState.loadedValue ?? [], id: \.id) { user in
+            ForEach(viewModel.filteredUsers, id: \.id) { user in
                 UserRow(user: user)
             }
         }
@@ -207,24 +308,29 @@ struct ResourceListContentView: View {
 
     @ViewBuilder private var paginationFooter: some View {
         if let nextCursor = viewModel.nextCursors[kind] {
-            HStack {
-                Spacer()
-                if viewModel.paginationFailedKinds.contains(kind) {
-                    Button("Couldn't load more — Retry") {
-                        viewModel.loadMore(kind, cursor: nextCursor)
+            VStack(spacing: 0) {
+                Divider()
+                HStack {
+                    Spacer()
+                    if viewModel.paginationFailedKinds.contains(kind) {
+                        Button("Couldn't load more — Retry") {
+                            viewModel.loadMore(kind, cursor: nextCursor)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    } else {
+                        Button("Load more") {
+                            viewModel.loadMore(kind, cursor: nextCursor)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                } else {
-                    Button("Load more") {
-                        viewModel.loadMore(kind, cursor: nextCursor)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    Spacer()
                 }
-                Spacer()
+                .padding(.vertical, 8)
             }
-            .padding(.vertical, 8)
+            // Chrome background so rows never peek through behind the pinned bar.
+            .background(Color(nsColor: .controlBackgroundColor))
         }
     }
 }
