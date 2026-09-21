@@ -40,12 +40,15 @@ struct LoadingStateView: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
+        VStack(spacing: 12) {
+            Spacer()
+            ProgressView().scaleEffect(1.1)
             Text(text)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundColor(.secondary)
+            Spacer()
         }
+        .frame(maxWidth: .infinity)
     }
 }
 

@@ -50,6 +50,14 @@ class DetailViewModel: ObservableObject {
     @Published private(set) var updatingSaveKeys: Set<String> = []
     /// A failed release-note save, surfaced to the UI with a Retry action.
     @Published var saveError: BuildSaveError?
+    /// Last-saved release notes per locale, keyed "buildId|locale".
+    /// Unlike the model's `whatsNew` (which holds the live draft once the
+    /// user types), this snapshot only moves on load and on successful
+    /// save — so the row's diff baseline and hasChanges can never be
+    /// laundered into the draft by a locale switch. Plain var (not
+    /// @Published): every mutation is paired with a buildsState write,
+    /// which is what drives view updates.
+    private(set) var savedNotes: [String: String] = [:]
     @Published var expireTogglingBuildId: String?
     /// Toast event with identity: consecutive identical messages still
     /// re-fire onChange (which only triggers on *value change*). The view
@@ -167,6 +175,9 @@ class DetailViewModel: ObservableObject {
                 self.buildsState = .idle
                 self.nextPageCursor = nil
                 self.meta = nil
+                // Saved-notes baselines belong to the previous app's
+                // builds; the next fetch re-captures them.
+                self.savedNotes.removeAll()
                 // Batch C1: app switch clears the App Info panel cleanly —
                 // the App Info tab refetches on appear for the new app.
                 self.appInfoFetchTask?.cancel()
@@ -267,6 +278,17 @@ extension DetailViewModel {
             // apply results for the wrong app/version.
             guard !Task.isCancelled, generation == nil || generation == buildsFetchGeneration else { return }
             selectedVersion = version
+
+            // Snapshot last-saved notes for the diff baseline. Temp drafts
+            // (unsaved, created by typing) are skipped: recording them
+            // would launder the draft into the "saved" baseline.
+            for build in model.data {
+                for loc in build.betaBuildLocalizations {
+                    guard let locale = loc.locale,
+                          !loc.id.hasPrefix(Self.tempLocalizationPrefix) else { continue }
+                    savedNotes["\(build.id)|\(locale)"] = loc.whatsNew ?? ""
+                }
+            }
 
             let merged: [BuildsModel]
             if isPaginating, let existing = buildsState.loadedValue {
@@ -484,6 +506,12 @@ extension DetailViewModel {
         buildsState = .loaded(builds)
     }
 
+    /// The last-saved notes for a build locale ("" when nothing is saved
+    /// on the server yet, e.g. a freshly added draft locale).
+    func savedWhatsNew(for buildId: String, locale: String) -> String {
+        savedNotes["\(buildId)|\(locale)"] ?? ""
+    }
+
     func getWhatsNew(for buildId: String, locale: String) -> String {
         guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }),
               let localization = build.betaBuildLocalizations.first(where: { $0.locale == locale }) else {
@@ -507,8 +535,94 @@ extension DetailViewModel {
         createOrUpdate(buildId: buildId, buildLocalization: localization, localization: localization.whatsNew ?? "", locale: locale)
     }
 
-    func isBuildUpdating(_ buildId: String) -> Bool {
+    /// Per-locale completeness matrix for the selected version.
+  /// Returns (locale, [buildId: hasNotes]) for every supported locale.
+  /// Used by the Locales popover in BuildDetailsView.
+  func localeCompleteness() -> [(locale: String, builds: [(buildId: String, hasNotes: Bool)])] {
+    guard case .loaded(let builds) = buildsState else { return [] }
+    guard let version = selectedVersion else { return [] }
+    let buildIds = builds.map { $0.id }
+    var result: [(String, [(String, Bool)])] = []
+    for locale in BetaLocalizationLocales.supported {
+      let buildStatus = buildIds.map { buildId in
+        let hasNotes = builds.contains { $0.id == buildId &&
+          $0.betaBuildLocalizations.contains { $0.locale == locale && !($0.whatsNew?.isEmpty ?? true) }
+        }
+        return (buildId, hasNotes)
+      }
+      result.append((locale, buildStatus))
+    }
+    return result
+  }
+
+  /// Count of locales that have notes on every build.
+  func completeLocaleCount() -> (complete: Int, total: Int) {
+    let completeness = localeCompleteness()
+    guard !completeness.isEmpty else { return (0, 0) }
+    let total = completeness.count
+    let complete = completeness.filter { _, builds in
+      !builds.contains(where: { !$0.hasNotes })
+    }.count
+    return (complete, total)
+  }
+
+  func isBuildUpdating(_ buildId: String) -> Bool {
         return updatingSaveKeys.contains { $0.hasPrefix("\(buildId)|") }
+    }
+
+    /// Removes a locale's release notes from a build. A never-saved draft
+    /// (temp id) is dropped locally; a server-persisted localization is
+    /// deleted via DELETE /v1/betaBuildLocalizations/{id}.
+    func removeLocale(buildId: String, locale: String) {
+        guard case .loaded(var builds) = buildsState,
+              let buildIndex = builds.firstIndex(where: { $0.id == buildId }),
+              let locIndex = builds[buildIndex].betaBuildLocalizations.firstIndex(where: { $0.locale == locale })
+        else { return }
+        let localization = builds[buildIndex].betaBuildLocalizations[locIndex]
+        let saveKey = "\(buildId)|\(locale)"
+
+        if localization.id.hasPrefix(Self.tempLocalizationPrefix) {
+            builds[buildIndex].betaBuildLocalizations.remove(at: locIndex)
+            buildsState = .loaded(builds)
+            savedNotes.removeValue(forKey: saveKey)
+            showToast("Removed \(locale) draft")
+            return
+        }
+
+        guard !updatingSaveKeys.contains(saveKey) else {
+            showToast("A save is already in progress for this build.")
+            return
+        }
+        updatingSaveKeys.insert(saveKey)
+        Task {
+            await deleteBuildLocalization(buildId: buildId, localizationId: localization.id, locale: locale)
+        }
+    }
+
+    private func deleteBuildLocalization(buildId: String, localizationId: String, locale: String) async {
+        defer { updatingSaveKeys.remove("\(buildId)|\(locale)") }
+
+        guard let request = APIClient.shared.getRequest(api: .delete(name: .postReleaseNote, path: localizationId), apiVersion: .v1) else {
+            saveError = BuildSaveError(buildId: buildId, locale: locale, message: "Couldn't build the delete request.", kind: .delete)
+            return
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            // Re-locate the build after the await: the list may have
+            // changed (refresh, pagination) since the delete started.
+            guard case .loaded(var builds) = buildsState,
+                  let buildIndex = builds.firstIndex(where: { $0.id == buildId }),
+                  let locIndex = builds[buildIndex].betaBuildLocalizations.firstIndex(where: { $0.id == localizationId })
+            else { return }
+            builds[buildIndex].betaBuildLocalizations.remove(at: locIndex)
+            buildsState = .loaded(builds)
+            savedNotes.removeValue(forKey: "\(buildId)|\(locale)")
+            showToast("Removed \(locale) notes")
+        } catch {
+            detailLogger.error("Failed to delete localization: \(error.localizedDescription)")
+            saveError = BuildSaveError(buildId: buildId, locale: locale, message: friendlySaveMessage(for: error), kind: .delete)
+        }
     }
 }
 
@@ -597,6 +711,8 @@ extension DetailViewModel {
                 )
                 builds[buildIndex].betaBuildLocalizations[index] = buildLocalizationsModel
                 buildsState = .loaded(builds)
+                // The server's response is the new saved baseline for diff.
+                savedNotes["\(buildId)|\(locale)"] = model.whatsNew ?? ""
             }
         } catch {
             detailLogger.error("Failed to update localization: \(error.localizedDescription)")
@@ -648,6 +764,8 @@ extension DetailViewModel {
                 currentBuilds[buildIndex].betaBuildLocalizations.append(buildLocalizationsModel)
             }
             buildsState = .loaded(currentBuilds)
+            // The server's response is the new saved baseline for diff.
+            savedNotes["\(buildId)|\(locale)"] = model.whatsNew ?? ""
         } catch {
             detailLogger.error("Failed to create localization: \(error.localizedDescription)")
             saveError = BuildSaveError(buildId: buildId, locale: locale, message: friendlySaveMessage(for: error))
@@ -728,9 +846,17 @@ extension DetailViewModel {
 
 /// A failed release-note save, surfaced to the UI with a Retry action.
 struct BuildSaveError: Identifiable, Equatable {
+    /// Whether the failed operation was a save (POST/PATCH) or a
+    /// locale removal (DELETE) — Retry must repeat the same operation.
+    enum Kind: Equatable {
+        case save
+        case delete
+    }
+
     let buildId: String
     let locale: String
     let message: String
+    var kind: Kind = .save
 
     var id: String { "\(buildId)-\(locale)" }
 }
