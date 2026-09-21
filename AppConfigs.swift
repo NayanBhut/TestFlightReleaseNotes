@@ -16,6 +16,14 @@ enum AppConfigs {
     /// Batch C: page size for team-scoped resources (devices, certificates,
     /// bundle IDs, profiles, users).
     static let resourceLimit: Int = 50
+    /// Batch H: menu bar build-status poller. One small filtered request
+    /// (filter[processingState]=PROCESSING) per interval — 120s keeps it
+    /// lightweight against API rate limits while staying timely enough
+    /// for build processing (typically minutes).
+    static let buildStatusPollInterval: TimeInterval = 120
+    /// Batch H: cap on PROCESSING builds per poll; processing builds are a
+    /// handful at a time, so one page always covers it.
+    static let buildStatusPollLimit: Int = 50
 
     enum SortOption: String, CaseIterable {
         case nameAscending = "nameAscending"
