@@ -25,13 +25,13 @@ struct BetaGroupView: View {
             header
             Divider()
             if selectedApp == nil {
-                emptyState(icon: "person.3", title: "No App Selected",
-                           subtitle: "Select an app from the sidebar to view its TestFlight groups")
+                EmptyStateView(icon: "person.3", title: "No App Selected",
+                               subtitle: "Select an app from the sidebar to view its TestFlight groups")
             } else if !betaViewModel.isGroupsLoaded && betaViewModel.viewState == .betaGroupsLoading {
-                loadingState(text: "Loading beta groups...")
+                LoadingStateView(text: "Loading beta groups...")
             } else if betaViewModel.groups.isEmpty {
-                emptyState(icon: "person.3", title: "No Beta Groups",
-                           subtitle: "This app has no TestFlight groups yet")
+                EmptyStateView(icon: "person.3", title: "No Beta Groups",
+                               subtitle: "This app has no TestFlight groups yet")
             } else {
                 HSplitView {
                     groupsList
@@ -193,8 +193,8 @@ struct BetaGroupView: View {
                 .padding(.bottom, 12)
             }
         } else {
-            emptyState(icon: "person.2", title: "No Group Selected",
-                       subtitle: "Select a group on the left to view its testers and builds")
+            EmptyStateView(icon: "person.2", title: "No Group Selected",
+                           subtitle: "Select a group on the left to view its testers and builds")
         }
     }
 
@@ -241,7 +241,7 @@ struct BetaGroupView: View {
             }
 
             if !betaViewModel.isTestersLoaded && betaViewModel.viewState == .betaTestersLoading {
-                loadingState(text: "Loading testers...")
+                LoadingStateView(text: "Loading testers...")
             } else if betaViewModel.testers.isEmpty {
                 Text("No testers in this group yet. Invite one to get started.")
                     .font(.subheadline)
@@ -565,35 +565,6 @@ struct BetaGroupView: View {
         case "NO_SUBMISSION": return .secondary
         default: return .secondary
         }
-    }
-
-    // MARK: - Shared States
-
-    private func loadingState(text: String) -> some View {
-        VStack(spacing: 12) {
-            Spacer()
-            ProgressView().scaleEffect(1.1)
-            Text(text).font(.subheadline).foregroundColor(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func emptyState(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Image(systemName: icon)
-                .font(.system(size: 44))
-                .foregroundColor(.secondary)
-            Text(title).font(.title3).fontWeight(.medium)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
     }
 }
 

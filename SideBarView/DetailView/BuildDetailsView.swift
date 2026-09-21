@@ -21,6 +21,7 @@ struct BuildDetailsView: View {
     @State private var selectedLocales: [String: String] = [:]
     @State private var toastMessage: String? = nil
     @State private var toastWorkItem: DispatchWorkItem? = nil
+    @State private var showLocalePopover = false
 
     var body: some View {
         ZStack {
@@ -103,7 +104,7 @@ struct BuildDetailsView: View {
         }
         // Surface failed release-note saves instead of silently logging them.
         .alert(
-            "Couldn't Save Release Notes",
+            "Couldn't Update Release Notes",
             isPresented: Binding(
                 get: { viewModel.saveError != nil },
                 set: { if !$0 { viewModel.saveError = nil } }
@@ -111,7 +112,14 @@ struct BuildDetailsView: View {
             presenting: viewModel.saveError
         ) { saveError in
             Button("Retry") {
-                viewModel.saveBuildLocalization(buildId: saveError.buildId, locale: saveError.locale)
+                // Retry repeats the failed operation: a failed DELETE
+                // must not be retried as a save (or vice versa).
+                switch saveError.kind {
+                case .save:
+                    viewModel.saveBuildLocalization(buildId: saveError.buildId, locale: saveError.locale)
+                case .delete:
+                    viewModel.removeLocale(buildId: saveError.buildId, locale: saveError.locale)
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { saveError in
@@ -168,6 +176,24 @@ struct BuildDetailsView: View {
             }
 
             snippetsMenu
+
+            // Locales completeness popover: matrix of locale × build
+            // (✓/empty) so missing locales are visible at a glance.
+            Button(action: { showLocalePopover = true }) {
+                Label("Locales", systemImage: "globe")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showLocalePopover) {
+                LocaleCompletenessPopover(
+                    completeness: viewModel.localeCompleteness(),
+                    builds: viewModel.arrBuilds,
+                    completeCount: viewModel.completeLocaleCount()
+                )
+                .frame(width: 520)
+                .padding()
+            }
 
             Button(action: {
                 refreshBuildList?()
@@ -233,6 +259,7 @@ struct BuildDetailsView: View {
             isExpired: build.expired ?? false,
             selectedVersionString: viewModel.selectedVersion?.version ?? "",
             whatsNew: viewModel.getWhatsNew(for: build.id, locale: locale),
+            savedWhatsNew: viewModel.savedWhatsNew(for: build.id, locale: locale),
             selectedLocale: locale,
             locales: viewModel.getAllLocales(for: build.id),
             onLocaleChange: { newLocale in
@@ -255,6 +282,15 @@ struct BuildDetailsView: View {
                 // save path POSTs it once the user types and hits Update.
                 viewModel.updateBuildWhatsNew(buildId: build.id, locale: newLocale, whatsNew: "")
                 selectedLocales[build.id] = newLocale
+            },
+            onRemoveLocale: { removeLocale in
+                viewModel.removeLocale(buildId: build.id, locale: removeLocale)
+                // If the removed tab was selected, fall through to the
+                // first remaining locale (selectedLocale(for:) falls back
+                // automatically, but clear the stale selection eagerly).
+                if selectedLocales[build.id] == removeLocale {
+                    selectedLocales[build.id] = nil
+                }
             },
             isUpdating: viewModel.isBuildUpdating(build.id),
             isExpireToggling: viewModel.expireTogglingBuildId == build.id
@@ -383,6 +419,51 @@ extension BuildsModel {
 
     var relativeUploadedTime: String? {
         BuildDisplayHelper.relativeUploadedTime(uploadedDate)
+    }
+}
+
+// MARK: - Locales completeness popover
+//
+// Matrix of locale × build (✓/empty) for the selected version.
+// Lets you spot missing locales at a glance — "did I forget fr-FR?"
+struct LocaleCompletenessPopover: View {
+    let completeness: [(locale: String, builds: [(buildId: String, hasNotes: Bool)])]
+    let builds: [BuildsModel]
+    let completeCount: (complete: Int, total: Int)
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Locales × Builds")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(completeCount.complete)/\(completeCount.total) complete")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if builds.isEmpty {
+                    Text("No builds selected")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(completeness, id: \.locale) { locale, buildStatus in
+                        HStack(spacing: 4) {
+                            Text(locale)
+                                .font(.caption2)
+                                .frame(width: 48, alignment: .leading)
+                            ForEach(buildStatus, id: \.buildId) { _, hasNotes in
+                                Image(systemName: hasNotes ? "checkmark.circle.fill" : "minus.circle.fill")
+                                    .font(.caption)
+                                    .foregroundColor(hasNotes ? .green : .gray)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(8)
+        }
+        .frame(width: 480, height: 300)
     }
 }
 

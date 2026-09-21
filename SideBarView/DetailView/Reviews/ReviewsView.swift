@@ -45,8 +45,8 @@ struct ReviewsView: View {
                     reviewsViewModel.load(app: app)
                 }
             } else {
-                emptyState(icon: "star.bubble", title: "No App Selected",
-                           subtitle: "Select an app from the sidebar to view its reviews")
+                EmptyStateView(icon: "star.bubble", title: "No App Selected",
+                               subtitle: "Select an app from the sidebar to view its reviews")
             }
         }
     }
@@ -122,12 +122,7 @@ struct ReviewsView: View {
         InfoCard(title: "Review Submissions", systemImage: "doc.badge.gearshape") {
             switch reviewsViewModel.submissionsState {
             case .idle, .loading:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                LoadingStateView(text: "Loading...")
             case .empty:
                 Text("No review submissions")
                     .font(.caption)
@@ -179,12 +174,7 @@ struct ReviewsView: View {
         InfoCard(title: "Customer Reviews", systemImage: "star.bubble") {
             switch reviewsViewModel.reviewsState {
             case .idle, .loading:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                LoadingStateView(text: "Loading...")
             case .empty:
                 Text("No customer reviews")
                     .font(.caption)
@@ -308,24 +298,6 @@ struct ReviewsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
-    }
-
-    private func emptyState(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: icon)
-                .font(.system(size: 48))
-                .foregroundColor(.secondary)
-            Text(title)
-                .font(.title3)
-                .fontWeight(.medium)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .padding()
     }
 }
 

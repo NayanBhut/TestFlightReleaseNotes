@@ -39,8 +39,8 @@ struct AppInfoView: View {
                     viewModel.loadAppInfo()
                 }
             } else {
-                emptyState(icon: "info.circle", title: "No App Selected",
-                           subtitle: "Select an app from the sidebar to view its App Info")
+                EmptyStateView(icon: "info.circle", title: "No App Selected",
+                               subtitle: "Select an app from the sidebar to view its App Info")
             }
         }
     }
@@ -244,12 +244,7 @@ struct AppInfoView: View {
         switch state {
         case .idle, .loading:
             InfoCard(title: title, systemImage: systemImage) {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                LoadingStateView(text: "Loading...")
             }
         case .empty:
             InfoCard(title: title, systemImage: systemImage) {
@@ -281,24 +276,6 @@ struct AppInfoView: View {
         case false: return "No"
         default: return nil
         }
-    }
-
-    private func emptyState(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: icon)
-                .font(.system(size: 48))
-                .foregroundColor(.secondary)
-            Text(title)
-                .font(.title3)
-                .fontWeight(.medium)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .padding()
     }
 }
 
