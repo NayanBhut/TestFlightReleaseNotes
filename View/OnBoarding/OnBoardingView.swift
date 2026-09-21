@@ -11,40 +11,54 @@ struct OnBoardingView: View {
     @ObservedObject var viewModel = OnBoardingViewModel()
     @EnvironmentObject var navigationManager: NavigationManager
     @Binding var isLoggedIn: Bool
+    @Binding var isShowing: Bool
     @Environment(\.colorScheme) var colorScheme
-    @Environment(\.dismiss) var dismiss
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Header
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Add Team Details")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                Text("Enter your App Store Connect API credentials")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+            // Header with close button
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Add Team Details")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+
+                    Text("Enter your App Store Connect API credentials")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    isShowing = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+                .accessibilityLabel("Close")
             }
-            .padding(.bottom, 8)
-            
+
             // Form fields
             OnBoardingField(title: "Team Name", text: $viewModel.teamName, isRequired: true)
             OnBoardingField(title: "Issuer ID", text: $viewModel.issuerID, isRequired: true)
             OnBoardingField(title: "Private Key ID", text: $viewModel.keyId, isRequired: true)
-            
+
             // Private key section
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Private Key (.p8) (Add key without space and remove top private key when copy paste)")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    
+
                     Text("*")
                         .foregroundColor(.red)
-                    
+
                     Spacer()
-                    
+
                     Button(action: {
                         viewModel.getPrivateKey(filePath: viewModel.showOpenPanel())
                     }) {
@@ -53,11 +67,11 @@ struct OnBoardingView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-                
+
                 Text("Remove header/footer when pasting")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 TextEditor(text: $viewModel.privateKey)
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 100)
@@ -70,7 +84,7 @@ struct OnBoardingView: View {
                     )
                     .scrollContentBackground(.hidden)
             }
-            
+
             // Duplicate team name warning — a duplicate would silently
             // overwrite the existing Keychain entry.
             if viewModel.isFormValid && viewModel.isDuplicateTeam {
@@ -95,17 +109,17 @@ struct OnBoardingView: View {
                 }
                 .padding(.vertical, 4)
             }
-            
+
             // Action buttons
             HStack {
                 Spacer()
-                
+
                 if viewModel.isShowSpinner {
                     ProgressView()
                         .scaleEffect(0.8)
                         .padding(.trailing, 8)
                 }
-                
+
                 Button("Continue") {
                     viewModel.getAllApps(completion: { isSuccess in
                         if isSuccess, viewModel.saveLoginState(isLoggedIn: true) {
@@ -133,7 +147,7 @@ struct OnBoardingView: View {
 }
 
 #Preview {
-    OnBoardingView(isLoggedIn: .constant(false))
+    OnBoardingView(isLoggedIn: .constant(false), isShowing: .constant(true))
         .environmentObject(NavigationManager())
 }
 
@@ -141,26 +155,26 @@ struct OnBoardingField: View {
     let title: String
     @Binding var text: String
     let isRequired: Bool
-    
+
     init(title: String, text: Binding<String>, isRequired: Bool = false) {
         self.title = title
         self._text = text
         self.isRequired = isRequired
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(title)
                     .font(.subheadline)
                     .fontWeight(.medium)
-                
+
                 if isRequired {
                     Text("*")
                         .foregroundColor(.red)
                 }
             }
-            
+
             TextField(title, text: $text)
                 .textFieldStyle(.plain)
                 .padding(8)

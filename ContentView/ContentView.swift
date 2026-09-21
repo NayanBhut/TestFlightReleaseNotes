@@ -38,7 +38,7 @@ struct ContentView: View {
                         showAlertView = false
                     }
 
-                OnBoardingView(isLoggedIn: $isNewAccountAdded)
+                OnBoardingView(isLoggedIn: $isNewAccountAdded, isShowing: $showAlertView)
                     .frame(width: 500)
                     .background(Color.clear)
                     .cornerRadius(10)
