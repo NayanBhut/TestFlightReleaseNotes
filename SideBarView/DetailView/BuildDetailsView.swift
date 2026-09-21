@@ -292,6 +292,9 @@ struct BuildDetailsView: View {
                     selectedLocales[build.id] = nil
                 }
             },
+            dirtyLocaleCount: viewModel.dirtyLocales(for: build.id).count,
+            onFetchDiffs: { viewModel.dirtyDiffs(for: build.id) },
+            onUpdateAll: { viewModel.saveAllLocales(buildId: build.id) },
             isUpdating: viewModel.isBuildUpdating(build.id),
             isExpireToggling: viewModel.expireTogglingBuildId == build.id
         )

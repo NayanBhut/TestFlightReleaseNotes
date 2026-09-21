@@ -34,6 +34,14 @@ struct BuildRowView: View {
     let onAddLocale: (String) -> Void
     /// Removes a locale's notes (temp drafts locally, server ones via DELETE).
     let onRemoveLocale: (String) -> Void
+    /// Number of locales with unsaved changes, computed from the view
+    /// model so it covers the other tabs too — drives "Update all".
+    let dirtyLocaleCount: Int
+    /// Fresh per-locale diffs for every dirty locale, evaluated on tap
+    /// (after flushing) so Review changes never shows a stale snapshot.
+    let onFetchDiffs: () -> [LocaleDiff]
+    /// Saves every dirty locale with savable text.
+    let onUpdateAll: () -> Void
     let isUpdating: Bool
     let isExpireToggling: Bool
 
@@ -43,8 +51,11 @@ struct BuildRowView: View {
     @State private var hasChanges: Bool = false
     @State private var showExpireConfirm = false
     @State private var showDiffView = false
-    /// Locale awaiting removal confirmation (server-saved notes only —
-    /// empty drafts are removed immediately, nothing is lost).
+    /// Diffs snapshot for the review sheet, computed on tap (post-flush).
+    @State private var reviewDiffs: [LocaleDiff] = []
+    /// Locale awaiting removal confirmation. Always confirms — the ×
+    /// sits on the tab so the target is unambiguous, and the alert
+    /// names the locale as a second check.
     @State private var localePendingRemoval: String?
     @State private var debounceTask: Task<Void, Never>?
 
@@ -115,6 +126,10 @@ struct BuildRowView: View {
                 HStack(spacing: 8) {
                     if hasChanges {
                         Button("Review changes") {
+                            // Flush first so a just-typed line is in the
+                            // view model before the diffs are computed.
+                            flushPendingTextChange()
+                            reviewDiffs = onFetchDiffs()
                             showDiffView = true
                         }
                         .buttonStyle(.bordered)
@@ -122,6 +137,22 @@ struct BuildRowView: View {
                         .font(.caption)
                         .accessibilityLabel("Review release notes changes")
                         .accessibilityHint("Shows added and removed lines compared to the last saved version")
+                    }
+                    // Bulk save across locales. Hidden when the current tab
+                    // is the only dirty locale (per-locale Update covers it).
+                    if dirtyLocaleCount > 0 && (dirtyLocaleCount > 1 || !hasChanges) {
+                        Button("Update all") {
+                            flushPendingTextChange()
+                            committedText = whatsNewText
+                            hasChanges = false
+                            showDiffView = false
+                            buildRowLogger.debug("Saving all release notes for build \(buildId)")
+                            onUpdateAll()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .font(.caption)
+                        .accessibilityLabel("Update all locales with unsaved changes")
                     }
                     Button("Update") {
                         // Flush any pending debounced edit first so the view
@@ -170,7 +201,7 @@ struct BuildRowView: View {
             }
         }
         .sheet(isPresented: $showDiffView) {
-            DiffView(added: diffLines.added, removed: diffLines.removed)
+            LocaleDiffsView(diffs: reviewDiffs)
         }
     }
 
@@ -178,37 +209,47 @@ struct BuildRowView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(locales, id: \.self) { locale in
-                    Button(action: {
-                        // Flush the old locale's pending edit before
-                        // switching so keystrokes are never dropped.
-                        flushPendingTextChange()
-                        onLocaleChange(locale)
-                    }) {
-                        Text(locale)
-                            .font(.caption)
-                            .fontWeight(selectedLocale == locale ? .semibold : .regular)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(selectedLocale == locale ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
-                            )
-                            .foregroundColor(selectedLocale == locale ? .white : .primary)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(selectedLocale == locale ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        // Removing a mistakenly added locale. Always
-                        // confirms — the row only knows the selected
-                        // locale's text, so it can't tell an empty draft
-                        // from saved notes for the other tabs.
-                        Button("Remove \(locale)", role: .destructive) {
-                            localePendingRemoval = locale
+                    // Select and remove are sibling buttons, never nested:
+                    // the × sits inside its own tab so the removal target
+                    // is visually unambiguous. Removal always confirms.
+                    HStack(spacing: 0) {
+                        Button(action: {
+                            // Flush the old locale's pending edit before
+                            // switching so keystrokes are never dropped.
+                            flushPendingTextChange()
+                            onLocaleChange(locale)
+                        }) {
+                            Text(locale)
+                                .font(.caption)
+                                .fontWeight(selectedLocale == locale ? .semibold : .regular)
+                                .padding(.leading, 12)
+                                .padding(.trailing, 4)
+                                .padding(.vertical, 6)
+                                .foregroundColor(selectedLocale == locale ? .white : .primary)
                         }
+                        .buttonStyle(.plain)
+                        Button(action: {
+                            localePendingRemoval = locale
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.caption2)
+                                .fontWeight(.bold)
+                                .foregroundColor(selectedLocale == locale ? .white.opacity(0.85) : .secondary)
+                                .padding(6)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove \(locale) notes")
+                        .accessibilityLabel("Remove \(locale) notes")
                     }
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(selectedLocale == locale ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(selectedLocale == locale ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
+                    )
                 }
 
                 // Add-locale menu: lists supported locales not yet present.
@@ -337,68 +378,93 @@ struct BuildRowView: View {
         }
     }
 
-    /// Line-level diff between the draft and last saved text.
-    /// Returns (added, removed) line groups.
-    private var diffLines: (added: [String], removed: [String]) {
-        let draftLines = whatsNewText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let savedLines = committedText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var added: [String] = []
-        var removed: [String] = []
-        let savedSet = Set(savedLines)
-        let draftSet = Set(draftLines)
-        added = draftLines.filter { !savedSet.contains($0) }
-        removed = savedLines.filter { !draftSet.contains($0) }
-        return (added, removed)
+}
+
+// MARK: - Diff views
+
+/// One locale's added/removed lines vs its last-saved notes.
+/// Produced by the view model across every dirty locale so bulk
+/// Review changes never hides a second edited locale behind the
+/// selected tab.
+struct LocaleDiff: Equatable {
+    let locale: String
+    let added: [String]
+    let removed: [String]
+}
+
+/// Added (green) / removed (red) line groups for one locale's diff.
+struct DiffLinesView: View {
+    let added: [String]
+    let removed: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if added.isEmpty && removed.isEmpty {
+                Label("No changes", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                if !removed.isEmpty {
+                    Text("Removed")
+                        .font(.headline)
+                    ForEach(removed, id: \.self) { line in
+                        Text("\u{2212} " + line)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 8)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                }
+                if !added.isEmpty {
+                    Text("Added")
+                        .font(.headline)
+                    ForEach(added, id: \.self) { line in
+                        Text("+ \(line)")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 8)
+                            .background(Color.green.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                }
+            }
+        }
     }
 }
 
-// MARK: - Diff view
-//
-// Shows added (green) and removed (red) lines comparing
-// the current draft vs the last saved release notes.
-struct DiffView: View {
-    let added: [String]
-    let removed: [String]
+/// Bulk "Review changes" sheet: one section per dirty locale, so a
+/// second edited locale's changes are never hidden behind the
+/// selected tab.
+struct LocaleDiffsView: View {
+    let diffs: [LocaleDiff]
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if added.isEmpty && removed.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    if diffs.isEmpty {
                         Label("No changes", systemImage: "checkmark.circle")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else {
-                        if !removed.isEmpty {
-                            Text("Removed")
-                                .font(.headline)
-                            ForEach(removed, id: \.self) { line in
-                                Text("\u{2212} " + line)
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                                    .padding(.horizontal, 8)
-                                    .background(Color.red.opacity(0.1))
-                                    .cornerRadius(4)
+                        ForEach(diffs, id: \.locale) { diff in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(diff.locale)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                DiffLinesView(added: diff.added, removed: diff.removed)
                             }
-                        }
-                        if !added.isEmpty {
-                            Text("Added")
-                                .font(.headline)
-                            ForEach(added, id: \.self) { line in
-                                Text("+ \(line)")
-                                    .font(.caption)
-                                    .foregroundColor(.green)
-                                    .padding(.horizontal, 8)
-                                    .background(Color.green.opacity(0.1))
-                                    .cornerRadius(4)
+                            if diff.locale != diffs.last?.locale {
+                                Divider()
                             }
                         }
                     }
                 }
                 .padding(8)
             }
-            .navigationTitle("Diff")
+            .navigationTitle("Review changes")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
