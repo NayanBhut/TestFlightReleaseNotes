@@ -180,6 +180,8 @@ struct BuildDetailsView: View {
 
             snippetsMenu
 
+            openInASCMenu
+
             // Locales completeness popover: matrix of locale × build
             // (✓/empty) so missing locales are visible at a glance.
             Button(action: { showLocalePopover = true }) {
@@ -229,6 +231,33 @@ struct BuildDetailsView: View {
         }
         .menuStyle(.borderlessButton)
         .help("Copy a snippet to paste into release notes")
+    }
+
+    /// Batch F (#9): TestFlight feedback (crashes, screenshots) and
+    /// in-app events have no public ASC API — open the app's page in the
+    /// browser instead of leaving the user to hunt for it.
+    private var openInASCMenu: some View {
+        Menu {
+            ForEach(ASCDeepLink.allCases) { link in
+                Button {
+                    guard let appId = viewModel.selectedApp?.id,
+                          let url = link.url(appId: appId) else { return }
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Label(link.title, systemImage: link.systemImage)
+                }
+                // The ASC SPA routes client-side per app id — without a
+                // selected app there is nothing meaningful to open.
+                .disabled(viewModel.selectedApp == nil)
+            }
+        } label: {
+            Label("Open in App Store Connect", systemImage: "safari")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .help("Open this app in App Store Connect (browser)")
+        .accessibilityLabel("Open in App Store Connect")
     }
 
     @ViewBuilder private func getBuildsList() -> some View {
@@ -387,6 +416,47 @@ enum BuildDisplayHelper {
             return ("VALID", .green)
         default:
             return ("", .clear)
+        }
+    }
+}
+
+/// Batch F (#9): deep links into the App Store Connect web app for
+/// sections the public API can't serve in-app. Routes are those of the
+/// ASC web SPA; the testflight/crashes and testflight/screenshots paths
+/// are the ones production TestFlight-feedback tooling links to.
+enum ASCDeepLink: CaseIterable, Identifiable {
+    case screenshots
+    case crashes
+    case inAppEvents
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .screenshots: return "Screenshots"
+        case .crashes: return "Crashes"
+        case .inAppEvents: return "In-App Events"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .screenshots: return "camera.viewfinder"
+        case .crashes: return "exclamationmark.triangle"
+        case .inAppEvents: return "calendar.badge.clock"
+        }
+    }
+
+    /// TestFlight feedback lives under /testflight; in-app events use the
+    /// camelCase resource route like other app-level ASC sections.
+    func url(appId: String) -> URL? {
+        switch self {
+        case .screenshots:
+            return URL(string: "https://appstoreconnect.apple.com/apps/\(appId)/testflight/screenshots")
+        case .crashes:
+            return URL(string: "https://appstoreconnect.apple.com/apps/\(appId)/testflight/crashes")
+        case .inAppEvents:
+            return URL(string: "https://appstoreconnect.apple.com/apps/\(appId)/inAppEvents")
         }
     }
 }

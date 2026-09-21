@@ -9,6 +9,10 @@
 //  broader permissions than TestFlight-only). Write lifecycle deferred
 //  to Batch D4; this is read-only.
 //
+//  Batch F (#6): per-kind search text + local, case-insensitive filtering
+//  across each model's display fields (search is local — server-side
+//  search params aren't supported on these endpoints).
+//
 
 import SwiftUI
 import JSONAPI
@@ -104,6 +108,10 @@ final class ResourcesViewModel: ObservableObject {
     /// footer).
     @Published var paginationFailedKinds: Set<Kind> = []
 
+    /// Per-kind search text — each kind's sheet filters independently (a
+    /// UDID fragment typed in Devices must not leak into Certificates).
+    @Published var searchTexts: [Kind: String] = [:]
+
     /// Kinds already loaded (or failed) — guards so re-opening a list
     /// doesn't refetch what's already there.
     private var loadedKinds: Set<Kind> = []
@@ -111,6 +119,93 @@ final class ResourcesViewModel: ObservableObject {
     /// Kinds with a page request in flight — per-kind so paginating one
     /// kind never swallows another kind's Load-more tap.
     private var isPaginatingKinds: Set<Kind> = []
+
+    // MARK: - Search (Batch F #6)
+
+    func searchText(for kind: Kind) -> String { searchTexts[kind] ?? "" }
+
+    /// Per-kind binding for the sheet's search field.
+    func searchBinding(for kind: Kind) -> Binding<String> {
+        Binding(
+            get: { self.searchTexts[kind] ?? "" },
+            set: { self.searchTexts[kind] = $0 }
+        )
+    }
+
+    /// Active query, trimmed; whitespace-only text disables filtering.
+    private func query(for kind: Kind) -> String {
+        (searchTexts[kind] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// True while the kind has an effective (non-whitespace) query.
+    func hasActiveSearch(_ kind: Kind) -> Bool { !query(for: kind).isEmpty }
+
+    /// Local, case-insensitive match across the fields each kind's row
+    /// displays — searching must surface a device whose UDID matches even
+    /// when its name doesn't.
+    private func filter<T>(_ items: [T], kind: Kind, fields: (T) -> [String?]) -> [T] {
+        let active = query(for: kind)
+        guard !active.isEmpty else { return items }
+        return items.filter { item in
+            fields(item).contains { $0?.localizedCaseInsensitiveContains(active) == true }
+        }
+    }
+
+    var filteredDevices: [DeviceModel] {
+        filter(devicesState.loadedValue ?? [], kind: .devices) {
+            [$0.name, $0.model, $0.udid, $0.deviceClass, $0.platform, $0.status]
+        }
+    }
+
+    var filteredCertificates: [CertificateModel] {
+        filter(certificatesState.loadedValue ?? [], kind: .certificates) {
+            // The row shows displayName with name as fallback — match both.
+            [$0.displayName, $0.name, $0.serialNumber, $0.certificateType, $0.platform]
+        }
+    }
+
+    var filteredBundleIds: [BundleIdModel] {
+        filter(bundleIdsState.loadedValue ?? [], kind: .bundleIds) {
+            [$0.name, $0.identifier, $0.platform]
+        }
+    }
+
+    var filteredProfiles: [ProfileModel] {
+        filter(profilesState.loadedValue ?? [], kind: .profiles) {
+            [$0.name, $0.uuid, $0.profileType, $0.profileState, $0.platform]
+        }
+    }
+
+    var filteredUsers: [UserModel] {
+        filter(usersState.loadedValue ?? [], kind: .users) {
+            // Roles render as chips — searchable as one joined string.
+            [$0.username, $0.firstName, $0.lastName, ($0.roles ?? []).joined(separator: " ")]
+        }
+    }
+
+    /// Row count after filtering, without the view needing to know which
+    /// array backs the current kind (drives the header's "N of M").
+    func filteredCount(for kind: Kind) -> Int {
+        switch kind {
+        case .devices: return filteredDevices.count
+        case .certificates: return filteredCertificates.count
+        case .bundleIds: return filteredBundleIds.count
+        case .profiles: return filteredProfiles.count
+        case .users: return filteredUsers.count
+        }
+    }
+
+    /// Rows actually loaded so far — search is local, so matches can't
+    /// exceed this even when the server reports a larger total.
+    func loadedCount(for kind: Kind) -> Int {
+        switch kind {
+        case .devices: return devicesState.loadedValue?.count ?? 0
+        case .certificates: return certificatesState.loadedValue?.count ?? 0
+        case .bundleIds: return bundleIdsState.loadedValue?.count ?? 0
+        case .profiles: return profilesState.loadedValue?.count ?? 0
+        case .users: return usersState.loadedValue?.count ?? 0
+        }
+    }
 
     // MARK: - Loading
 
@@ -257,6 +352,7 @@ final class ResourcesViewModel: ObservableObject {
         nextCursors = [:]
         totals = [:]
         paginationFailedKinds = []
+        searchTexts = [:]
         isPaginatingKinds = []
     }
 
