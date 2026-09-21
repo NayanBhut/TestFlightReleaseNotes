@@ -599,6 +599,47 @@ extension DetailViewModel {
         }
     }
 
+    /// Locales with unsaved changes: current text (draft) differs from the
+    /// last-saved snapshot. Temp drafts count once they hold text; an
+    /// untouched temp draft ("") matches its "" baseline and is skipped.
+    func dirtyLocales(for buildId: String) -> [String] {
+        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }) else { return [] }
+        return build.betaBuildLocalizations.compactMap { loc in
+            guard let locale = loc.locale else { return nil }
+            return (loc.whatsNew ?? "") != savedNotes["\(buildId)|\(locale)", default: ""] ? locale : nil
+        }
+    }
+
+    /// Per-locale diffs for every dirty locale — powers bulk Review
+    /// changes so a second edited locale is never hidden behind the
+    /// selected tab.
+    func dirtyDiffs(for buildId: String) -> [LocaleDiff] {
+        dirtyLocales(for: buildId).map { locale in
+            let current = getWhatsNew(for: buildId, locale: locale)
+            let saved = savedWhatsNew(for: buildId, locale: locale)
+            let currentLines = current.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            let savedLines = saved.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            let savedSet = Set(savedLines)
+            let currentSet = Set(currentLines)
+            return LocaleDiff(
+                locale: locale,
+                added: currentLines.filter { !savedSet.contains($0) },
+                removed: savedLines.filter { !currentSet.contains($0) }
+            )
+        }
+    }
+
+    /// Saves every dirty locale with savable text. Each locale keeps its
+    /// own save key, so parallel saves never block each other (same rule
+    /// as the row's Update: empty text is skipped — clearing a locale to
+    /// empty is done via Remove, not Update).
+    func saveAllLocales(buildId: String) {
+        for locale in dirtyLocales(for: buildId) {
+            guard !getWhatsNew(for: buildId, locale: locale).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            saveBuildLocalization(buildId: buildId, locale: locale)
+        }
+    }
+
     private func deleteBuildLocalization(buildId: String, localizationId: String, locale: String) async {
         defer { updatingSaveKeys.remove("\(buildId)|\(locale)") }
 
