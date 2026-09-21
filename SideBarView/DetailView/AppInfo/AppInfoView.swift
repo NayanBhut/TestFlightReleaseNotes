@@ -302,19 +302,17 @@ struct AppInfoLocalizationRow: View {
         viewModel.savingAppInfoLocalizationIds.contains(localization.id)
     }
 
-    // Blank fields are omitted from the PATCH (left unchanged), so a
-    // blanked field is never a change — without this, clearing a field
-    // would enable Save for a write that changes nothing.
+    // Mirrors updateField in the view model: trimmed == saved means
+    // unchanged (omitted); anything else is .set or .clear — a change.
     private var hasChanges: Bool {
-        isChanged(name, from: localization.name)
-            || isChanged(subtitle, from: localization.subtitle)
-            || isChanged(privacyPolicyUrl, from: localization.privacyPolicyUrl)
-            || isChanged(privacyChoicesUrl, from: localization.privacyChoicesUrl)
+        trimmed(name) != (localization.name ?? "")
+            || trimmed(subtitle) != (localization.subtitle ?? "")
+            || trimmed(privacyPolicyUrl) != (localization.privacyPolicyUrl ?? "")
+            || trimmed(privacyChoicesUrl) != (localization.privacyChoicesUrl ?? "")
     }
 
-    private func isChanged(_ draft: String, from original: String?) -> Bool {
-        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed != (original ?? "")
+    private func trimmed(_ draft: String) -> String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
@@ -348,16 +346,21 @@ struct AppInfoLocalizationRow: View {
                     TextField("Name (2–30 characters)", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .font(.subheadline)
+                        .disabled(isSaving)
                     TextField("Subtitle (up to 30 characters)", text: $subtitle)
                         .textFieldStyle(.roundedBorder)
                         .font(.subheadline)
+                        .disabled(isSaving)
                     TextField("Privacy Policy URL", text: $privacyPolicyUrl)
                         .textFieldStyle(.roundedBorder)
                         .font(.subheadline)
+                        .disabled(isSaving)
                     TextField("Privacy Choices URL", text: $privacyChoicesUrl)
                         .textFieldStyle(.roundedBorder)
                         .font(.subheadline)
-                    Text("Blank fields are left unchanged.")
+                        .disabled(isSaving)
+                    // Blank draft over a saved value clears that field.
+                    Text("Blank a field to clear it. Edits apply only while the app info is in an editable state.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     if let errorMessage {
@@ -374,23 +377,27 @@ struct AppInfoLocalizationRow: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .foregroundColor(.secondary)
+                        .disabled(isSaving)
                         Spacer()
                         Button("Save") {
                             Task { @MainActor in
-                                let message = await viewModel.saveAppInfoLocalization(
+                                let result = await viewModel.saveAppInfoLocalization(
                                     id: localization.id,
                                     name: name,
                                     subtitle: subtitle,
                                     privacyPolicyUrl: privacyPolicyUrl,
                                     privacyChoicesUrl: privacyChoicesUrl
                                 )
-                                // Keep the editor open on failure so the
-                                // typed input is never silently discarded.
-                                if message == nil {
+                                switch result {
+                                case .success:
                                     isEditing = false
                                     errorMessage = nil
-                                } else {
+                                case .failure(let message):
                                     errorMessage = message
+                                case .ignored:
+                                    // In-flight duplicate or cancelled — keep
+                                    // the editor open, nothing was saved.
+                                    break
                                 }
                             }
                         }

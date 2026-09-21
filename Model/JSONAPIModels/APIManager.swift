@@ -416,9 +416,11 @@ enum APIName: String {
     // Not under /apps/{id}/ — it's a top-level subpath of /customerReviews.
     case postCustomerReviewResponse = "/customerReviews"
 
-    // C2: team-scoped resources (top-level collections).
-    case getDevices = "/devices"
-    case getCertificates = "/certificates"
+    // C2: team-scoped resources (top-level collections). Verb-neutral names:
+    // the enum is a URL prefix, not a GET — the verb comes from APIMethod
+    // (.post(name: .devices, …), .patch(name: .devices, path: …)).
+    case devices = "/devices"
+    case certificates = "/certificates"
     case getBundleIds = "/bundleIds"
     case getProfiles = "/profiles"
     case getUsers = "/users"
