@@ -673,13 +673,18 @@ enum WhatsNewLimits {
 }
 
 /// Locales supported for TestFlight beta build localizations.
+/// Locales supported for TestFlight beta build localizations.
+/// Exact Apple locale identifiers — the spec leaves `locale` a free
+/// string but the server 400s anything outside this set ("de" must be
+/// "de-DE", "nl" must be "nl-NL"). Source: App Store Connect via
+/// fastlane's Deliver::Languages::ALL_LANGUAGES.
 enum BetaLocalizationLocales {
     static let defaultLocale = "en-US"
 
     static let supported: [String] = [
-        "ar-SA", "ca", "cs", "da", "de", "el", "en-AU", "en-CA", "en-GB", "en-US",
-        "es-ES", "es-MX", "fi", "fr-FR", "he", "hi", "hr", "hu", "id", "it",
-        "ja", "ko", "ms", "nl", "no", "pl", "pt-BR", "pt-PT", "ro", "ru",
+        "ar-SA", "ca", "cs", "da", "de-DE", "el", "en-AU", "en-CA", "en-GB", "en-US",
+        "es-ES", "es-MX", "fi", "fr-CA", "fr-FR", "he", "hi", "hr", "hu", "id", "it",
+        "ja", "ko", "ms", "nl-NL", "no", "pl", "pt-BR", "pt-PT", "ro", "ru",
         "sk", "sv", "th", "tr", "uk", "vi", "zh-Hans", "zh-Hant"
     ]
 }
