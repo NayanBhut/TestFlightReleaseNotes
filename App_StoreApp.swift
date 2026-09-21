@@ -17,7 +17,8 @@ struct App_StoreApp: App {
     @StateObject private var buildMonitor = BuildProcessingMonitor()
 
     var body: some Scene {
-        WindowGroup {
+        // id "main" is referenced by the menu bar extra's "Open App" item.
+        WindowGroup(id: "main") {
             RootView(viewModel: viewModel)
                 .environmentObject(navigationManager)
                 .environmentObject(exportManager)
@@ -29,15 +30,12 @@ struct App_StoreApp: App {
         MenuBarExtra {
             MenuBarBuildsView(monitor: buildMonitor)
         } label: {
-            // Count in the label so an uploaded build is visible at a glance.
-            Label(
-                buildMonitor.processingCount > 0
-                    ? "\(buildMonitor.processingCount) processing"
-                    : "Builds",
-                systemImage: buildMonitor.processingCount > 0 ? "hourglass" : "checkmark.circle"
-            )
-            .task {
-                buildMonitor.start()
+            // Icon-only while idle (menu bar space is precious); the count
+            // appears only when there's something processing.
+            if buildMonitor.processingCount > 0 {
+                Label("\(buildMonitor.processingCount)", systemImage: "hourglass")
+            } else {
+                Image(systemName: "shippingbox")
             }
         }
         .menuBarExtraStyle(.menu)
