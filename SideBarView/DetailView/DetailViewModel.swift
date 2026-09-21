@@ -496,95 +496,128 @@ extension DetailViewModel {
 
     // MARK: - App Info writes (Batch G #10)
 
+    /// Outcome of an App Info save, so the editor can tell "saved" apart
+    /// from "ignored" (already in flight / task cancelled) — an ignored
+    /// save must leave the editor open, not close it like a success.
+    enum AppInfoSaveResult {
+        case success
+        case failure(String)
+        case ignored
+    }
+
     /// PATCH /v1/appInfoLocalizations/{id} for name, subtitle and privacy
-    /// URLs. Returns nil on success, otherwise an error message for the
-    /// editor to display inline (the editor stays open on failure so typed
-    /// input is never silently discarded — same contract as review replies).
+    /// URLs. Returns .success, .failure with an inline error message
+    /// (the editor stays open on failure so typed input is never silently
+    /// discarded — same contract as review replies), or .ignored when a
+    /// duplicate save is in flight or the task was cancelled (the editor
+    /// stays open then too). Only editable while the parent app info is
+    /// in an editable state — otherwise the server 409s and its detail is
+    /// surfaced as-is.
     ///
-    /// Empty strings are treated as "leave unchanged" (nil attributes are
-    /// omitted from the body); there is deliberately no clear-to-empty path
-    /// here. Only editable while the parent app info is in an editable
-    /// state — otherwise the server 409s and its detail is surfaced as-is.
+    /// Field mapping: a draft equal to the saved value (or blank when the
+    /// saved value is blank) is .unchanged (omitted from the body); a
+    /// blanked draft over a non-blank saved value is .clear (JSON null —
+    /// that's how a subtitle or privacy URL is removed); otherwise .set.
     func saveAppInfoLocalization(id: String,
                                  name: String,
                                  subtitle: String,
                                  privacyPolicyUrl: String,
-                                 privacyChoicesUrl: String) async -> String? {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedSubtitle = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPrivacyUrl = privacyPolicyUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedChoicesUrl = privacyChoicesUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+                                 privacyChoicesUrl: String) async -> AppInfoSaveResult {
+        let nameField = Self.updateField(draft: name, original: localizationValue(id: id, \.name))
+        let subtitleField = Self.updateField(draft: subtitle, original: localizationValue(id: id, \.subtitle))
+        let privacyPolicyField = Self.updateField(draft: privacyPolicyUrl, original: localizationValue(id: id, \.privacyPolicyUrl))
+        let privacyChoicesField = Self.updateField(draft: privacyChoicesUrl, original: localizationValue(id: id, \.privacyChoicesUrl))
 
-        if let message = validateAppInfoLocalization(name: trimmedName,
-                                                     subtitle: trimmedSubtitle,
-                                                     privacyPolicyUrl: trimmedPrivacyUrl,
-                                                     privacyChoicesUrl: trimmedChoicesUrl) {
-            return message
+        if let message = validateAppInfoLocalization(name: nameField,
+                                                     subtitle: subtitleField,
+                                                     privacyPolicyUrl: privacyPolicyField,
+                                                     privacyChoicesUrl: privacyChoicesField) {
+            return .failure(message)
         }
-        guard !savingAppInfoLocalizationIds.contains(id) else { return nil }
+        guard !savingAppInfoLocalizationIds.contains(id) else { return .ignored }
         savingAppInfoLocalizationIds.insert(id)
         defer { savingAppInfoLocalizationIds.remove(id) }
 
-        // Omit empty fields (unchanged) rather than sending "" — the
-        // server rejects empty names and empty is never a useful write.
         let body = AppInfoLocalizationUpdateRequest(
             data: AppInfoLocalizationUpdateData(
                 id: id,
                 attributes: AppInfoLocalizationUpdateAttributes(
-                    name: trimmedName.isEmpty ? nil : trimmedName,
-                    subtitle: trimmedSubtitle.isEmpty ? nil : trimmedSubtitle,
-                    privacyPolicyUrl: trimmedPrivacyUrl.isEmpty ? nil : trimmedPrivacyUrl,
-                    privacyChoicesUrl: trimmedChoicesUrl.isEmpty ? nil : trimmedChoicesUrl
+                    name: nameField,
+                    subtitle: subtitleField,
+                    privacyPolicyUrl: privacyPolicyField,
+                    privacyChoicesUrl: privacyChoicesField
                 )
             )
         )
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
 
         guard let data = try? encoder.encode(body),
               let request = APIClient.shared.getRequest(
                 api: .patch(name: .appInfoLocalizations, body: data, path: id),
                 apiVersion: .v1) else {
-            return "Couldn't build the update request."
+            return .failure("Couldn't build the update request.")
         }
 
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled else { return .ignored }
             let model = try getDecoder().decode(AppInfoLocalizationModel.self, from: responseData)
             // Re-locate after the await: the list may have changed
             // (refresh, app switch) since the save started.
             guard case .loaded(var infos) = appInfoState,
                   let infoIndex = infos.firstIndex(where: { $0.appInfoLocalizations.contains(where: { $0.id == id }) }),
-                  let locIndex = infos[infoIndex].appInfoLocalizations.firstIndex(where: { $0.id == id }) else { return nil }
+                  let locIndex = infos[infoIndex].appInfoLocalizations.firstIndex(where: { $0.id == id }) else { return .ignored }
             infos[infoIndex].appInfoLocalizations[locIndex] = model
             appInfoState = .loaded(infos)
-            return nil
+            return .success
         } catch {
             detailLogger.error("Failed to update app info localization: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return nil }
-            return appInfoWriteErrorMessage(for: error)
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(appInfoWriteErrorMessage(for: error))
         }
     }
 
-    private func validateAppInfoLocalization(name: String,
-                                             subtitle: String,
-                                             privacyPolicyUrl: String,
-                                             privacyChoicesUrl: String) -> String? {
-        if !name.isEmpty,
-           name.count < AppInfoLocalizationLimits.nameMinLength
-            || name.count > AppInfoLocalizationLimits.nameMaxLength {
+    /// Saved attribute for a localization, "" when nil — keeps
+    /// updateField's comparison free of optionals.
+    private func localizationValue(id: String,
+                                   _ keyPath: (AppInfoLocalizationModel) -> String?) -> String {
+        guard case .loaded(let infos) = appInfoState,
+              let loc = infos.flatMap({ $0.appInfoLocalizations }).first(where: { $0.id == id }) else { return "" }
+        return keyPath(loc) ?? ""
+    }
+
+    /// Draft → PATCH field: equal (or both blank) = unchanged (omitted);
+    /// blanked over non-blank = clear (JSON null); different text = set.
+    private static func updateField(draft: String, original: String) -> AppInfoLocalizationFieldValue {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == original {
+            return .unchanged
+        }
+        return trimmed.isEmpty ? .clear : .set(trimmed)
+    }
+
+    private func validateAppInfoLocalization(name: AppInfoLocalizationFieldValue,
+                                            subtitle: AppInfoLocalizationFieldValue,
+                                            privacyPolicyUrl: AppInfoLocalizationFieldValue,
+                                            privacyChoicesUrl: AppInfoLocalizationFieldValue) -> String? {
+        if case .set(let value) = name,
+           value.count < AppInfoLocalizationLimits.nameMinLength
+            || value.count > AppInfoLocalizationLimits.nameMaxLength {
             return "Name must be \(AppInfoLocalizationLimits.nameMinLength)–\(AppInfoLocalizationLimits.nameMaxLength) characters."
         }
-        if subtitle.count > AppInfoLocalizationLimits.subtitleMaxLength {
+        if case .set(let value) = subtitle,
+           value.count > AppInfoLocalizationLimits.subtitleMaxLength {
             return "Subtitle can't be longer than \(AppInfoLocalizationLimits.subtitleMaxLength) characters."
         }
-        for url in [privacyPolicyUrl, privacyChoicesUrl] where !url.isEmpty {
-            guard let parsed = URL(string: url),
-                  let scheme = parsed.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https",
-                  parsed.host != nil else {
-                return "Privacy URLs must be valid http(s) URLs."
+        for field in [privacyPolicyUrl, privacyChoicesUrl] {
+            if case .set(let value) = field {
+                guard let parsed = URL(string: value),
+                      let scheme = parsed.scheme?.lowercased(),
+                      scheme == "http" || scheme == "https",
+                      parsed.host != nil else {
+                    return "Privacy URLs must be valid http(s) URLs."
+                }
             }
         }
         return nil

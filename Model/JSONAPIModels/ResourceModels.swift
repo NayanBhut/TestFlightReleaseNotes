@@ -183,6 +183,34 @@ enum CertificateTypeOption: String, CaseIterable {
     case MAC_APP_DEVELOPMENT
     case PASS_TYPE_ID
     case PASS_TYPE_ID_WITH_NFC
+
+    /// SNAKE_CASE → title case for the picker (e.g. IOS_DEVELOPMENT →
+    /// "Ios Development"). Derived, so new enum values render sanely
+    /// without touching this.
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+            .replacingOccurrences(of: "Ios", with: "iOS")
+            .replacingOccurrences(of: "Id ", with: "ID ")
+            .replacingOccurrences(of: "Nfc", with: "NFC")
+    }
+}
+
+/// Client-side format checks for the create forms so obvious rejections
+/// surface without a network round-trip (server remains the source of
+/// truth). UDID: 25–27 hex chars with a dash (newer hardware) or 40 hex
+/// (classic). CSR: PEM marker.
+enum ProvisioningWriteValidation {
+    static func isValidUDID(_ udid: String) -> Bool {
+        let pattern = "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{9}$|^[0-9A-Fa-f]{40}$"
+        return udid.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    static func isValidCSR(_ content: String) -> Bool {
+        content.contains("-----BEGIN CERTIFICATE REQUEST-----")
+            && content.contains("-----END CERTIFICATE REQUEST-----")
+    }
 }
 
 struct CertificateCreateRequest: Encodable {

@@ -78,8 +78,8 @@ final class ResourcesViewModel: ObservableObject {
 
         var apiName: APIName {
             switch self {
-            case .devices: return .getDevices
-            case .certificates: return .getCertificates
+            case .devices: return .devices
+            case .certificates: return .certificates
             case .bundleIds: return .getBundleIds
             case .profiles: return .getProfiles
             case .users: return .getUsers
@@ -129,6 +129,15 @@ final class ResourcesViewModel: ObservableObject {
     private var isPaginatingKinds: Set<Kind> = []
 
     // MARK: - Writes (Batch G #10)
+
+    /// Outcome of a provisioning write, so callers can tell "saved" apart
+    /// from "ignored" (already in flight / task cancelled) — an ignored
+    /// write must leave the form open, not close it like a success.
+    enum WriteResult {
+        case success
+        case failure(String)
+        case ignored
+    }
 
     /// In-flight write keys: device/certificate ids for row actions plus
     /// one key per create form — per-item so saving one row never blocks
@@ -454,24 +463,33 @@ final class ResourcesViewModel: ObservableObject {
 
     // MARK: - Writes (Batch G #10)
     //
-    // All four methods return nil on success or an error message for the
-    // caller to display inline; forms/rows stay put on failure so typed
-    // input is never silently discarded (same contract as review replies).
+    // All four methods return a WriteResult: .success saved, .failure the
+    // inline error message (forms/rows stay put so typed input is never
+    // silently discarded — same contract as review replies), .ignored when
+    // a duplicate write is already in flight or the task was cancelled
+    // (the form must stay open in that case too, not close like a success).
     // Provisioning writes need an Admin/Account Holder key role — a
     // TestFlight-only key 403s, hence the write-specific hint below.
 
-    /// POST /v1/devices — register a device. The new row is prepended to
-    /// the loaded list (server sort order is restored on next refresh).
-    func registerDevice(name: String, platform: DevicePlatform, udid: String) async -> String? {
+    /// POST /v1/devices — register a device. On success the search filter
+    /// is cleared (a filter could otherwise hide the new row) and the row
+    /// is prepended to the loaded list; server sort order returns on the
+    /// next refresh.
+    func registerDevice(name: String, platform: DevicePlatform, udid: String) async -> WriteResult {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUdid = udid.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return "Enter a device name." }
-        guard !trimmedUdid.isEmpty else { return "Enter the device UDID." }
-        guard !isWriteInFlight(Self.registerDeviceKey) else { return nil }
+        guard !trimmedName.isEmpty else { return .failure("Enter a device name.") }
+        guard !trimmedUdid.isEmpty else { return .failure("Enter the device UDID.") }
+        guard ProvisioningWriteValidation.isValidUDID(trimmedUdid) else {
+            return .failure("That doesn't look like a UDID — expected 40 hex characters, or 8-8-9 hex groups separated by a dash ( Finder → device details, or Xcode → Devices window).")
+        }
+        guard !isWriteInFlight(Self.registerDeviceKey) else { return .ignored }
         writeInFlight.insert(Self.registerDeviceKey)
         defer { writeInFlight.remove(Self.registerDeviceKey) }
 
-        let body = DeviceCreateRequest(
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(DeviceCreateRequest(
             data: DeviceCreateData(
                 attributes: DeviceCreateAttributes(
                     name: trimmedName,
@@ -479,39 +497,36 @@ final class ResourcesViewModel: ObservableObject {
                     udid: trimmedUdid
                 )
             )
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        guard let data = try? encoder.encode(body),
-              let request = APIClient.shared.getRequest(
-                api: .post(name: .getDevices, body: data),
-                apiVersion: .v1) else {
-            return "Couldn't build the register request."
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .devices, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the register request.")
         }
 
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled else { return .ignored }
             let model = try getDecoder().decode(DeviceModel.self, from: responseData)
             prependDevice(model)
-            return nil
+            return .success
         } catch {
             resourcesLogger.error("Failed to register device: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return nil }
-            return writeErrorMessage(for: error)
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
         }
     }
 
     /// PATCH /v1/devices/{id} with status ENABLED/DISABLED. There is no
     /// DELETE on devices — disabling is the API's "revoke" (removal is
     /// Apple Developer website only).
-    func setDeviceEnabled(_ device: DeviceModel, enabled: Bool) async -> String? {
-        guard !isWriteInFlight(device.id) else { return nil }
+    func setDeviceEnabled(_ device: DeviceModel, enabled: Bool) async -> WriteResult {
+        guard !isWriteInFlight(device.id) else { return .ignored }
         writeInFlight.insert(device.id)
         defer { writeInFlight.remove(device.id) }
 
-        let body = DeviceUpdateRequest(
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(DeviceUpdateRequest(
             data: DeviceUpdateData(
                 id: device.id,
                 attributes: DeviceUpdateAttributes(
@@ -519,137 +534,139 @@ final class ResourcesViewModel: ObservableObject {
                     status: enabled ? "ENABLED" : "DISABLED"
                 )
             )
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        guard let data = try? encoder.encode(body),
-              let request = APIClient.shared.getRequest(
-                api: .patch(name: .getDevices, body: data, path: device.id),
-                apiVersion: .v1) else {
-            return "Couldn't build the device update request."
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .devices, body: data, path: device.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the device update request.")
         }
 
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled else { return .ignored }
             let model = try getDecoder().decode(DeviceModel.self, from: responseData)
             // Re-locate after the await: the list may have changed
             // (refresh, pagination) since the toggle started.
             guard case .loaded(var devices) = devicesState,
-                  let index = devices.firstIndex(where: { $0.id == device.id }) else { return nil }
+                  let index = devices.firstIndex(where: { $0.id == device.id }) else { return .ignored }
             devices[index] = model
             devicesState = .loaded(devices)
             dataVersion += 1
-            return nil
+            return .success
         } catch {
             resourcesLogger.error("Failed to update device: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return nil }
-            return writeErrorMessage(for: error)
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
         }
     }
 
     /// POST /v1/certificates — create from a CSR. The caller pastes CSR
     /// content (Keychain Access → Request a Certificate, or
     /// `openssl req -new`); generating the key pair in-app is out of scope.
-    func createCertificate(certificateType: CertificateTypeOption, csrContent: String) async -> String? {
+    func createCertificate(certificateType: CertificateTypeOption, csrContent: String) async -> WriteResult {
         let trimmedCSR = csrContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedCSR.isEmpty else { return "Paste the CSR content." }
-        guard !isWriteInFlight(Self.createCertificateKey) else { return nil }
+        guard !trimmedCSR.isEmpty else { return .failure("Paste the CSR content.") }
+        guard ProvisioningWriteValidation.isValidCSR(trimmedCSR) else {
+            return .failure("That doesn't look like a CSR — expected PEM content with \"-----BEGIN CERTIFICATE REQUEST-----\" and \"-----END CERTIFICATE REQUEST-----\" markers.")
+        }
+        guard !isWriteInFlight(Self.createCertificateKey) else { return .ignored }
         writeInFlight.insert(Self.createCertificateKey)
         defer { writeInFlight.remove(Self.createCertificateKey) }
 
-        let body = CertificateCreateRequest(
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(CertificateCreateRequest(
             data: CertificateCreateData(
                 attributes: CertificateCreateAttributes(
                     csrContent: trimmedCSR,
                     certificateType: certificateType.rawValue
                 )
             )
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        guard let data = try? encoder.encode(body),
-              let request = APIClient.shared.getRequest(
-                api: .post(name: .getCertificates, body: data),
-                apiVersion: .v1) else {
-            return "Couldn't build the certificate request."
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .certificates, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the certificate request.")
         }
 
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled else { return .ignored }
             let model = try getDecoder().decode(CertificateModel.self, from: responseData)
             prependCertificate(model)
-            return nil
+            return .success
         } catch {
             resourcesLogger.error("Failed to create certificate: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return nil }
-            return writeErrorMessage(for: error)
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
         }
     }
 
     /// DELETE /v1/certificates/{id} — revoke. The row is dropped locally on
     /// 204; callers must confirm first (destructive, cannot be undone).
-    func revokeCertificate(id: String) async -> String? {
-        guard !isWriteInFlight(id) else { return nil }
+    func revokeCertificate(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
         writeInFlight.insert(id)
         defer { writeInFlight.remove(id) }
 
         guard let request = APIClient.shared.getRequest(
-            api: .delete(name: .getCertificates, path: id),
+            api: .delete(name: .certificates, path: id),
             apiVersion: .v1) else {
-            return "Couldn't build the revoke request."
+            return .failure("Couldn't build the revoke request.")
         }
 
         do {
             _ = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled else { return .ignored }
             // Re-locate after the await: the list may have changed.
             guard case .loaded(var certificates) = certificatesState,
-                  let index = certificates.firstIndex(where: { $0.id == id }) else { return nil }
+                  let index = certificates.firstIndex(where: { $0.id == id }) else { return .ignored }
             certificates.remove(at: index)
             certificatesState = certificates.isEmpty ? .empty : .loaded(certificates)
             if let total = totals[.certificates] {
                 totals[.certificates] = max(0, total - 1)
             }
             dataVersion += 1
-            return nil
+            return .success
         } catch {
             resourcesLogger.error("Failed to revoke certificate: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return nil }
-            return writeErrorMessage(for: error)
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
         }
     }
 
+    /// Prepends only when the list is loaded — otherwise a failed/idle
+    /// list must not be replaced by a one-item ".loaded" list pretending
+    /// to be the whole collection; a reload fetches the real first page.
     private func prependDevice(_ model: DeviceModel) {
-        if case .loaded(var devices) = devicesState {
-            devices.removeAll { $0.id == model.id }
-            devices.insert(model, at: 0)
-            devicesState = .loaded(devices)
-        } else {
-            devicesState = .loaded([model])
-            loadedKinds.insert(.devices)
+        guard case .loaded(var devices) = devicesState else {
+            // The new row exists server-side now; fetch the real list
+            // (retry bypasses the loadedKinds staleness guard).
+            retry(.devices)
+            return
         }
+        devices.removeAll { $0.id == model.id }
+        devices.insert(model, at: 0)
+        devicesState = .loaded(devices)
         if let total = totals[.devices] {
             totals[.devices] = total + 1
         }
+        // A filter (e.g. a UDID search from before registration) could
+        // otherwise hide the new row.
+        searchTexts[.devices] = nil
         dataVersion += 1
     }
 
     private func prependCertificate(_ model: CertificateModel) {
-        if case .loaded(var certificates) = certificatesState {
-            certificates.removeAll { $0.id == model.id }
-            certificates.insert(model, at: 0)
-            certificatesState = .loaded(certificates)
-        } else {
-            certificatesState = .loaded([model])
-            loadedKinds.insert(.certificates)
+        guard case .loaded(var certificates) = certificatesState else {
+            retry(.certificates)
+            return
         }
+        certificates.removeAll { $0.id == model.id }
+        certificates.insert(model, at: 0)
+        certificatesState = .loaded(certificates)
         if let total = totals[.certificates] {
             totals[.certificates] = total + 1
         }
+        searchTexts[.certificates] = nil
         dataVersion += 1
     }
 

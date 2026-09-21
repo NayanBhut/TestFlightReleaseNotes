@@ -445,6 +445,7 @@ private struct RegisterDeviceForm: View {
             TextField("Device name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .font(.subheadline)
+                .disabled(isSaving)
             HStack {
                 Picker("Platform", selection: $platform) {
                     ForEach(DevicePlatform.allCases, id: \.self) { option in
@@ -453,11 +454,13 @@ private struct RegisterDeviceForm: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 260)
+                .disabled(isSaving)
                 Spacer()
             }
-            TextField("UDID", text: $udid)
+            TextField("UDID (40 hex characters, or 8-8-9 hex groups with dashes)", text: $udid)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
+                .disabled(isSaving)
             Text("Needs an API key with the Admin role. Verify with a throwaway device first — registrations count against the yearly device limit.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -473,6 +476,7 @@ private struct RegisterDeviceForm: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .foregroundColor(.secondary)
+                    .disabled(isSaving)
                 Spacer()
                 if isSaving {
                     ProgressView()
@@ -482,11 +486,13 @@ private struct RegisterDeviceForm: View {
                         Task { @MainActor in
                             isSaving = true
                             defer { isSaving = false }
-                            let message = await viewModel.registerDevice(
+                            let result = await viewModel.registerDevice(
                                 name: name, platform: platform, udid: udid)
-                            if message == nil {
+                            if case .success = result {
                                 onDone()
-                            } else {
+                            } else if case .failure(let message) = result {
+                                // .ignored: duplicate in flight / cancelled —
+                                // keep the form open, nothing was registered.
                                 errorMessage = message
                             }
                         }
@@ -520,15 +526,17 @@ private struct CreateCertificateForm: View {
                 .fontWeight(.medium)
             Picker("Type", selection: $certificateType) {
                 ForEach(CertificateTypeOption.allCases, id: \.self) { option in
-                    Text(option.rawValue).tag(option)
+                    Text(option.displayName).tag(option)
                 }
             }
             .pickerStyle(.menu)
+            .disabled(isSaving)
             TextEditor(text: $csrContent)
                 .font(.system(size: 11, design: .monospaced))
                 .frame(minHeight: 70, maxHeight: 120)
                 .border(Color.gray.opacity(0.3), width: 1)
                 .accessibilityLabel("Certificate signing request content")
+                .disabled(isSaving)
             Text("Paste the CSR content. Needs an API key with the Admin role.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -543,6 +551,7 @@ private struct CreateCertificateForm: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .foregroundColor(.secondary)
+                    .disabled(isSaving)
                 Spacer()
                 if isSaving {
                     ProgressView()
@@ -552,11 +561,13 @@ private struct CreateCertificateForm: View {
                         Task { @MainActor in
                             isSaving = true
                             defer { isSaving = false }
-                            let message = await viewModel.createCertificate(
+                            let result = await viewModel.createCertificate(
                                 certificateType: certificateType, csrContent: csrContent)
-                            if message == nil {
+                            if case .success = result {
                                 onDone()
-                            } else {
+                            } else if case .failure(let message) = result {
+                                // .ignored: duplicate in flight / cancelled —
+                                // keep the form open, nothing was created.
                                 errorMessage = message
                             }
                         }
@@ -626,8 +637,10 @@ private struct DeviceRow: View {
                 } else {
                     Button(isDisabled ? "Enable" : "Disable") {
                         Task { @MainActor in
-                            errorMessage = await viewModel.setDeviceEnabled(
-                                device, enabled: isDisabled)
+                            if case .failure(let message) = await viewModel.setDeviceEnabled(
+                                device, enabled: isDisabled) {
+                                errorMessage = message
+                            }
                         }
                     }
                     .buttonStyle(.bordered)
@@ -719,7 +732,9 @@ private struct CertificateRow: View {
             Button("Cancel", role: .cancel) {}
             Button("Revoke", role: .destructive) {
                 Task { @MainActor in
-                    errorMessage = await viewModel.revokeCertificate(id: certificate.id)
+                    if case .failure(let message) = await viewModel.revokeCertificate(id: certificate.id) {
+                        errorMessage = message
+                    }
                 }
             }
         } message: {

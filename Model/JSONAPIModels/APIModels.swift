@@ -304,8 +304,12 @@ typealias AppStoreVersionLocalizationsDocument = CompoundDocument<[AppStoreVersi
 // Apple's OpenAPI spec (v4.4.1, AppInfoLocalizationUpdateRequest): name,
 // subtitle, privacyPolicyUrl, privacyChoicesUrl, privacyPolicyText, all
 // nullable. `locale` is intentionally absent — it is immutable on update.
-// Nil attributes are omitted from the JSON (encodeIfPresent semantics via
-// optionals) so unchanged fields are never sent.
+//
+// Attribute semantics: a field set to .unchanged is omitted from the JSON
+// entirely; .clear encodes an explicit JSON null (spec-marked nullable),
+// which is how a subtitle or privacy URL is removed; .set sends the value.
+// Synthesized encodeIfPresent can't express "null vs absent", hence the
+// custom encode(to:).
 struct AppInfoLocalizationUpdateRequest: Encodable {
     var data: AppInfoLocalizationUpdateData
 }
@@ -316,12 +320,48 @@ struct AppInfoLocalizationUpdateData: Encodable {
     var attributes: AppInfoLocalizationUpdateAttributes
 }
 
+enum AppInfoLocalizationFieldValue: Equatable {
+    /// Omit from the request body (leave unchanged).
+    case unchanged
+    /// Send JSON null (clear the field server-side).
+    case clear
+    /// Send the string value.
+    case set(String)
+}
+
 struct AppInfoLocalizationUpdateAttributes: Encodable {
-    var name: String?
-    var subtitle: String?
-    var privacyPolicyUrl: String?
-    var privacyChoicesUrl: String?
-    var privacyPolicyText: String?
+    var name: AppInfoLocalizationFieldValue
+    var subtitle: AppInfoLocalizationFieldValue
+    var privacyPolicyUrl: AppInfoLocalizationFieldValue
+    var privacyChoicesUrl: AppInfoLocalizationFieldValue
+
+    private enum CodingKeys: String, CodingKey {
+        case name, subtitle, privacyPolicyUrl, privacyChoicesUrl
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch name {
+        case .unchanged: break
+        case .clear: try container.encodeNil(forKey: .name)
+        case .set(let value): try container.encode(value, forKey: .name)
+        }
+        switch subtitle {
+        case .unchanged: break
+        case .clear: try container.encodeNil(forKey: .subtitle)
+        case .set(let value): try container.encode(value, forKey: .subtitle)
+        }
+        switch privacyPolicyUrl {
+        case .unchanged: break
+        case .clear: try container.encodeNil(forKey: .privacyPolicyUrl)
+        case .set(let value): try container.encode(value, forKey: .privacyPolicyUrl)
+        }
+        switch privacyChoicesUrl {
+        case .unchanged: break
+        case .clear: try container.encodeNil(forKey: .privacyChoicesUrl)
+        case .set(let value): try container.encode(value, forKey: .privacyChoicesUrl)
+        }
+    }
 }
 
 /// Client-side limits mirroring App Store Connect rules (Help: name 2–30
