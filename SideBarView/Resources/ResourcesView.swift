@@ -10,7 +10,12 @@
 //  Batch F (#6): per-kind search field in the list sheet (local filter),
 //  "No matches" state, and a filtering-aware row count in the header.
 //
-//  Batch F fix: the sheet window is bounded to the screen and resizable.
+//  Batch F fix: the sheet window is bounded to the screen (width capped
+//  too) and resizable; the Resources group starts expanded.
+//
+//  Batch F review fixes: the height cap resolves from the presenting
+//  window's screen instead of NSScreen.main, and the no-matches view
+//  hints that more matches may exist on unloaded pages.
 //
 
 import SwiftUI
@@ -19,6 +24,8 @@ import AppKit
 /// Sidebar section listing the five team-scoped resource kinds.
 struct ResourcesSectionView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    // Starts expanded — one less tap to reach the five resource rows
+    // (intentional Batch F default, confirmed in review).
     @State private var isExpanded = true
     @State private var selectedKind: ResourcesViewModel.Kind?
 
@@ -88,17 +95,21 @@ struct ResourceListContentView: View {
         // ScrollView's ideal height sizes the window past the bottom edge
         // (Load-more footer unreachable; scrolling just moves content
         // inside the off-screen part of the window).
-        .frame(minWidth: 480, idealWidth: 540,
+        .frame(minWidth: 480, idealWidth: 540, maxWidth: 720,
                minHeight: 420, idealHeight: 560, maxHeight: maxSheetHeight)
         .onAppear {
             viewModel.load(kind)
         }
     }
 
-    /// Screen fit minus a margin for the title bar / Dock rounding;
-    /// floored so the cap can never dip below minHeight.
+    /// Height cap from the *presenting* window's screen: the sheet's body
+    /// evaluates before the sheet window exists, so the key window (the
+    /// presenter) is the right multi-display anchor — NSScreen.main can
+    /// point elsewhere when the body runs before the sheet is keyed.
+    /// Attached sheets are modal, so the host can't move mid-presentation.
     private var maxSheetHeight: CGFloat {
-        max(460, (NSScreen.main?.visibleFrame.height ?? 1_000) - 120)
+        let screen = NSApp.keyWindow?.screen ?? NSScreen.main
+        return max(460, (screen?.visibleFrame.height ?? 1_000) - 120)
     }
 
     // MARK: - Header
@@ -112,7 +123,7 @@ struct ResourceListContentView: View {
             if let total = viewModel.totals[kind] {
                 // Local search only covers loaded rows — show "N of M loaded"
                 // while filtering so the count can't read as a server total.
-                if viewModel.hasActiveSearch(kind) {
+                if viewModel.hasActiveSearch(for: kind) {
                     Text("\(viewModel.filteredCount(for: kind)) of \(viewModel.loadedCount(for: kind)) loaded")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -188,7 +199,7 @@ struct ResourceListContentView: View {
             VStack(spacing: 0) {
                 searchField
                 Divider()
-                if viewModel.hasActiveSearch(kind), viewModel.filteredCount(for: kind) == 0 {
+                if viewModel.hasActiveSearch(for: kind), viewModel.filteredCount(for: kind) == 0 {
                     noMatchesView
                 } else {
                     ScrollView {
@@ -260,6 +271,14 @@ struct ResourceListContentView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
+            if viewModel.nextCursors[kind] != nil {
+                // Search is local — matches may still exist on pages that
+                // haven't been loaded yet (review finding).
+                Text("More results may exist on unloaded pages — try Load more below")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
             Button("Clear Search") {
                 viewModel.searchBinding(for: kind).wrappedValue = ""
             }
