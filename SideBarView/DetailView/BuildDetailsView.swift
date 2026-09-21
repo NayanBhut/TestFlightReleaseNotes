@@ -123,7 +123,10 @@ struct BuildDetailsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { saveError in
-            Text(saveError.message)
+            // Name the failing locale: with Update all saving several
+            // locales, the server detail alone ("The 'locale' value is
+            // invalid.") doesn't say which one failed.
+            Text("\(saveError.locale): \(saveError.message)")
         }
     }
 
