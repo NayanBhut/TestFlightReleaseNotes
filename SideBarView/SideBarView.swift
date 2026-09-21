@@ -427,6 +427,13 @@ struct SideBarView: View {
                     Text("No iOS apps are available for this team")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                    if CredentialStorage.shared.getTeams.isEmpty {
+                        Button("Add Team") {
+                            isAddNewTeam = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.vertical, 4)
+                    }
                     Button("Refresh") {
                         viewModel.retryApps()
                     }
@@ -439,10 +446,11 @@ struct SideBarView: View {
             ErrorRetryView(
                 title: "Couldn't Load Apps",
                 message: message,
-                retryTitle: "Retry"
-            ) {
-                viewModel.retryApps()
-            }
+                retryTitle: "Retry",
+                onRetry: { viewModel.retryApps() },
+                extraButtonTitle: CredentialStorage.shared.getTeams.isEmpty ? "Add Team" : "",
+                extraButtonAction: { isAddNewTeam = true }
+            )
         }
     }
 

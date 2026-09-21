@@ -261,7 +261,9 @@ struct DetailView: View {
                 Text("No App Selected")
                     .font(.title3)
                     .fontWeight(.medium)
-                Text("Select an app from the sidebar to view versions and builds")
+                Text(CredentialStorage.shared.getTeams.isEmpty
+                    ? "Add a team to get started"
+                    : "Select an app from the sidebar to view versions and builds")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

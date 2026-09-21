@@ -9,18 +9,6 @@ import SwiftUI
 
 class NavigationManager: ObservableObject {
     @Published var isLoggedIn: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKeys.isLoggedIn)
-
-    func checkLoginState() {
-        let loginState = UserDefaults.standard.bool(forKey: UserDefaultsKeys.isLoggedIn)
-        let teams = CredentialStorage.shared.getTeams
-
-        if loginState && !teams.isEmpty {
-            isLoggedIn = true
-        } else {
-            isLoggedIn = false
-            UserDefaults.standard.removeObject(forKey: UserDefaultsKeys.isLoggedIn)
-        }
-    }
 }
 
 // MARK: - Unified view state
@@ -83,6 +71,11 @@ struct ErrorRetryView: View {
     let message: String
     let retryTitle: String
     let onRetry: () -> Void
+    /// An optional action shown between the retry button and the
+    /// bottom spacer — e.g. "Add Team" so it sits next to Retry
+    /// instead of being orphaned at the bottom.
+    var extraButtonTitle: String = ""
+    var extraButtonAction: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12) {
@@ -99,6 +92,11 @@ struct ErrorRetryView: View {
                 .padding(.horizontal)
             Button(retryTitle, action: onRetry)
                 .buttonStyle(.borderedProminent)
+            if let extraButtonAction = extraButtonAction, !extraButtonTitle.isEmpty {
+                Button(extraButtonTitle, action: extraButtonAction)
+                    .buttonStyle(.bordered)
+                    .padding(.vertical, 2)
+            }
             Spacer()
         }
         .padding()
