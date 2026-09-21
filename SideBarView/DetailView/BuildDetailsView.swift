@@ -194,7 +194,7 @@ struct BuildDetailsView: View {
                     builds: viewModel.arrBuilds,
                     completeCount: viewModel.completeLocaleCount()
                 )
-                .frame(width: 520)
+                .frame(width: 500)
                 .padding()
             }
 
@@ -438,7 +438,7 @@ struct LocaleCompletenessPopover: View {
     let completeCount: (complete: Int, total: Int)
 
     var body: some View {
-        ScrollView {
+        ScrollView([.vertical, .horizontal]) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Locales × Builds")
@@ -457,7 +457,12 @@ struct LocaleCompletenessPopover: View {
                         HStack(spacing: 4) {
                             Text(locale)
                                 .font(.caption2)
-                                .frame(width: 48, alignment: .leading)
+                                .frame(width: 52, alignment: .leading)
+                            Text(BetaLocalizationLocales.displayName(for: locale))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 140, alignment: .leading)
+                                .lineLimit(1)
                             ForEach(buildStatus, id: \.buildId) { _, hasNotes in
                                 Image(systemName: hasNotes ? "checkmark.circle.fill" : "minus.circle.fill")
                                     .font(.caption)
@@ -469,7 +474,7 @@ struct LocaleCompletenessPopover: View {
             }
             .padding(8)
         }
-        .frame(width: 480, height: 300)
+        .frame(width: 500, height: 300)
     }
 }
 
