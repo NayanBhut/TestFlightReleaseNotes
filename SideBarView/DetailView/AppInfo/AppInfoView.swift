@@ -5,8 +5,11 @@
 //  Batch C1: read-only App Info panel. Shows app identity (Apple ID,
 //  bundle ID, SKU, locale, content rights), the appInfos records
 //  (state, age rating, categories), app info localizations, the live
-//  version's localizations and export compliance. Write lifecycle
-//  deferred to Batch D4; no PATCH in this phase.
+//  version's localizations and export compliance.
+//
+//  Batch G (#10): inline editor for app info localizations
+//  (PATCH /v1/appInfoLocalizations/{id} — name, subtitle, privacy URLs).
+//  Needs an App Manager+ key; TestFlight-only keys 403.
 //
 
 import SwiftUI
@@ -167,13 +170,13 @@ struct AppInfoView: View {
                 ForEach(localizations, id: \.id) { loc in
                     VStack(alignment: .leading, spacing: 8) {
                         if loc.id != localizations.first?.id { Divider() }
-                        InfoRow(label: loc.locale ?? "Locale", value: loc.name, valueFont: .body)
-                            InfoRow(label: "Subtitle", value: loc.subtitle)
-                            InfoRow(label: "Privacy Policy URL", value: loc.privacyPolicyUrl)
-                            InfoRow(label: "Privacy Choices URL", value: loc.privacyChoicesUrl)
+                        AppInfoLocalizationRow(localization: loc, viewModel: viewModel)
                         }
                     }
                 }
+                Text("Editing needs an API key with the App Manager role or higher — a TestFlight-only key is rejected (403).")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -275,6 +278,131 @@ struct AppInfoView: View {
         case true: return "Yes"
         case false: return "No"
         default: return nil
+        }
+    }
+}
+
+// MARK: - App Info localization editor (Batch G #10)
+
+/// Read-only rows plus an inline editor for name, subtitle and privacy
+/// URLs (PATCH /v1/appInfoLocalizations/{id}). The editor stays open on
+/// failure so typed input is never silently discarded — same contract as
+/// the review ReplySection.
+struct AppInfoLocalizationRow: View {
+    let localization: AppInfoLocalizationModel
+    @ObservedObject var viewModel: DetailViewModel
+    @State private var isEditing = false
+    @State private var name = ""
+    @State private var subtitle = ""
+    @State private var privacyPolicyUrl = ""
+    @State private var privacyChoicesUrl = ""
+    @State private var errorMessage: String?
+
+    private var isSaving: Bool {
+        viewModel.savingAppInfoLocalizationIds.contains(localization.id)
+    }
+
+    // Blank fields are omitted from the PATCH (left unchanged), so a
+    // blanked field is never a change — without this, clearing a field
+    // would enable Save for a write that changes nothing.
+    private var hasChanges: Bool {
+        isChanged(name, from: localization.name)
+            || isChanged(subtitle, from: localization.subtitle)
+            || isChanged(privacyPolicyUrl, from: localization.privacyPolicyUrl)
+            || isChanged(privacyChoicesUrl, from: localization.privacyChoicesUrl)
+    }
+
+    private func isChanged(_ draft: String, from original: String?) -> Bool {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != (original ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 8) {
+                    InfoRow(label: localization.locale ?? "Locale", value: localization.name, valueFont: .body)
+                    InfoRow(label: "Subtitle", value: localization.subtitle)
+                    InfoRow(label: "Privacy Policy URL", value: localization.privacyPolicyUrl)
+                    InfoRow(label: "Privacy Choices URL", value: localization.privacyChoicesUrl)
+                }
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else if !isEditing {
+                    Button("Edit") {
+                        name = localization.name ?? ""
+                        subtitle = localization.subtitle ?? ""
+                        privacyPolicyUrl = localization.privacyPolicyUrl ?? ""
+                        privacyChoicesUrl = localization.privacyChoicesUrl ?? ""
+                        errorMessage = nil
+                        isEditing = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            if isEditing {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Name (2–30 characters)", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                    TextField("Subtitle (up to 30 characters)", text: $subtitle)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                    TextField("Privacy Policy URL", text: $privacyPolicyUrl)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                    TextField("Privacy Choices URL", text: $privacyChoicesUrl)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                    Text("Blank fields are left unchanged.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack {
+                        Button("Cancel") {
+                            isEditing = false
+                            errorMessage = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Save") {
+                            Task { @MainActor in
+                                let message = await viewModel.saveAppInfoLocalization(
+                                    id: localization.id,
+                                    name: name,
+                                    subtitle: subtitle,
+                                    privacyPolicyUrl: privacyPolicyUrl,
+                                    privacyChoicesUrl: privacyChoicesUrl
+                                )
+                                // Keep the editor open on failure so the
+                                // typed input is never silently discarded.
+                                if message == nil {
+                                    isEditing = false
+                                    errorMessage = nil
+                                } else {
+                                    errorMessage = message
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(isSaving || !hasChanges)
+                    }
+                }
+                .padding(8)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .cornerRadius(6)
+            }
         }
     }
 }

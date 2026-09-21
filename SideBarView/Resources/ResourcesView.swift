@@ -4,8 +4,12 @@
 //
 //  Batch C2: team-scoped Resources section in the sidebar (like AppDab's
 //  Resources group), shown below the apps list when the extended-info flag
-//  is on. Tapping a kind opens a sheet with the read-only list. Write
-//  lifecycle deferred to Batch D4.
+//  is on. Tapping a kind opens a sheet with the read-only list.
+//
+//  Batch G (#10): device register/enable/disable (POST/PATCH /v1/devices —
+//  no DELETE exists; disable is the API's revoke) and certificate
+//  create/revoke (POST/DELETE /v1/certificates). Needs an Admin key;
+//  TestFlight-only keys 403.
 //
 //  Batch F (#6): per-kind search field in the list sheet (local filter),
 //  "No matches" state, and a filtering-aware row count in the header.
@@ -83,11 +87,26 @@ struct ResourceListContentView: View {
     let kind: ResourcesViewModel.Kind
     @ObservedObject var viewModel: ResourcesViewModel
     @Environment(\.dismiss) private var dismiss
+    // Batch G (#10): write forms toggle from the header.
+    @State private var showRegisterDeviceForm = false
+    @State private var showCreateCertificateForm = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            if kind == .devices, showRegisterDeviceForm {
+                RegisterDeviceForm(viewModel: viewModel) {
+                    showRegisterDeviceForm = false
+                }
+                Divider()
+            }
+            if kind == .certificates, showCreateCertificateForm {
+                CreateCertificateForm(viewModel: viewModel) {
+                    showCreateCertificateForm = false
+                }
+                Divider()
+            }
             content
         }
         // min→max ranges make the sheet window resizable; the screen-
@@ -139,6 +158,28 @@ struct ResourceListContentView: View {
             }
             .buttonStyle(.bordered)
             .accessibilityLabel("Refresh \(kind.displayName)")
+            // Batch G (#10): writes need an Admin key; TestFlight-only keys
+            // 403. Forms stay available so the 403 hint is discoverable.
+            if kind == .devices {
+                Button {
+                    showRegisterDeviceForm.toggle()
+                } label: {
+                    Label("Register", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Register a device")
+            }
+            if kind == .certificates {
+                Button {
+                    showCreateCertificateForm.toggle()
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Create a certificate")
+            }
             Button {
                 dismiss()
             } label: {
@@ -293,11 +334,11 @@ struct ResourceListContentView: View {
         switch kind {
         case .devices:
             ForEach(viewModel.filteredDevices, id: \.id) { device in
-                DeviceRow(device: device)
+                DeviceRow(device: device, viewModel: viewModel)
             }
         case .certificates:
             ForEach(viewModel.filteredCertificates, id: \.id) { certificate in
-                CertificateRow(certificate: certificate)
+                CertificateRow(certificate: certificate, viewModel: viewModel)
             }
         case .bundleIds:
             ForEach(viewModel.filteredBundleIds, id: \.id) { bundleId in
@@ -379,10 +420,167 @@ struct ViewStateListState {
     }
 }
 
+// MARK: - Write forms (Batch G #10)
+
+// Forms stay open on failure so typed input is never silently discarded
+// (same contract as the review ReplySection); on success the caller
+// collapses the form and the new row appears at the top of the list.
+
+/// POST /v1/devices — name, platform (spec enum BundleIdPlatform) and UDID
+/// are all required. Needs an Admin key role; a TestFlight-only key 403s.
+private struct RegisterDeviceForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: () -> Void
+    @State private var name = ""
+    @State private var platform: DevicePlatform = .IOS
+    @State private var udid = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Register Device")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            TextField("Device name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+            HStack {
+                Picker("Platform", selection: $platform) {
+                    ForEach(DevicePlatform.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 260)
+                Spacer()
+            }
+            TextField("UDID", text: $udid)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+            Text("Needs an API key with the Admin role. Verify with a throwaway device first — registrations count against the yearly device limit.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Register") {
+                        Task { @MainActor in
+                            isSaving = true
+                            defer { isSaving = false }
+                            let message = await viewModel.registerDevice(
+                                name: name, platform: platform, udid: udid)
+                            if message == nil {
+                                onDone()
+                            } else {
+                                errorMessage = message
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || udid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// POST /v1/certificates — certificate type plus pasted CSR content
+/// (Keychain Access → Request a Certificate, or `openssl req -new`).
+private struct CreateCertificateForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: () -> Void
+    @State private var certificateType: CertificateTypeOption = .IOS_DEVELOPMENT
+    @State private var csrContent = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("New Certificate")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            Picker("Type", selection: $certificateType) {
+                ForEach(CertificateTypeOption.allCases, id: \.self) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            TextEditor(text: $csrContent)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(minHeight: 70, maxHeight: 120)
+                .border(Color.gray.opacity(0.3), width: 1)
+                .accessibilityLabel("Certificate signing request content")
+            Text("Paste the CSR content. Needs an API key with the Admin role.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Create") {
+                        Task { @MainActor in
+                            isSaving = true
+                            defer { isSaving = false }
+                            let message = await viewModel.createCertificate(
+                                certificateType: certificateType, csrContent: csrContent)
+                            if message == nil {
+                                onDone()
+                            } else {
+                                errorMessage = message
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(csrContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 // MARK: - Rows
 
 private struct DeviceRow: View {
     let device: DeviceModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var errorMessage: String?
+
+    private var isDisabled: Bool { device.status == "DISABLED" }
+    private var isBusy: Bool { viewModel.isWriteInFlight(device.id) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -405,15 +603,37 @@ private struct DeviceRow: View {
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(device.deviceClass ?? "")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Text(device.platform ?? "")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                // Batch G (#10): disable is the API's "revoke" (no DELETE
+                // on devices); re-enabling reverses it, so no confirm.
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button(isDisabled ? "Enable" : "Disable") {
+                        Task { @MainActor in
+                            errorMessage = await viewModel.setDeviceEnabled(
+                                device, enabled: isDisabled)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityLabel("\(isDisabled ? "Enable" : "Disable") \(device.name ?? "device")")
+                }
             }
         }
         .padding(.vertical, 6)
@@ -424,6 +644,11 @@ private struct DeviceRow: View {
 
 private struct CertificateRow: View {
     let certificate: CertificateModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var showRevokeConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(certificate.id) }
 
     private static let expiryParser = ISO8601DateFormatter()
     /// App Store Connect returns fractional seconds on some endpoints;
@@ -461,15 +686,45 @@ private struct CertificateRow: View {
                 Text("Expires: \(certificate.expirationDate ?? "—")")
                     .font(.caption2)
                     .foregroundColor(isExpired ? .red : .secondary)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
-            Text(certificate.certificateType ?? "")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(certificate.certificateType ?? "")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                // Batch G (#10): revoking is destructive — confirm first
+                // (alert pattern mirrors BuildRowView's expire/remove).
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Revoke") { showRevokeConfirm = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.red)
+                        .accessibilityLabel("Revoke \(certificate.displayName ?? certificate.name ?? "certificate")")
+                }
+            }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Revoke this certificate?", isPresented: $showRevokeConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Revoke", role: .destructive) {
+                Task { @MainActor in
+                    errorMessage = await viewModel.revokeCertificate(id: certificate.id)
+                }
+            }
+        } message: {
+            Text("Apps signed with this certificate will stop working. This cannot be undone.")
+        }
     }
 }
 

@@ -102,3 +102,99 @@ typealias CertificatesDocument = CompoundDocument<[CertificateModel], Meta>
 typealias BundleIdsDocument = CompoundDocument<[BundleIdModel], Meta>
 typealias ProfilesDocument = CompoundDocument<[ProfileModel], Meta>
 typealias UsersDocument = CompoundDocument<[UserModel], Meta>
+
+// MARK: - Batch G (#10): device + certificate writes
+//
+// Bodies verified against Apple's OpenAPI spec (v4.4.1):
+// - POST /v1/devices: attributes name + platform + udid (all required).
+//   Platform enum is BundleIdPlatform: IOS, MAC_OS, UNIVERSAL.
+// - PATCH /v1/devices/{id}: attributes name?, status? (ENABLED/DISABLED).
+//   There is NO DELETE on devices — devices can only be disabled via the
+//   API (removal is Apple Developer website only), so "revoke" = disable.
+// - POST /v1/certificates: attributes csrContent + certificateType.
+// - DELETE /v1/certificates/{id}: revoke (204, no body).
+// Writes need an API key with an elevated role (Admin/Account Holder for
+// provisioning); a TestFlight-only key 403s.
+
+/// Device platform values (spec enum BundleIdPlatform).
+enum DevicePlatform: String, CaseIterable {
+    case IOS
+    case MAC_OS
+    case UNIVERSAL
+
+    var displayName: String {
+        switch self {
+        case .IOS: return "iOS"
+        case .MAC_OS: return "macOS"
+        case .UNIVERSAL: return "Universal"
+        }
+    }
+}
+
+struct DeviceCreateRequest: Encodable {
+    var data: DeviceCreateData
+}
+
+struct DeviceCreateData: Encodable {
+    var type = "devices"
+    var attributes: DeviceCreateAttributes
+}
+
+struct DeviceCreateAttributes: Encodable {
+    var name: String
+    var platform: String
+    var udid: String
+}
+
+struct DeviceUpdateRequest: Encodable {
+    var data: DeviceUpdateData
+}
+
+struct DeviceUpdateData: Encodable {
+    var type = "devices"
+    var id: String
+    var attributes: DeviceUpdateAttributes
+}
+
+struct DeviceUpdateAttributes: Encodable {
+    var name: String?
+    var status: String?
+}
+
+/// Certificate types (spec enum CertificateType, v4.4.1) for the create
+/// form's picker. A curated UI list would drift silently when Apple adds
+/// types, so this mirrors the full enum.
+enum CertificateTypeOption: String, CaseIterable {
+    case APPLE_PAY
+    case APPLE_PAY_MERCHANT_IDENTITY
+    case APPLE_PAY_PSP_IDENTITY
+    case APPLE_PAY_RSA
+    case DEVELOPER_ID_KEXT
+    case DEVELOPER_ID_KEXT_G2
+    case DEVELOPER_ID_APPLICATION
+    case DEVELOPER_ID_APPLICATION_G2
+    case DEVELOPMENT
+    case DISTRIBUTION
+    case IDENTITY_ACCESS
+    case IOS_DEVELOPMENT
+    case IOS_DISTRIBUTION
+    case MAC_APP_DISTRIBUTION
+    case MAC_INSTALLER_DISTRIBUTION
+    case MAC_APP_DEVELOPMENT
+    case PASS_TYPE_ID
+    case PASS_TYPE_ID_WITH_NFC
+}
+
+struct CertificateCreateRequest: Encodable {
+    var data: CertificateCreateData
+}
+
+struct CertificateCreateData: Encodable {
+    var type = "certificates"
+    var attributes: CertificateCreateAttributes
+}
+
+struct CertificateCreateAttributes: Encodable {
+    var csrContent: String
+    var certificateType: String
+}
