@@ -676,16 +676,46 @@ enum WhatsNewLimits {
 /// Locales supported for TestFlight beta build localizations.
 /// Exact Apple locale identifiers — the spec leaves `locale` a free
 /// string but the server 400s anything outside this set ("de" must be
-/// "de-DE", "nl" must be "nl-NL"). Source: App Store Connect via
-/// fastlane's Deliver::Languages::ALL_LANGUAGES.
+/// "de-DE", "nl" must be "nl-NL"). Source: Apple's locale-shortcodes
+/// table (50 languages) at developer.apple.com/documentation/
+/// appstoreconnectapi/managing-metadata-in-your-app-by-using-locale-shortcodes.
 enum BetaLocalizationLocales {
     static let defaultLocale = "en-US"
 
     static let supported: [String] = [
-        "ar-SA", "ca", "cs", "da", "de-DE", "el", "en-AU", "en-CA", "en-GB", "en-US",
-        "es-ES", "es-MX", "fi", "fr-CA", "fr-FR", "he", "hi", "hr", "hu", "id", "it",
-        "ja", "ko", "ms", "nl-NL", "no", "pl", "pt-BR", "pt-PT", "ro", "ru",
-        "sk", "sv", "th", "tr", "uk", "vi", "zh-Hans", "zh-Hant"
+        "ar-SA", "bn-BD", "ca", "cs", "da", "de-DE", "el", "en-AU", "en-CA", "en-GB",
+        "en-US", "es-ES", "es-MX", "fi", "fr-CA", "fr-FR", "gu-IN", "he", "hi", "hr",
+        "hu", "id", "it", "ja", "kn-IN", "ko", "ml-IN", "mr-IN", "ms", "nl-NL",
+        "no", "or-IN", "pa-IN", "pl", "pt-BR", "pt-PT", "ro", "ru", "sk", "sl-SI",
+        "sv", "ta-IN", "te-IN", "th", "tr", "uk", "ur-PK", "vi", "zh-Hans", "zh-Hant"
+    ]
+
+    /// Apple's language name for a locale code (same doc table as
+    /// `supported`). Falls back to the code itself for unknown codes so
+    /// server locales outside our list still render.
+    static func displayName(for locale: String) -> String {
+        names[locale] ?? locale
+    }
+
+    private static let names: [String: String] = [
+        "ar-SA": "Arabic", "bn-BD": "Bengali", "ca": "Catalan",
+        "cs": "Czech", "da": "Danish", "de-DE": "German", "el": "Greek",
+        "en-AU": "English (Australia)", "en-CA": "English (Canada)",
+        "en-GB": "English (U.K.)", "en-US": "English (U.S.)",
+        "es-ES": "Spanish (Spain)", "es-MX": "Spanish (Mexico)",
+        "fi": "Finnish", "fr-CA": "French (Canada)", "fr-FR": "French",
+        "gu-IN": "Gujarati", "he": "Hebrew", "hi": "Hindi",
+        "hr": "Croatian", "hu": "Hungarian", "id": "Indonesian",
+        "it": "Italian", "ja": "Japanese", "kn-IN": "Kannada",
+        "ko": "Korean", "ml-IN": "Malayalam", "mr-IN": "Marathi",
+        "ms": "Malay", "nl-NL": "Dutch", "no": "Norwegian",
+        "or-IN": "Oriya", "pa-IN": "Punjabi", "pl": "Polish",
+        "pt-BR": "Portuguese (Brazil)", "pt-PT": "Portuguese (Portugal)",
+        "ro": "Romanian", "ru": "Russian", "sk": "Slovak",
+        "sl-SI": "Slovenian", "sv": "Swedish", "ta-IN": "Tamil",
+        "te-IN": "Telugu", "th": "Thai", "tr": "Turkish",
+        "uk": "Ukrainian", "ur-PK": "Urdu", "vi": "Vietnamese",
+        "zh-Hans": "Chinese (Simplified)", "zh-Hant": "Chinese (Traditional)"
     ]
 }
 

@@ -51,6 +51,7 @@ struct BuildRowView: View {
     @State private var hasChanges: Bool = false
     @State private var showExpireConfirm = false
     @State private var showDiffView = false
+    @State private var showAddLocale = false
     /// Diffs snapshot for the review sheet, computed on tap (post-flush).
     @State private var reviewDiffs: [LocaleDiff] = []
     /// Locale awaiting removal confirmation. Always confirms — the ×
@@ -72,7 +73,7 @@ struct BuildRowView: View {
             textEditorView
         }
         .padding(.vertical, 4)
-        .alert("Remove \(localePendingRemoval ?? "this locale") notes?", isPresented: Binding(
+        .alert("Remove \(localePendingRemoval.map { localeLabel($0) } ?? "this locale") notes?", isPresented: Binding(
             get: { localePendingRemoval != nil },
             set: { if !$0 { localePendingRemoval = nil } }
         )) {
@@ -239,8 +240,8 @@ struct BuildRowView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .help("Remove \(locale) notes")
-                        .accessibilityLabel("Remove \(locale) notes")
+                        .help("Remove \(localeLabel(locale)) notes")
+                        .accessibilityLabel("Remove \(localeLabel(locale)) notes")
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 6)
@@ -252,18 +253,10 @@ struct BuildRowView: View {
                     )
                 }
 
-                // Add-locale menu: lists supported locales not yet present.
-                // Creates an empty draft; the existing save path POSTs it.
-                Menu {
-                    ForEach(newLocales, id: \.self) { locale in
-                        Button(locale) {
-                            // Flush the current locale's pending edit first,
-                            // same as switching locale tabs.
-                            flushPendingTextChange()
-                            onAddLocale(locale)
-                        }
-                    }
-                } label: {
+                // Add-locale picker: searchable list with Apple's language
+                // names (raw codes like "cs" aren't guessable). Creates an
+                // empty draft; the existing save path POSTs it.
+                Button(action: { showAddLocale = true }) {
                     Image(systemName: "plus")
                         .font(.caption)
                         .padding(.horizontal, 8)
@@ -274,10 +267,19 @@ struct BuildRowView: View {
                         )
                         .foregroundColor(.secondary)
                 }
-                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
                 .disabled(newLocales.isEmpty)
                 .help("Add a locale")
                 .accessibilityLabel("Add locale")
+                .popover(isPresented: $showAddLocale) {
+                    AddLocaleView(locales: newLocales) { locale in
+                        // Flush the current locale's pending edit first,
+                        // same as switching locale tabs.
+                        flushPendingTextChange()
+                        onAddLocale(locale)
+                    }
+                    .frame(width: 280, height: 340)
+                }
             }
             .padding(.horizontal, 4)
         }
@@ -286,6 +288,12 @@ struct BuildRowView: View {
     /// Supported locales that don't exist on this build yet.
     private var newLocales: [String] {
         BetaLocalizationLocales.supported.filter { !locales.contains($0) }
+    }
+
+    /// "German (de-DE)" for display; the bare code when the name is unknown.
+    private func localeLabel(_ locale: String) -> String {
+        let name = BetaLocalizationLocales.displayName(for: locale)
+        return name == locale ? locale : "\(name) (\(locale))"
     }
 
     private var textEditorView: some View {
@@ -440,6 +448,12 @@ struct LocaleDiffsView: View {
     let diffs: [LocaleDiff]
     @Environment(\.dismiss) private var dismiss
 
+    /// "German (de-DE)"; bare code when the name is unknown.
+    static func header(for locale: String) -> String {
+        let name = BetaLocalizationLocales.displayName(for: locale)
+        return name == locale ? locale : "\(name) (\(locale))"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -451,7 +465,7 @@ struct LocaleDiffsView: View {
                     } else {
                         ForEach(diffs, id: \.locale) { diff in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(diff.locale)
+                                Text(Self.header(for: diff.locale))
                                     .font(.subheadline)
                                     .fontWeight(.semibold)
                                 DiffLinesView(added: diff.added, removed: diff.removed)
@@ -471,6 +485,71 @@ struct LocaleDiffsView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Add-locale picker
+
+/// Searchable list of locales not yet on this build. Shows Apple's
+/// language names — raw codes like "cs" or "zh-Hans" aren't guessable —
+/// and filters on both name and code as you type.
+struct AddLocaleView: View {
+    let locales: [String]
+    let onSelect: (String) -> Void
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    private var filtered: [String] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return locales }
+        let q = query.lowercased()
+        return locales.filter {
+            $0.lowercased().contains(q)
+            || BetaLocalizationLocales.displayName(for: $0).lowercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Search languages\u{2026}", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+                .focused($searchFocused)
+                .onAppear { searchFocused = true }
+            if filtered.isEmpty {
+                Text("No languages match \"\(searchText)\".")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(filtered, id: \.self) { locale in
+                            Button(action: {
+                                onSelect(locale)
+                                dismiss()
+                            }) {
+                                HStack {
+                                    Text(BetaLocalizationLocales.displayName(for: locale))
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text(locale)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
     }
 }
 
