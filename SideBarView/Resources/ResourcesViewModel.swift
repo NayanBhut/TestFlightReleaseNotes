@@ -13,6 +13,12 @@
 //  across each model's display fields (search is local — server-side
 //  search params aren't supported on these endpoints).
 //
+//  Batch F review fixes: filter results memoized per kind (the view runs
+//  the pipeline 2–3× per body evaluation), hasActiveSearch(for:) label
+//  aligned with its siblings, and matching switched to
+//  localizedStandardContains (Finder-style: diacritics-insensitive,
+//  number-aware, per user locale).
+//
 
 import SwiftUI
 import JSONAPI
@@ -122,6 +128,28 @@ final class ResourcesViewModel: ObservableObject {
 
     // MARK: - Search (Batch F #6)
 
+    /// Bumped on every mutation of the loaded arrays (fetch completion,
+    /// team reset) — validates the per-kind filter caches below so a
+    /// (query + version) match guarantees a current result (review fix).
+    private var dataVersion = 0
+
+    /// Per-kind filter cache: body evaluation runs the pipeline 2–3×
+    /// (rows + header count + no-matches check) and any unrelated
+    /// @Published change re-renders too — with many loaded pages that
+    /// is real work per keystroke. Empty queries bypass the cache and
+    /// return the source array untouched.
+    private struct FilterCache<T> {
+        var query = ""
+        var version = -1
+        var results: [T] = []
+    }
+
+    private var devicesFilterCache = FilterCache<DeviceModel>()
+    private var certificatesFilterCache = FilterCache<CertificateModel>()
+    private var bundleIdsFilterCache = FilterCache<BundleIdModel>()
+    private var profilesFilterCache = FilterCache<ProfileModel>()
+    private var usersFilterCache = FilterCache<UserModel>()
+
     func searchText(for kind: Kind) -> String { searchTexts[kind] ?? "" }
 
     /// Per-kind binding for the sheet's search field.
@@ -138,46 +166,59 @@ final class ResourcesViewModel: ObservableObject {
     }
 
     /// True while the kind has an effective (non-whitespace) query.
-    func hasActiveSearch(_ kind: Kind) -> Bool { !query(for: kind).isEmpty }
+    /// Label matches searchText(for:)/filteredCount(for:)/loadedCount(for:)
+    /// (review fix).
+    func hasActiveSearch(for kind: Kind) -> Bool { !query(for: kind).isEmpty }
 
-    /// Local, case-insensitive match across the fields each kind's row
-    /// displays — searching must surface a device whose UDID matches even
-    /// when its name doesn't.
-    private func filter<T>(_ items: [T], kind: Kind, fields: (T) -> [String?]) -> [T] {
+    /// Cached local match across the fields each kind's row displays —
+    /// searching must surface a device whose UDID matches even when its
+    /// name doesn't. localizedStandardContains: Finder-style matching
+    /// (diacritics-insensitive, number-aware, per user locale).
+    private func cachedFilter<T>(
+        _ cache: inout FilterCache<T>,
+        kind: Kind,
+        source: [T],
+        fields: (T) -> [String?]
+    ) -> [T] {
         let active = query(for: kind)
-        guard !active.isEmpty else { return items }
-        return items.filter { item in
-            fields(item).contains { $0?.localizedCaseInsensitiveContains(active) == true }
+        guard !active.isEmpty else { return source }
+        if cache.version == dataVersion, cache.query == active {
+            return cache.results
         }
+        let results = source.filter { item in
+            fields(item).contains { $0?.localizedStandardContains(active) == true }
+        }
+        cache = FilterCache(query: active, version: dataVersion, results: results)
+        return results
     }
 
     var filteredDevices: [DeviceModel] {
-        filter(devicesState.loadedValue ?? [], kind: .devices) {
+        cachedFilter(&devicesFilterCache, kind: .devices, source: devicesState.loadedValue ?? []) {
             [$0.name, $0.model, $0.udid, $0.deviceClass, $0.platform, $0.status]
         }
     }
 
     var filteredCertificates: [CertificateModel] {
-        filter(certificatesState.loadedValue ?? [], kind: .certificates) {
+        cachedFilter(&certificatesFilterCache, kind: .certificates, source: certificatesState.loadedValue ?? []) {
             // The row shows displayName with name as fallback — match both.
             [$0.displayName, $0.name, $0.serialNumber, $0.certificateType, $0.platform]
         }
     }
 
     var filteredBundleIds: [BundleIdModel] {
-        filter(bundleIdsState.loadedValue ?? [], kind: .bundleIds) {
+        cachedFilter(&bundleIdsFilterCache, kind: .bundleIds, source: bundleIdsState.loadedValue ?? []) {
             [$0.name, $0.identifier, $0.platform]
         }
     }
 
     var filteredProfiles: [ProfileModel] {
-        filter(profilesState.loadedValue ?? [], kind: .profiles) {
+        cachedFilter(&profilesFilterCache, kind: .profiles, source: profilesState.loadedValue ?? []) {
             [$0.name, $0.uuid, $0.profileType, $0.profileState, $0.platform]
         }
     }
 
     var filteredUsers: [UserModel] {
-        filter(usersState.loadedValue ?? [], kind: .users) {
+        cachedFilter(&usersFilterCache, kind: .users, source: usersState.loadedValue ?? []) {
             // Roles render as chips — searchable as one joined string.
             [$0.username, $0.firstName, $0.lastName, ($0.roles ?? []).joined(separator: " ")]
         }
@@ -327,6 +368,8 @@ final class ResourcesViewModel: ObservableObject {
         // Staleness only on success: a failed load must NOT mark the kind
         // loaded, or reopening the list would never auto-retry the error.
         loadedKinds.insert(kind)
+        // Loaded arrays changed — invalidate filter caches (review fix).
+        dataVersion += 1
     }
 
     private func merge<T>(existing: [T], incoming: [T], isPaginating: Bool, id: KeyPath<T, String>) -> [T] {
@@ -354,6 +397,8 @@ final class ResourcesViewModel: ObservableObject {
         paginationFailedKinds = []
         searchTexts = [:]
         isPaginatingKinds = []
+        // Loaded arrays changed — invalidate filter caches (review fix).
+        dataVersion += 1
     }
 
     // MARK: - Per-kind state helpers

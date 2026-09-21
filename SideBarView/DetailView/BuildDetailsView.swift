@@ -7,6 +7,9 @@
 
 import SwiftUI
 import AppKit
+import OSLog
+
+private let buildDetailsLogger = Logger(subsystem: "com.appstore.release-notes", category: "BuildDetails")
 
 struct BuildDetailsView: View {
     @ObservedObject var viewModel: DetailViewModel
@@ -240,15 +243,21 @@ struct BuildDetailsView: View {
         Menu {
             ForEach(ASCDeepLink.allCases) { link in
                 Button {
-                    guard let appId = viewModel.selectedApp?.id,
-                          let url = link.url(appId: appId) else { return }
-                    NSWorkspace.shared.open(url)
+                    guard let appId = viewModel.selectedApp?.id else { return }
+                    guard let url = link.url(appId: appId) else {
+                        // A nil URL means a malformed app id — never expected
+                        // with numeric ASC ids, but a dead button shouldn't
+                        // be a mystery (review finding).
+                        buildDetailsLogger.error("Couldn't build \(link.title, privacy: .public) URL for app id \(appId, privacy: .public)")
+                        return
+                    }
+                    if !NSWorkspace.shared.open(url) {
+                        // No default browser / handler registered.
+                        buildDetailsLogger.error("No application could open \(url.absoluteString, privacy: .public)")
+                    }
                 } label: {
                     Label(link.title, systemImage: link.systemImage)
                 }
-                // The ASC SPA routes client-side per app id — without a
-                // selected app there is nothing meaningful to open.
-                .disabled(viewModel.selectedApp == nil)
             }
         } label: {
             Label("Open in App Store Connect", systemImage: "safari")
@@ -256,6 +265,11 @@ struct BuildDetailsView: View {
                 .foregroundColor(.secondary)
         }
         .menuStyle(.borderlessButton)
+        // The ASC SPA routes client-side per app id — without a selected
+        // app there is nothing meaningful to open. Disabling the whole menu
+        // communicates the state more clearly than three grayed items
+        // behind an opening menu (review finding).
+        .disabled(viewModel.selectedApp == nil)
         .help("Open this app in App Store Connect (browser)")
         .accessibilityLabel("Open in App Store Connect")
     }
@@ -448,15 +462,23 @@ enum ASCDeepLink: CaseIterable, Identifiable {
     }
 
     /// TestFlight feedback lives under /testflight; in-app events use the
-    /// camelCase resource route like other app-level ASC sections.
+    /// camelCase resource route like other app-level ASC sections. Built
+    /// via URLComponents so an unexpected app id gets percent-encoded
+    /// (or rejected as nil) instead of interpolating into a malformed URL
+    /// (review finding).
     func url(appId: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "appstoreconnect.apple.com"
+        components.path = "/apps/\(appId)\(pathSuffix)"
+        return components.url
+    }
+
+    private var pathSuffix: String {
         switch self {
-        case .screenshots:
-            return URL(string: "https://appstoreconnect.apple.com/apps/\(appId)/testflight/screenshots")
-        case .crashes:
-            return URL(string: "https://appstoreconnect.apple.com/apps/\(appId)/testflight/crashes")
-        case .inAppEvents:
-            return URL(string: "https://appstoreconnect.apple.com/apps/\(appId)/inAppEvents")
+        case .screenshots: return "/testflight/screenshots"
+        case .crashes: return "/testflight/crashes"
+        case .inAppEvents: return "/inAppEvents"
         }
     }
 }
