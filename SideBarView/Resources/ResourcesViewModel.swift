@@ -6,8 +6,10 @@
 //  Bundle IDs, Profiles, Users. Follows the BetaViewModel pattern:
 //  ViewState per list, in-flight task cancellation, cursor pagination
 //  with retry, friendly 403 hint (these endpoints need an API key with
-//  broader permissions than TestFlight-only). Write lifecycle deferred
-//  to Batch D4; this is read-only.
+//  broader permissions than TestFlight-only).
+//
+//  Batch G (#10): device register/enable/disable + certificate
+//  create/revoke (Admin key role required).
 //
 //  Batch F (#6): per-kind search text + local, case-insensitive filtering
 //  across each model's display fields (search is local — server-side
@@ -125,6 +127,19 @@ final class ResourcesViewModel: ObservableObject {
     /// Kinds with a page request in flight — per-kind so paginating one
     /// kind never swallows another kind's Load-more tap.
     private var isPaginatingKinds: Set<Kind> = []
+
+    // MARK: - Writes (Batch G #10)
+
+    /// In-flight write keys: device/certificate ids for row actions plus
+    /// one key per create form — per-item so saving one row never blocks
+    /// another (same rule as DetailViewModel.updatingSaveKeys).
+    @Published private(set) var writeInFlight: Set<String> = []
+
+    /// Create-form write keys (never collide with resource ids).
+    static let registerDeviceKey = "register-device"
+    static let createCertificateKey = "create-certificate"
+
+    func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
     // MARK: - Search (Batch F #6)
 
@@ -431,6 +446,217 @@ final class ResourcesViewModel: ObservableObject {
         if let apiError = error as? APIError {
             if apiError.statusCode == 403 {
                 return "\(apiError.details) — resources need an API key with broader permissions than TestFlight-only."
+            }
+            return apiError.details
+        }
+        return error.localizedDescription
+    }
+
+    // MARK: - Writes (Batch G #10)
+    //
+    // All four methods return nil on success or an error message for the
+    // caller to display inline; forms/rows stay put on failure so typed
+    // input is never silently discarded (same contract as review replies).
+    // Provisioning writes need an Admin/Account Holder key role — a
+    // TestFlight-only key 403s, hence the write-specific hint below.
+
+    /// POST /v1/devices — register a device. The new row is prepended to
+    /// the loaded list (server sort order is restored on next refresh).
+    func registerDevice(name: String, platform: DevicePlatform, udid: String) async -> String? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedUdid = udid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return "Enter a device name." }
+        guard !trimmedUdid.isEmpty else { return "Enter the device UDID." }
+        guard !isWriteInFlight(Self.registerDeviceKey) else { return nil }
+        writeInFlight.insert(Self.registerDeviceKey)
+        defer { writeInFlight.remove(Self.registerDeviceKey) }
+
+        let body = DeviceCreateRequest(
+            data: DeviceCreateData(
+                attributes: DeviceCreateAttributes(
+                    name: trimmedName,
+                    platform: platform.rawValue,
+                    udid: trimmedUdid
+                )
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .getDevices, body: data),
+                apiVersion: .v1) else {
+            return "Couldn't build the register request."
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return nil }
+            let model = try getDecoder().decode(DeviceModel.self, from: responseData)
+            prependDevice(model)
+            return nil
+        } catch {
+            resourcesLogger.error("Failed to register device: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return nil }
+            return writeErrorMessage(for: error)
+        }
+    }
+
+    /// PATCH /v1/devices/{id} with status ENABLED/DISABLED. There is no
+    /// DELETE on devices — disabling is the API's "revoke" (removal is
+    /// Apple Developer website only).
+    func setDeviceEnabled(_ device: DeviceModel, enabled: Bool) async -> String? {
+        guard !isWriteInFlight(device.id) else { return nil }
+        writeInFlight.insert(device.id)
+        defer { writeInFlight.remove(device.id) }
+
+        let body = DeviceUpdateRequest(
+            data: DeviceUpdateData(
+                id: device.id,
+                attributes: DeviceUpdateAttributes(
+                    name: nil,
+                    status: enabled ? "ENABLED" : "DISABLED"
+                )
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .getDevices, body: data, path: device.id),
+                apiVersion: .v1) else {
+            return "Couldn't build the device update request."
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return nil }
+            let model = try getDecoder().decode(DeviceModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, pagination) since the toggle started.
+            guard case .loaded(var devices) = devicesState,
+                  let index = devices.firstIndex(where: { $0.id == device.id }) else { return nil }
+            devices[index] = model
+            devicesState = .loaded(devices)
+            dataVersion += 1
+            return nil
+        } catch {
+            resourcesLogger.error("Failed to update device: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return nil }
+            return writeErrorMessage(for: error)
+        }
+    }
+
+    /// POST /v1/certificates — create from a CSR. The caller pastes CSR
+    /// content (Keychain Access → Request a Certificate, or
+    /// `openssl req -new`); generating the key pair in-app is out of scope.
+    func createCertificate(certificateType: CertificateTypeOption, csrContent: String) async -> String? {
+        let trimmedCSR = csrContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCSR.isEmpty else { return "Paste the CSR content." }
+        guard !isWriteInFlight(Self.createCertificateKey) else { return nil }
+        writeInFlight.insert(Self.createCertificateKey)
+        defer { writeInFlight.remove(Self.createCertificateKey) }
+
+        let body = CertificateCreateRequest(
+            data: CertificateCreateData(
+                attributes: CertificateCreateAttributes(
+                    csrContent: trimmedCSR,
+                    certificateType: certificateType.rawValue
+                )
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .getCertificates, body: data),
+                apiVersion: .v1) else {
+            return "Couldn't build the certificate request."
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return nil }
+            let model = try getDecoder().decode(CertificateModel.self, from: responseData)
+            prependCertificate(model)
+            return nil
+        } catch {
+            resourcesLogger.error("Failed to create certificate: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return nil }
+            return writeErrorMessage(for: error)
+        }
+    }
+
+    /// DELETE /v1/certificates/{id} — revoke. The row is dropped locally on
+    /// 204; callers must confirm first (destructive, cannot be undone).
+    func revokeCertificate(id: String) async -> String? {
+        guard !isWriteInFlight(id) else { return nil }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getCertificates, path: id),
+            apiVersion: .v1) else {
+            return "Couldn't build the revoke request."
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return nil }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var certificates) = certificatesState,
+                  let index = certificates.firstIndex(where: { $0.id == id }) else { return nil }
+            certificates.remove(at: index)
+            certificatesState = certificates.isEmpty ? .empty : .loaded(certificates)
+            if let total = totals[.certificates] {
+                totals[.certificates] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return nil
+        } catch {
+            resourcesLogger.error("Failed to revoke certificate: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return nil }
+            return writeErrorMessage(for: error)
+        }
+    }
+
+    private func prependDevice(_ model: DeviceModel) {
+        if case .loaded(var devices) = devicesState {
+            devices.removeAll { $0.id == model.id }
+            devices.insert(model, at: 0)
+            devicesState = .loaded(devices)
+        } else {
+            devicesState = .loaded([model])
+            loadedKinds.insert(.devices)
+        }
+        if let total = totals[.devices] {
+            totals[.devices] = total + 1
+        }
+        dataVersion += 1
+    }
+
+    private func prependCertificate(_ model: CertificateModel) {
+        if case .loaded(var certificates) = certificatesState {
+            certificates.removeAll { $0.id == model.id }
+            certificates.insert(model, at: 0)
+            certificatesState = .loaded(certificates)
+        } else {
+            certificatesState = .loaded([model])
+            loadedKinds.insert(.certificates)
+        }
+        if let total = totals[.certificates] {
+            totals[.certificates] = total + 1
+        }
+        dataVersion += 1
+    }
+
+    private func writeErrorMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            if apiError.statusCode == 403 {
+                return "\(apiError.details) — this action needs an API key with the Admin role."
             }
             return apiError.details
         }

@@ -79,6 +79,29 @@ Implementation fixes worth knowing (already applied, don't revert):
 PATCH appInfo • create/revoke devices/certificates/profiles • review filters.
 (POST /customerReviewResponses review replies moved INTO Branch D — see below.)
 
+## Batch G (#10) — App Info + provisioning writes (this branch)
+
+Implements two of the follow-ups above; endpoint contracts verified against
+Apple's OpenAPI spec mirror (v4.4.1).
+
+| Area | File | Change |
+|---|---|---|
+| API | `Model/JSONAPIModels/APIManager.swift` | New case `appInfoLocalizations = "/appInfoLocalizations"` (top-level route — unlike appInfos, no `/apps` prefix composition). Devices/certs reuse `getDevices`/`getCertificates` with the verb from `APIMethod` |
+| API | `Model/JSONAPIModels/APIModels.swift` | `AppInfoLocalizationUpdateRequest` (+30-char limits enum); `locale` absent — immutable on update |
+| API | `Model/JSONAPIModels/ResourceModels.swift` | `DeviceCreate/UpdateRequest`, `DevicePlatform` (IOS/MAC_OS/UNIVERSAL), full-enum `CertificateTypeOption`, `CertificateCreateRequest` |
+| G1 | `SideBarView/DetailView/DetailViewModel.swift` | `saveAppInfoLocalization()` PATCH + in-row model update, per-id in-flight set, client validation (name 2–30, subtitle ≤30, http(s) URLs), 403 → App Manager hint |
+| G1 | `SideBarView/DetailView/AppInfo/AppInfoView.swift` | `AppInfoLocalizationRow` inline editor (Edit/Save/Cancel, stays open on failure, blank = unchanged) |
+| G2 | `SideBarView/Resources/ResourcesViewModel.swift` | `registerDevice` (POST), `setDeviceEnabled` (PATCH ENABLED/DISABLED — no DELETE exists on devices; website-only removal), `createCertificate` (POST), `revokeCertificate` (DELETE 204), `writeInFlight` set, 403 → Admin hint |
+| G2 | `SideBarView/Resources/ResourcesView.swift` | Register/New header buttons + forms, per-row Enable/Disable, Revoke with destructive confirm alert |
+
+Out of scope (still follow-ups): PATCH appInfo (categories), profiles create/delete,
+review filters, certificate CSR generation in-app (paste-only for now).
+
+Verify: `xcodebuild … BUILD SUCCEEDED`, no new warnings in touched files.
+Live-write verification needs an App Manager/Admin key (TestFlight-only 403s):
+exercise device registration with a throwaway device UDID first (yearly limit),
+then App Info edits in an editable state, then cert create/revoke.
+
 ## Round 1 review (kimi-k3:cloud) — triage outcome
 
 - FIXED: staleness ids recorded only on success (stuck-error auto-retry) • certificates paginate with real totals (was silently truncated >50) • `ReviewsViewModel.resetForTeamSwitch()` on deselection (cross-team staleness/cursor races) • App Info Refresh `||` • tab clamp independent of the picker • parallel App Info fetches (`async let`) • `ForEach` identity by `id` not offset • per-kind pagination-failure/in-flight flags • `StateChip` green for ENABLED/ACTIVE/VALID • `StarRating` collapsed VoiceOver element • `deinit` task cancellation in all 3 VMs • dead `force` params removed • CI comment decoupled from this doc • misnamed `emailFallback` extension inlined.

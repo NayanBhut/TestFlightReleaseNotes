@@ -422,6 +422,13 @@ enum APIName: String {
     case getBundleIds = "/bundleIds"
     case getProfiles = "/profiles"
     case getUsers = "/users"
+
+    // Batch G (#10): top-level collection route for app info
+    // localizations — PATCH /v1/appInfoLocalizations/{id} (verified in the
+    // OpenAPI spec: patch/delete/get on /v1/appInfoLocalizations/{id}).
+    // Unlike appInfos (app-scoped subpath only), this one is top-level, so
+    // it gets its own case. Reused for POST (create) if that's ever added.
+    case appInfoLocalizations = "/appInfoLocalizations"
 }
 
 enum APIVersion: String {

@@ -38,6 +38,11 @@ class DetailViewModel: ObservableObject {
     @Published var versionLocalizationsState: ViewState<[AppStoreVersionLocalizationsModel]> = .idle
     @Published var exportComplianceState: ViewState<[AppEncryptionDeclarationModel]> = .idle
 
+    // MARK: Batch G (#10) — App Info writes
+    /// Localization ids with a PATCH in flight — per-localization so saving
+    /// one locale never blocks another (same rule as updatingSaveKeys).
+    @Published private(set) var savingAppInfoLocalizationIds: Set<String> = []
+
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
     @Published var versionsNextCursor: String?
@@ -483,6 +488,115 @@ extension DetailViewModel {
         if let apiError = error as? APIError {
             if apiError.statusCode == 403 {
                 return "\(apiError.details) — this section may need an API key with broader permissions (e.g. App Manager)."
+            }
+            return apiError.details
+        }
+        return error.localizedDescription
+    }
+
+    // MARK: - App Info writes (Batch G #10)
+
+    /// PATCH /v1/appInfoLocalizations/{id} for name, subtitle and privacy
+    /// URLs. Returns nil on success, otherwise an error message for the
+    /// editor to display inline (the editor stays open on failure so typed
+    /// input is never silently discarded — same contract as review replies).
+    ///
+    /// Empty strings are treated as "leave unchanged" (nil attributes are
+    /// omitted from the body); there is deliberately no clear-to-empty path
+    /// here. Only editable while the parent app info is in an editable
+    /// state — otherwise the server 409s and its detail is surfaced as-is.
+    func saveAppInfoLocalization(id: String,
+                                 name: String,
+                                 subtitle: String,
+                                 privacyPolicyUrl: String,
+                                 privacyChoicesUrl: String) async -> String? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSubtitle = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrivacyUrl = privacyPolicyUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedChoicesUrl = privacyChoicesUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let message = validateAppInfoLocalization(name: trimmedName,
+                                                     subtitle: trimmedSubtitle,
+                                                     privacyPolicyUrl: trimmedPrivacyUrl,
+                                                     privacyChoicesUrl: trimmedChoicesUrl) {
+            return message
+        }
+        guard !savingAppInfoLocalizationIds.contains(id) else { return nil }
+        savingAppInfoLocalizationIds.insert(id)
+        defer { savingAppInfoLocalizationIds.remove(id) }
+
+        // Omit empty fields (unchanged) rather than sending "" — the
+        // server rejects empty names and empty is never a useful write.
+        let body = AppInfoLocalizationUpdateRequest(
+            data: AppInfoLocalizationUpdateData(
+                id: id,
+                attributes: AppInfoLocalizationUpdateAttributes(
+                    name: trimmedName.isEmpty ? nil : trimmedName,
+                    subtitle: trimmedSubtitle.isEmpty ? nil : trimmedSubtitle,
+                    privacyPolicyUrl: trimmedPrivacyUrl.isEmpty ? nil : trimmedPrivacyUrl,
+                    privacyChoicesUrl: trimmedChoicesUrl.isEmpty ? nil : trimmedChoicesUrl
+                )
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .appInfoLocalizations, body: data, path: id),
+                apiVersion: .v1) else {
+            return "Couldn't build the update request."
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return nil }
+            let model = try getDecoder().decode(AppInfoLocalizationModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, app switch) since the save started.
+            guard case .loaded(var infos) = appInfoState,
+                  let infoIndex = infos.firstIndex(where: { $0.appInfoLocalizations.contains(where: { $0.id == id }) }),
+                  let locIndex = infos[infoIndex].appInfoLocalizations.firstIndex(where: { $0.id == id }) else { return nil }
+            infos[infoIndex].appInfoLocalizations[locIndex] = model
+            appInfoState = .loaded(infos)
+            return nil
+        } catch {
+            detailLogger.error("Failed to update app info localization: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return nil }
+            return appInfoWriteErrorMessage(for: error)
+        }
+    }
+
+    private func validateAppInfoLocalization(name: String,
+                                             subtitle: String,
+                                             privacyPolicyUrl: String,
+                                             privacyChoicesUrl: String) -> String? {
+        if !name.isEmpty,
+           name.count < AppInfoLocalizationLimits.nameMinLength
+            || name.count > AppInfoLocalizationLimits.nameMaxLength {
+            return "Name must be \(AppInfoLocalizationLimits.nameMinLength)–\(AppInfoLocalizationLimits.nameMaxLength) characters."
+        }
+        if subtitle.count > AppInfoLocalizationLimits.subtitleMaxLength {
+            return "Subtitle can't be longer than \(AppInfoLocalizationLimits.subtitleMaxLength) characters."
+        }
+        for url in [privacyPolicyUrl, privacyChoicesUrl] where !url.isEmpty {
+            guard let parsed = URL(string: url),
+                  let scheme = parsed.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  parsed.host != nil else {
+                return "Privacy URLs must be valid http(s) URLs."
+            }
+        }
+        return nil
+    }
+
+    /// App Info writes need an App Manager/Admin key — a TestFlight-only key
+    /// 403s. 409 (non-editable app info state) surfaces the server detail
+    /// untouched since it already names the blocking state.
+    private func appInfoWriteErrorMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            if apiError.statusCode == 403 {
+                return "\(apiError.details) — saving needs an API key with the App Manager role or higher."
             }
             return apiError.details
         }

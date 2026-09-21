@@ -297,3 +297,38 @@ struct AppEncryptionDeclarationModel: Equatable {
 typealias AppInfosDocument = CompoundDocument<[AppInfoModel], NoMeta>
 typealias AppEncryptionDeclarationsDocument = CompoundDocument<[AppEncryptionDeclarationModel], Meta>
 typealias AppStoreVersionLocalizationsDocument = CompoundDocument<[AppStoreVersionLocalizationsModel], NoMeta>
+
+// MARK: - Batch G (#10): App Info writes
+//
+// PATCH /v1/appInfoLocalizations/{id} — attribute set verified against
+// Apple's OpenAPI spec (v4.4.1, AppInfoLocalizationUpdateRequest): name,
+// subtitle, privacyPolicyUrl, privacyChoicesUrl, privacyPolicyText, all
+// nullable. `locale` is intentionally absent — it is immutable on update.
+// Nil attributes are omitted from the JSON (encodeIfPresent semantics via
+// optionals) so unchanged fields are never sent.
+struct AppInfoLocalizationUpdateRequest: Encodable {
+    var data: AppInfoLocalizationUpdateData
+}
+
+struct AppInfoLocalizationUpdateData: Encodable {
+    var type = "appInfoLocalizations"
+    var id: String
+    var attributes: AppInfoLocalizationUpdateAttributes
+}
+
+struct AppInfoLocalizationUpdateAttributes: Encodable {
+    var name: String?
+    var subtitle: String?
+    var privacyPolicyUrl: String?
+    var privacyChoicesUrl: String?
+    var privacyPolicyText: String?
+}
+
+/// Client-side limits mirroring App Store Connect rules (Help: name 2–30
+/// chars, subtitle ≤ 30 chars) so obvious rejections surface without a
+/// network round-trip. The server remains the source of truth.
+enum AppInfoLocalizationLimits {
+    static let nameMinLength = 2
+    static let nameMaxLength = 30
+    static let subtitleMaxLength = 30
+}
