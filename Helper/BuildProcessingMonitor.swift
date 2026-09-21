@@ -9,6 +9,9 @@
 //  and posts a local notification on the PROCESSING → VALID transition
 //  (FAILED / INVALID end the wait too, so they notify as well).
 //
+//  The monitor is an app-lifetime @StateObject created in App_StoreApp and
+//  never released — the poll loop intentionally retains it strongly.
+//
 
 import AppKit
 import Combine
@@ -16,13 +19,33 @@ import Foundation
 import JSONAPI
 import OSLog
 import SwiftUI
-import UserNotifications
+@preconcurrency import UserNotifications
 
 private let buildMonitorLogger = Logger(subsystem: "com.appstore.release-notes", category: "BuildMonitor")
+
+/// "1.2 (42)" / "AppName 1.2 (42)" — one implementation shared by the menu
+/// rows and notification copies so the fallback ("Build") can never drift.
+enum BuildDisplayName {
+    static func make(appName: String?, marketingVersion: String?, buildNumber: String?) -> String {
+        let versionPart: String
+        if let marketing = marketingVersion, !marketing.isEmpty {
+            let number = buildNumber ?? ""
+            versionPart = number.isEmpty ? marketing : "\(marketing) (\(number))"
+        } else {
+            let number = buildNumber ?? ""
+            versionPart = number.isEmpty ? "" : "Build \(number)"
+        }
+        guard !versionPart.isEmpty else { return appName ?? "Build" }
+        guard let appName, !appName.isEmpty else { return versionPart }
+        return "\(appName) \(versionPart)"
+    }
+}
 
 /// Minimal info the menu bar needs per processing build.
 struct ProcessingBuildInfo: Identifiable, Equatable {
     let id: String
+    /// Owning app's name — multi-app accounts need to tell builds apart.
+    let appName: String
     /// Build number (BuildsModel.version, e.g. "42").
     let buildNumber: String
     /// Marketing version from the included pre-release version (e.g. "1.2").
@@ -30,10 +53,11 @@ struct ProcessingBuildInfo: Identifiable, Equatable {
     let uploadedDate: String?
 
     var displayName: String {
-        if let marketingVersion, !marketingVersion.isEmpty {
-            return "\(marketingVersion) (\(buildNumber))"
-        }
-        return buildNumber
+        BuildDisplayName.make(
+            appName: appName.isEmpty ? nil : appName,
+            marketingVersion: marketingVersion,
+            buildNumber: buildNumber
+        )
     }
 }
 
@@ -86,7 +110,10 @@ final class SystemBuildNotifier: BuildNotificationPosting {
         case "VALID":
             return ("Build ready for testing", "\(name) finished processing and is ready.")
         case "FAILED":
-            return ("Build processing failed", "\(name) failed processing. Select the build to view errors.")
+            // "Check App Store Connect", not "select the build": clicking the
+            // notification doesn't navigate anywhere (no didReceive deep-link),
+            // so the copy must not imply in-app interactivity.
+            return ("Build processing failed", "\(name) failed processing. Check App Store Connect for errors.")
         case "INVALID":
             return ("Build invalid", "\(name) is invalid. Upload a new build.")
         default:
@@ -95,11 +122,11 @@ final class SystemBuildNotifier: BuildNotificationPosting {
     }
 
     static func displayName(for build: BuildsModel) -> String {
-        let number = build.version ?? ""
-        if let marketing = build.preReleaseVersion?.version, !marketing.isEmpty {
-            return "\(marketing) (\(number))"
-        }
-        return number.isEmpty ? "Build" : "Build \(number)"
+        BuildDisplayName.make(
+            appName: build.app?.name,
+            marketingVersion: build.preReleaseVersion?.version,
+            buildNumber: build.version
+        )
     }
 }
 
@@ -114,29 +141,48 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
 
     private let pollInterval: TimeInterval
     private let pollLimit: Int
+    /// Backoff after a failed poll: an erroring key (expired/revoked) would
+    /// otherwise hammer the API with 401s at full cadence.
+    private let errorPollInterval: TimeInterval
     private var pollTask: Task<Void, Never>?
     /// Build ids seen PROCESSING on the previous poll. A disappearance means
     /// the build left PROCESSING — the follow-up fetch learns the terminal state.
     private var knownProcessingIds: Set<String> = []
+    /// One-shot per build id: build ids are unique per upload and a terminal
+    /// build never re-enters PROCESSING, so eviction only risks a re-notify
+    /// for an ancient build re-uploaded under the same id — not possible.
     private var notifiedBuildIds: Set<String> = []
+    private static let notifiedBuildIdsCap = 500
     /// Consecutive failed follow-ups per disappeared id. A deleted build 404s
     /// forever, so misses are capped instead of retried indefinitely.
     private var followUpMisses: [String: Int] = [:]
     private static let maxFollowUpMisses = 5
     private var lastTeamKey: String?
     private let notifier: BuildNotificationPosting
+    private var teamsCancellable: AnyCancellable?
 
     init(pollInterval: TimeInterval = AppConfigs.buildStatusPollInterval,
          pollLimit: Int = AppConfigs.buildStatusPollLimit,
          notifier: BuildNotificationPosting = SystemBuildNotifier()) {
         self.pollInterval = pollInterval
         self.pollLimit = pollLimit
+        self.errorPollInterval = AppConfigs.buildStatusPollErrorInterval
         self.notifier = notifier
         super.init()
+        // Login must not wait up to a whole poll interval to show data.
+        // (Logout is handled inside refresh() itself.)
+        teamsCancellable = CredentialStorage.shared.$teams
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] teams in
+                guard let self, !teams.isEmpty else { return }
+                Task { await self.pollNow() }
+            }
     }
 
     /// Idempotent: the App scene calls this from both the main window and
-    /// the menu bar label — whichever appears first starts the loop.
+    /// the menu bar label — whichever appears first starts the loop. The
+    /// monitor lives for the app's lifetime (@StateObject), so the loop
+    /// captures self strongly on purpose.
     func start() {
         notifier.requestAuthorizationIfNeeded()
         // Banner even when frontmost (e.g. watching the builds list while an
@@ -144,12 +190,14 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
         // weak delegate reference stays valid.
         UNUserNotificationCenter.current().delegate = self
         guard pollTask == nil else { return }
-        pollTask = Task { [weak self] in
-            await self?.refresh()
-            while let self, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(self.pollInterval * 1_000_000_000))
-                guard !Task.isCancelled else { return }
-                await self.refresh()
+        pollTask = Task { [self] in
+            while !Task.isCancelled {
+                await refresh()
+                // Sleep AFTER the refresh: fresh login / upload fires the
+                // pollNow path, while a failed poll backs off instead of
+                // hammering at full cadence.
+                let interval = lastError == nil ? pollInterval : errorPollInterval
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
     }
@@ -174,16 +222,25 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
 
     // MARK: - Polling
 
+    /// Serialized by isPolling: a manual "Check now" landing while the timer
+    /// poll is in flight must not double-fire follow-ups and notifications.
     private func refresh() async {
+        guard !isPolling else { return }
+
         guard let team = CredentialStorage.shared.selectedTeam else {
-            // Logged out: clear so the menu never shows another team's builds.
+            // Logged out: clear so the menu never shows another team's
+            // builds — including any stale error/last-checked from the
+            // previous session.
             processingBuilds = []
             knownProcessingIds = []
             notifiedBuildIds = []
             followUpMisses = [:]
             lastTeamKey = nil
+            lastError = nil
+            lastPollDate = nil
             return
         }
+
         if lastTeamKey != team.key {
             // Team switch: old ids belong to the previous team — a
             // disappearance must not read as a transition.
@@ -191,7 +248,9 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             knownProcessingIds = []
             notifiedBuildIds = []
             followUpMisses = [:]
+            lastError = nil
         }
+
         guard !Task.isCancelled else { return }
         isPolling = true
         defer { isPolling = false }
@@ -203,6 +262,7 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             processingBuilds = builds.map {
                 ProcessingBuildInfo(
                     id: $0.id,
+                    appName: $0.app?.name ?? "",
                     buildNumber: $0.version ?? "",
                     marketingVersion: $0.preReleaseVersion?.version,
                     uploadedDate: $0.uploadedDate
@@ -215,12 +275,30 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             // retries instead of dropping the transition on the floor.
             var stillKnown = currentIds
             for id in disappeared where !notifiedBuildIds.contains(id) {
-                if let terminal = try? await fetchBuild(id: id),
-                   SystemBuildNotifier.content(for: terminal) != nil {
+                guard !Task.isCancelled else { return }
+                do {
+                    let terminal = try await fetchBuild(id: id)
+                    if SystemBuildNotifier.content(for: terminal) == nil {
+                        // Not terminal yet (rare: build briefly vanished) —
+                        // keep tracking so the next poll retries.
+                        followUpMisses[id] = (followUpMisses[id] ?? 0) + 1
+                        stillKnown.insert(id)
+                        continue
+                    }
                     notifier.postTransitionNotification(build: terminal)
                     notifiedBuildIds.insert(id)
+                    if notifiedBuildIds.count > Self.notifiedBuildIdsCap {
+                        // One-shot per unique build id (see property note):
+                        // clearing can only ever re-notify an id that can't
+                        // re-enter PROCESSING.
+                        notifiedBuildIds.removeAll()
+                    }
                     followUpMisses.removeValue(forKey: id)
-                } else {
+                } catch {
+                    // Logged instead of try?-swallowed: a decoding or network
+                    // bug here would otherwise look exactly like a deleted build.
+                    guard !Task.isCancelled else { return }
+                    buildMonitorLogger.debug("Follow-up fetch failed for build \(id): \(error.localizedDescription)")
                     let misses = (followUpMisses[id] ?? 0) + 1
                     if misses < Self.maxFollowUpMisses {
                         followUpMisses[id] = misses
@@ -241,13 +319,21 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
         }
     }
 
+    /// Relationship names must be listed in fields[builds]: sparse fieldsets
+    /// filter relationships too, so omitting "preReleaseVersion,app" would
+    /// drop their linkage and the include= hydration would yield nil.
+    private static let buildFields = "processingState,version,uploadedDate,expired,preReleaseVersion,app"
+
     func fetchProcessingBuilds() async throws -> [BuildsModel] {
         let queryParams = [
             "filter[processingState]": "PROCESSING",
             "sort": "-uploadedDate",
             "limit": String(pollLimit),
-            "include": "preReleaseVersion",
-            "fields[builds]": "processingState,version,uploadedDate,expired,preReleaseVersion"
+            "include": "preReleaseVersion,app",
+            "fields[builds]": Self.buildFields,
+            // Just the name — a full app payload per build per poll
+            // duplicates for nothing.
+            "fields[apps]": "name"
         ]
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .getVersionBuilds, queryParams: queryParams),
@@ -261,8 +347,9 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
 
     func fetchBuild(id: String) async throws -> BuildsModel {
         let queryParams = [
-            "include": "preReleaseVersion",
-            "fields[builds]": "processingState,version,uploadedDate,expired,preReleaseVersion"
+            "include": "preReleaseVersion,app",
+            "fields[builds]": Self.buildFields,
+            "fields[apps]": "name"
         ]
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .getVersionBuilds, queryParams: queryParams, path: id),
@@ -271,6 +358,9 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             throw APIError.apiError(error: "No team selected.")
         }
         let data = try await APIClient.shared.callAPI(with: request)
+        // JSONAPIDecoder.decode<R> wraps the response in a CompoundDocument
+        // internally (JSONAPIDecoder.swift:81) — single-resource documents
+        // decode exactly like the list path. Same pattern as expireBuild.
         return try getDecoder().decode(BuildsModel.self, from: data)
     }
 }
@@ -282,6 +372,7 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
 /// automatic Quit item).
 struct MenuBarBuildsView: View {
     @ObservedObject var monitor: BuildProcessingMonitor
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         if monitor.processingBuilds.isEmpty {
@@ -308,6 +399,12 @@ struct MenuBarBuildsView: View {
             Task { await monitor.pollNow() }
         }
         .disabled(monitor.isPolling)
+        Button("Open App") {
+            // MenuBarExtras can be clicked with only the menu extra visible —
+            // bring up the main window so the notification context has a home.
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "main")
+        }
         Divider()
         Button("Quit") {
             NSApplication.shared.terminate(nil)

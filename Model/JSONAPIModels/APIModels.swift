@@ -84,13 +84,16 @@ struct IconAsset: Equatable, Codable {
 @ResourceWrapper(type: "builds")
 struct BuildsModel: Equatable {
     var id: String
-    
+
     @ResourceAttribute var version: String?
-    @ResourceAttribute var app: String?
     @ResourceAttribute var uploadedDate: String?
     @ResourceAttribute var processingState: String?
     @ResourceAttribute var expired: Bool?
     @ResourceRelationship var preReleaseVersion: PreReleaseVersionsModel?
+    /// Owning app — fetched by the Batch H poller (include=app; hydrated
+    /// from the included array) so menu bar rows and notifications can name
+    /// the app on multi-app accounts.
+    @ResourceRelationship var app: AppsData?
     @ResourceRelationship var betaBuildLocalizations: [BuildLocalizationsModel]
 }
 

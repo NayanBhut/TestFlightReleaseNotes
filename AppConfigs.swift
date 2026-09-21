@@ -24,6 +24,9 @@ enum AppConfigs {
     /// Batch H: cap on PROCESSING builds per poll; processing builds are a
     /// handful at a time, so one page always covers it.
     static let buildStatusPollLimit: Int = 50
+    /// Batch H: backoff between polls after a failure — an erroring key
+    /// (expired/revoked) must not hit the API with 401s every 120 s.
+    static let buildStatusPollErrorInterval: TimeInterval = 300
 
     enum SortOption: String, CaseIterable {
         case nameAscending = "nameAscending"
