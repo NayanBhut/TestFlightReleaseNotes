@@ -143,12 +143,13 @@ final class APIClient {
         return task
     }
     
-    /// TEMPORARY DEBUG AID — prints the LIVE Bearer token. Added for
-    /// active debugging; MUST be removed before merging to main. The
-    /// branch owner is reminded of this on every commit until removed.
-    /// Emails (PII) stay redacted; bodies log in full (no truncation) so
-    /// failing writes can be debugged from the console. Use the
-    /// [API][CURL] line to reproduce any request.
+    /// DEBUG-only API logging. Release builds emit nothing that can
+    /// carry credentials or payloads: every request/response/curl line
+    /// below is compiled out via #if DEBUG. In DEBUG, emails (PII) and
+    /// the Bearer token are always redacted, but bodies log in full (no
+    /// truncation) so failing writes can be debugged from the console.
+    /// Use the [API][CURL] line to reproduce any request (fill in a fresh
+    /// token — tokens are deliberately never printed).
     private static let piiRedactionRegex = try? NSRegularExpression(
         pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
 
@@ -168,7 +169,7 @@ final class APIClient {
 
     /// Copy-pasteable curl for the Xcode console (DEBUG only at call
     /// sites). Single-quoted throughout; embedded quotes are escaped.
-    /// TEMPORARY: includes the live Authorization header (see above).
+    /// The Bearer token is always redacted — fill in a fresh token.
     static func curlCommand(for request: URLRequest) -> String {
         func shellQuoted(_ value: String) -> String {
             "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -178,8 +179,9 @@ final class APIClient {
             parts.append(shellQuoted(url.absoluteString))
         }
         for (field, value) in (request.allHTTPHeaderFields ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let logged = field.lowercased() == "authorization" ? "Bearer <TOKEN>" : value
             parts.append("-H")
-            parts.append(shellQuoted("\(field): \(value)"))
+            parts.append(shellQuoted("\(field): \(logged)"))
         }
         if let body = request.httpBody, !body.isEmpty {
             parts.append("--data")
@@ -189,8 +191,8 @@ final class APIClient {
     }
 
     func callAPI(with request: URLRequest) async throws -> Data {
-        apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
         #if DEBUG
+        apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
         apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
         if let body = request.httpBody, !body.isEmpty {
             apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body), privacy: .private)")
