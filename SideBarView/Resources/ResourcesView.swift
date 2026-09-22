@@ -995,13 +995,6 @@ private struct CreateProfileForm: View {
     private var certificates: [CertificateModel] { viewModel.certificatesState.loadedValue ?? [] }
     private var devices: [DeviceModel] { viewModel.devicesState.loadedValue ?? [] }
 
-    /// Picker list height sized to its rows (one checkbox ≈ 30pt) between
-    /// a floor that fits the empty hint and a cap that scrolls — a fixed
-    /// maxHeight clips the last visible row mid-height.
-    private func pickerListHeight(count: Int) -> CGFloat {
-        min(max(CGFloat(count) * 30 + 8, 56), 170)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Provisioning Profile")
@@ -1035,59 +1028,27 @@ private struct CreateProfileForm: View {
             Text("Certificates (\(certificateIds.count) selected)")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    if certificates.isEmpty {
-                        Text("No certificates loaded — open Resources → Certificates first.")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    ForEach(certificates, id: \.id) { certificate in
-                        Toggle(
-                            certificate.displayName ?? certificate.name ?? certificate.id,
-                            isOn: Binding(
-                                get: { certificateIds.contains(certificate.id) },
-                                set: { isOn in
-                                    if isOn { certificateIds.insert(certificate.id) }
-                                    else { certificateIds.remove(certificate.id) }
-                                }
-                            )
-                        )
-                        .toggleStyle(.checkbox)
-                        .font(.subheadline)
-                        .disabled(isSaving)
-                    }
-                }
-            }
-            .frame(height: pickerListHeight(count: certificates.count))
+            ChecklistDropdownMenu(
+                title: "Certificates",
+                items: certificates.map {
+                    (id: $0.id, label: $0.displayName ?? $0.name ?? $0.id)
+                },
+                selection: $certificateIds,
+                emptyHint: "No certificates loaded — open Resources → Certificates first."
+            )
+            .disabled(isSaving)
             Text("Devices (\(deviceIds.count) selected, optional)")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    if devices.isEmpty {
-                        Text("No devices loaded — open Resources → Devices first.")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    ForEach(devices, id: \.id) { device in
-                        Toggle(
-                            "\(device.name ?? device.id) (\(device.udid ?? ""))",
-                            isOn: Binding(
-                                get: { deviceIds.contains(device.id) },
-                                set: { isOn in
-                                    if isOn { deviceIds.insert(device.id) }
-                                    else { deviceIds.remove(device.id) }
-                                }
-                            )
-                        )
-                        .toggleStyle(.checkbox)
-                        .font(.subheadline)
-                        .disabled(isSaving)
-                    }
-                }
-            }
-            .frame(height: pickerListHeight(count: devices.count))
+            ChecklistDropdownMenu(
+                title: "Devices",
+                items: devices.map {
+                    (id: $0.id, label: "\($0.name ?? $0.id) (\($0.udid ?? ""))")
+                },
+                selection: $deviceIds,
+                emptyHint: "No devices loaded — open Resources → Devices first."
+            )
+            .disabled(isSaving)
             Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -1143,6 +1104,57 @@ private struct CreateProfileForm: View {
             viewModel.load(.bundleIds)
             viewModel.load(.certificates)
             viewModel.load(.devices)
+        }
+    }
+}
+
+/// Dropdown multi-select of checkable rows — compacts long picker lists
+/// (certificates, devices) so the create form fits the sheet instead of
+/// pushing its buttons and the list off-screen. Same styling as
+/// RoleDropdownMenu.
+private struct ChecklistDropdownMenu: View {
+    let title: String
+    let items: [(id: String, label: String)]
+    @Binding var selection: Set<String>
+    var emptyHint: String? = nil
+
+    private var label: String {
+        switch selection.count {
+        case 0: return "\(title): none selected"
+        case 1: return "\(title): 1 selected"
+        default: return "\(title): \(selection.count) selected"
+        }
+    }
+
+    var body: some View {
+        if items.isEmpty {
+            Text(emptyHint ?? "Nothing loaded yet.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        } else {
+            Menu {
+                ForEach(items, id: \.id) { item in
+                    Toggle(item.label, isOn: Binding(
+                        get: { selection.contains(item.id) },
+                        set: { isOn in
+                            if isOn { selection.insert(item.id) } else { selection.remove(item.id) }
+                        }
+                    ))
+                }
+            } label: {
+                Text(label)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .menuStyle(.borderlessButton)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
         }
     }
 }
