@@ -136,6 +136,9 @@ struct ResourceListContentView: View {
                 }
                 Divider()
             }
+            if kind == .users {
+                invitationsSection
+            }
             content
         }
         // min→max ranges make the sheet window resizable; the screen-
@@ -147,6 +150,9 @@ struct ResourceListContentView: View {
                minHeight: 420, idealHeight: 560, maxHeight: maxSheetHeight)
         .onAppear {
             viewModel.load(kind)
+            if kind == .users {
+                viewModel.loadInvitations()
+            }
         }
     }
 
@@ -461,6 +467,59 @@ struct ResourceListContentView: View {
             }
             // Chrome background so rows never peek through behind the pinned bar.
             .background(Color(nsColor: .controlBackgroundColor))
+        }
+    }
+
+    // MARK: - Pending invitations (users kind only)
+
+    /// Unaccepted invites live in /userInvitations, not /users — this
+    /// section surfaces them with Resend / Revoke. Hidden while empty or
+    /// idle (no pending invites is the norm); errors stay inline with a
+    /// Retry so one failing section never blocks the users list.
+    @ViewBuilder private var invitationsSection: some View {
+        switch viewModel.invitationsState {
+        case .idle, .empty:
+            EmptyView()
+        case .loading:
+            HStack {
+                Spacer()
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Loading pending invitations…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            Divider()
+        case .error(let message):
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Couldn't load pending invitations: \(message)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Retry") { viewModel.loadInvitations() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+        case .loaded(let invitations):
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Pending invitations (\(invitations.count))")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                ForEach(invitations, id: \.id) { invitation in
+                    InvitationRow(invitation: invitation, viewModel: viewModel)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                }
+            }
+            .padding(.bottom, 4)
+            Divider()
         }
     }
 }
@@ -1596,6 +1655,124 @@ private struct ProfileRow: View {
     }
 }
 
+/// Shared role chips — one rendering for user rows and invitation rows
+/// so the two can't drift.
+private struct RoleChips: View {
+    let roles: [String]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(roles, id: \.self) { role in
+                Text(role)
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12))
+                    .cornerRadius(4)
+            }
+        }
+    }
+}
+
+/// A pending (unaccepted) team invitation: Resend re-issues it with its
+/// stored details, Revoke deletes it (confirm first). Failures stay
+/// inline; the row never disappears on failure.
+private struct InvitationRow: View {
+    let invitation: UserInvitationModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var isResending = false
+    @State private var showRevokeConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(invitation.id) || isResending }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "envelope")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(invitation.email ?? "Unknown email")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .textSelection(.enabled)
+                Text("\(invitation.firstName ?? "") \(invitation.lastName ?? "")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                RoleChips(roles: invitation.roles ?? [])
+                if let expirationDate = invitation.expirationDate {
+                    Text("Expires: \(expirationDate)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    HStack(spacing: 6) {
+                        Button("Resend") {
+                            Task { @MainActor in
+                                await resend()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Resend invitation to \(invitation.email ?? "user")")
+                        Button("Revoke") { showRevokeConfirm = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Revoke invitation for \(invitation.email ?? "user")")
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Revoke this invitation?", isPresented: $showRevokeConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Revoke", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.revokeInvitation(id: invitation.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("They will need a new invite to join the team. This cannot be undone.")
+        }
+    }
+
+    private func resend() async {
+        isResending = true
+        defer { isResending = false }
+        errorMessage = nil
+        let result = await viewModel.resendInvitation(
+            email: invitation.email ?? "",
+            firstName: invitation.firstName ?? "",
+            lastName: invitation.lastName ?? "",
+            roles: Set((invitation.roles ?? []).compactMap(UserRoleOption.init(rawValue:))),
+            allAppsVisible: invitation.allAppsVisible ?? true,
+            provisioningAllowed: invitation.provisioningAllowed ?? false)
+        if case .failure(let message) = result {
+            // .success refreshes the invitations list; .ignored (duplicate
+            // in flight / cancelled) leaves the row untouched.
+            errorMessage = message
+        }
+    }
+}
+
 private struct UserRow: View {
     let user: UserModel
     @ObservedObject var viewModel: ResourcesViewModel
@@ -1623,17 +1800,7 @@ private struct UserRow: View {
                     RoleMultiSelect(selection: $draftRoles)
                         .disabled(isBusy)
                 } else {
-                    HStack(spacing: 4) {
-                        ForEach(user.roles ?? [], id: \.self) { role in
-                            Text(role)
-                                .font(.system(size: 9, design: .rounded))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(4)
-                        }
-                    }
+                    RoleChips(roles: user.roles ?? [])
                 }
                 if let errorMessage {
                     Text(errorMessage)

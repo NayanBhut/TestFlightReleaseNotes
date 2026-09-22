@@ -33,6 +33,7 @@ final class ResourcesViewModel: ObservableObject {
     deinit {
         // A stuck network call must not keep the VM alive.
         for task in fetchTasks.values { task.cancel() }
+        invitationsFetchTask?.cancel()
     }
 
     // MARK: - Kinds
@@ -151,6 +152,16 @@ final class ResourcesViewModel: ObservableObject {
     static let createBundleIdKey = "create-bundle-id"
     static let inviteUserKey = "invite-user"
     static let createProfileKey = "create-profile"
+
+    // MARK: - Pending invitations (Batch I follow-up)
+    //
+    // Pending invites live in /userInvitations, not /users — without this
+    // list an unaccepted invitee is invisible until they accept.
+
+    /// Pending team invitations. Single page (limit 200): pending invites
+    /// are a handful, and paging them is out of scope.
+    @Published var invitationsState: ViewState<[UserInvitationModel]> = .idle
+    private var invitationsFetchTask: Task<Void, Never>?
 
     func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
@@ -460,6 +471,9 @@ final class ResourcesViewModel: ObservableObject {
     func resetForTeamSwitch() {
         for task in fetchTasks.values { task.cancel() }
         fetchTasks = [:]
+        invitationsFetchTask?.cancel()
+        invitationsFetchTask = nil
+        invitationsState = .idle
         loadedKinds = []
         devicesState = .idle
         certificatesState = .idle
@@ -858,6 +872,7 @@ final class ResourcesViewModel: ObservableObject {
         do {
             _ = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return .ignored }
+            loadInvitations()
             return .success
         } catch {
             resourcesLogger.error("Failed to invite user: \(error.localizedDescription)")
@@ -909,6 +924,7 @@ final class ResourcesViewModel: ObservableObject {
             }
             _ = try await APIClient.shared.callAPI(with: createRequest)
             guard !Task.isCancelled else { return .ignored }
+            loadInvitations()
             return .success
         } catch {
             resourcesLogger.error("Failed to resend invitation: \(error.localizedDescription)")
@@ -920,6 +936,63 @@ final class ResourcesViewModel: ObservableObject {
     /// GET /v1/userInvitations?filter[email]=… — the pending invite id for
     /// an email, or nil when none is pending. Ephemeral lookup: no list
     /// state, the caller owns what happens next.
+    func loadInvitations() {
+        invitationsFetchTask?.cancel()
+        invitationsFetchTask = Task { await fetchInvitations() }
+    }
+
+    private func fetchInvitations() async {
+        guard !Task.isCancelled else { return }
+        invitationsState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .userInvitations,
+                      queryParams: ["sort": "email", "limit": "200"]),
+            apiVersion: .v1) else {
+            invitationsState = .error("No team selected. Add a team to load invitations.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
+            invitationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            resourcesLogger.error("Failed to load invitations: \(error.localizedDescription)")
+            invitationsState = .error(friendlyMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/userInvitations/{id} — revoke a pending invite. The row
+    /// is dropped locally on 204; callers must confirm first.
+    func revokeInvitation(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .userInvitations, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the revoke request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            guard case .loaded(var invitations) = invitationsState,
+                  let index = invitations.firstIndex(where: { $0.id == id }) else { return .ignored }
+            invitations.remove(at: index)
+            invitationsState = invitations.isEmpty ? .empty : .loaded(invitations)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to revoke invitation: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
     private func pendingInvitationId(forEmail email: String) async throws -> String? {
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .userInvitations,
