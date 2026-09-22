@@ -791,7 +791,7 @@ final class ResourcesViewModel: ObservableObject {
         guard !trimmedLast.isEmpty else { return .failure("Enter the invitee's last name.") }
         guard !roles.isEmpty else { return .failure("Pick at least one role.") }
         if !allAppsVisible, visibleAppIds.isEmpty {
-            return .failure("Pick the app this user can access, or turn on \"All apps visible\".")
+            return .failure("Pick at least one app this user can access, or turn on \"All apps visible\".")
         }
         guard !isWriteInFlight(Self.inviteUserKey) else { return .ignored }
         writeInFlight.insert(Self.inviteUserKey)

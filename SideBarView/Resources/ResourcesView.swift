@@ -811,7 +811,7 @@ private struct InviteUserForm: View {
     @State private var lastName = ""
     @State private var roles: Set<UserRoleOption> = [.DEVELOPER]
     @State private var allAppsVisible = true
-    @State private var selectedAppId: String?
+    @State private var selectedAppIds: Set<String> = []
     @State private var provisioningAllowed = false
     @State private var isSaving = false
     @State private var isResending = false
@@ -822,8 +822,8 @@ private struct InviteUserForm: View {
 
     /// App ids for the invite body: empty = all apps.
     private var visibleAppIds: [String] {
-        guard !allAppsVisible, let selectedAppId else { return [] }
-        return [selectedAppId]
+        guard !allAppsVisible else { return [] }
+        return selectedAppIds.sorted()
     }
 
     var body: some View {
@@ -854,24 +854,26 @@ private struct InviteUserForm: View {
                 .font(.subheadline)
                 .disabled(isBusy)
                 .onChange(of: allAppsVisible) { _, newValue in
-                    // Turning all-apps back on drops the single-app pick so
-                    // a stale id can never leak into an all-apps invite.
-                    if newValue { selectedAppId = nil }
+                    // Turning all-apps back on drops the per-app picks so
+                    // stale ids can never leak into an all-apps invite.
+                    if newValue { selectedAppIds = [] }
                 }
             if !allAppsVisible {
-                Picker("App", selection: $selectedAppId) {
-                    Text("Select an app").tag(nil as String?)
-                    ForEach(apps, id: \.id) { app in
-                        Text(app.name ?? app.bundleId ?? app.id).tag(app.id as String?)
-                    }
-                }
-                .pickerStyle(.menu)
-                .disabled(isBusy || apps.isEmpty)
-                if apps.isEmpty {
-                    Text("No apps loaded — open the sidebar app list first so the picker has something to offer.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+                ChecklistDropdownMenu(
+                    title: "Apps",
+                    items: apps.map { app in
+                        let name = app.name ?? app.bundleId ?? app.id
+                        return ChecklistDropdownMenu.Item(
+                            id: app.id,
+                            title: name,
+                            subtitle: app.name == nil ? nil : app.bundleId
+                        )
+                    },
+                    selection: $selectedAppIds,
+                    emptyHint: "No apps loaded — open the sidebar app list first so the picker has something to offer.",
+                    allowsSelectAll: true
+                )
+                .disabled(isBusy)
             }
             Toggle("Provisioning allowed", isOn: $provisioningAllowed)
                 .font(.subheadline)
@@ -935,7 +937,7 @@ private struct InviteUserForm: View {
             && !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !lastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !roles.isEmpty
-            && (allAppsVisible || selectedAppId != nil)
+            && (allAppsVisible || !selectedAppIds.isEmpty)
     }
 
     private func runInvite(mode: InviteMode) async {
