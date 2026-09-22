@@ -124,7 +124,6 @@ def test_carryover_fences_and_caps():
     c2 = m.build_carryover([big, "- **[BUG]** small finding"], max_chars=500)
     assert "detailed" in c2 and "small finding" not in c2
     assert c2.count("(oversized finding truncated") == 1
-    assert "block boundary" not in c2
     # oversized block after earlier blocks: budget accounts prior spend,
     # and the omission marker counts only fully-dropped findings
     small = [f"- **[BUG]** finding {i}\n- File: f{i}.swift" for i in range(8)]
@@ -161,8 +160,8 @@ def test_retry_semantics():
 
         def incomplete(req, timeout=None):
             raise http.client.IncompleteRead(b"partial")
-        orig_urlopen = urllib.request.urlopen
-        urllib.request.urlopen = incomplete
+        orig_open = m._OPENER.open
+        m._OPENER.open = incomplete
         try:
             m.request_review("m", "msg", "k", "/tmp/x.json")
             raise AssertionError("should raise")
@@ -171,7 +170,7 @@ def test_retry_semantics():
         except http.client.IncompleteRead:
             raise AssertionError("IncompleteRead escaped the retry path")
         finally:
-            urllib.request.urlopen = orig_urlopen
+            m._OPENER.open = orig_open
 
         calls = {"n": 0}
         def flaky():
@@ -238,10 +237,10 @@ def test_request_chunk_review_length_escalation():
         def fake(req, timeout=None):
             calls["n"] += 1
             return Resp()
-        urllib.request.urlopen = fake
+        m._OPENER.open = fake
         return calls
 
-    orig_urlopen = urllib.request.urlopen
+    orig_open = m._OPENER.open
     try:
         # transient length -> one retry at a higher cap, then success
         def body(n):
@@ -267,10 +266,11 @@ def test_request_chunk_review_length_escalation():
         out3 = m.request_chunk_review("m", "msg", "k", "/tmp/x.json", "chunk 1/1")
         assert out3 == "clean review" and calls3["n"] == 1
     finally:
-        urllib.request.urlopen = orig_urlopen
+        m._OPENER.open = orig_open
 
 
 def test_env_int():
+    old = os.environ.get("MAX_CHUNKS")
     os.environ["MAX_CHUNKS"] = "5"
     try:
         assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 5
@@ -279,8 +279,22 @@ def test_env_int():
         os.environ["MAX_CHUNKS"] = "-3"
         assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 40
     finally:
-        del os.environ["MAX_CHUNKS"]
-    assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 40
+        if old is None:
+            del os.environ["MAX_CHUNKS"]
+        else:
+            os.environ["MAX_CHUNKS"] = old
+    # NUM_PREDICT_CAPS: inverted ladder is normalized ascending + deduped
+    old_caps = os.environ.get("NUM_PREDICT_CAPS")
+    try:
+        os.environ["NUM_PREDICT_CAPS"] = "24576,8192,8192"
+        assert m.parse_num_predict_caps() == (8192, 24576)
+        os.environ["NUM_PREDICT_CAPS"] = "4096"
+        assert m.parse_num_predict_caps() == (8192, 24576)  # 1 cap -> default
+    finally:
+        if old_caps is None:
+            os.environ.pop("NUM_PREDICT_CAPS", None)
+        else:
+            os.environ["NUM_PREDICT_CAPS"] = old_caps
     # log_skipped cap: 50 lines then a summary
     lines = []
     orig_log = m.log

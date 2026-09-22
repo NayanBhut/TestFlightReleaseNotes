@@ -77,6 +77,11 @@ API_URL = "https://ollama.com/v1/chat/completions"
 # stay well under the workflow's timeout-minutes ceiling.
 REQUEST_TIMEOUT_S = 300
 
+# Retry knobs - single source of truth for both call_with_retry and the
+# wall-clock budget estimate in main(), so they cannot drift apart.
+RETRY_ATTEMPTS = 3
+RETRY_AFTER_CLAMP_S = 90
+
 DEFAULT_NUM_PREDICT_CAPS = (8192, 24576)
 
 # Wall-clock budget for the whole review loop.  Default sized against the
@@ -156,6 +161,11 @@ def section_paths(section):
 
     Handles plain and git-quoted headers (see GIT_HEADER_LINE_RE); a
     trailing \\r (CRLF diffs from Windows checkouts) is tolerated.
+    The "diff --git" line is ambiguous when a path itself contains
+    " b/" (git's own docs admit this), so the parse is cross-checked
+    against the "--- a/..." / "+++ b/..." lines: on disagreement the
+    header-derived guess is logged loudly and the body lines win
+    (they cannot mislead the noise filter silently).
     """
     first_line = section.split("\n", 1)[0].rstrip("\r")
     m = GIT_HEADER_LINE_RE.match(first_line)
@@ -163,6 +173,35 @@ def section_paths(section):
         return []
     a = m.group(1) if m.group(1) is not None else m.group(2)
     b = m.group(3) if m.group(3) is not None else m.group(4)
+    # Cross-check against the ---/+++ lines when present.
+    body_a = body_b = None
+    for raw_line in section.split("\n"):
+        line = raw_line.rstrip("\r")  # tolerate CRLF diffs
+        if line.startswith("--- "):
+            if line.startswith("--- a/"):
+                body_a = line[6:].rstrip("\t")  # git appends \t for spaced paths
+            elif line.startswith("--- /dev/null"):
+                body_a = None
+            else:
+                break  # unknown form; trust the header
+        elif line.startswith("+++ "):
+            if line.startswith("+++ b/"):
+                body_b = line[6:].rstrip("\t")
+            elif line.startswith("+++ /dev/null"):
+                body_b = None
+            else:
+                break
+        elif line.startswith("@@"):
+            break  # hunks reached; whatever we have is complete
+        if body_a is not None and body_b is not None:
+            break
+    if (body_a is not None and body_a != a) or (body_b is not None and body_b != b):
+        log(
+            f"WARN: ambiguous 'diff --git' header for {b!r}; cross-checked "
+            f"against ---/+++ lines ({body_a!r}, {body_b!r}) - using the latter."
+        )
+        a = body_a if body_a is not None else a
+        b = body_b if body_b is not None else b
     return [a, b]
 
 
@@ -437,6 +476,29 @@ SYSTEM_MSG = (
 )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Fail loudly on ANY redirect from the API endpoint.
+
+    The endpoint is a fixed first-party HTTPS URL; any redirect is
+    abnormal and must not silently forward the Authorization header
+    (urllib historically preserves it across redirects, even
+    cross-host).  Raising here propagates as an HTTPError for the
+    caller's existing error handling - redirects are never silently
+    followed, so the paid API key cannot leak.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            newurl, code,
+            f"redirect from {API_URL} refused "
+            f"(would follow it with the Authorization header attached)",
+            headers, fp,
+        )
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def request_review(model, user_msg, api_key, raw_file, num_predict=8192,
                    accept_truncated=False):
     """Send one review request and return the extracted review text.
@@ -470,7 +532,7 @@ def request_review(model, user_msg, api_key, raw_file, num_predict=8192,
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+        with _OPENER.open(req, timeout=REQUEST_TIMEOUT_S) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -613,6 +675,12 @@ def parse_num_predict_caps():
     if not caps or any(c < 100 for c in caps):
         log(f"WARN: NUM_PREDICT_CAPS values too small, using default {DEFAULT_NUM_PREDICT_CAPS}")
         return DEFAULT_NUM_PREDICT_CAPS
+    # Escalation requires ascending order (the last cap accepts truncation);
+    # sort + dedupe so an inverted/degenerate ladder can't invert retries.
+    caps = tuple(sorted(set(caps)))
+    if len(caps) < 2:
+        log(f"WARN: NUM_PREDICT_CAPS needs 2+ distinct caps, using default {DEFAULT_NUM_PREDICT_CAPS}")
+        return DEFAULT_NUM_PREDICT_CAPS
     return caps
 
 
@@ -646,7 +714,7 @@ def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk, max_chunks):
             print(f"    - {paths[1] if paths else '(unknown path)'}")
 
 
-def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
+def call_with_retry(fn, attempts=RETRY_ATTEMPTS, delays=(2, 8), chunk_label="request"):
     """Call fn with bounded retry + exponential-ish backoff.
 
     Transient failures (HTTP 429/5xx, timeouts, connection resets,
@@ -672,11 +740,11 @@ def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
                 retry_after = getattr(e, "retry_after", None)
                 # Honor Retry-After, but clamp: a hostile/buggy header
                 # (e.g. 7200s) must not stall the CI job for hours.
-                delay = min(max(backoff, retry_after or 0), 90)
-                if retry_after and retry_after > 90:
+                delay = min(max(backoff, retry_after or 0), RETRY_AFTER_CLAMP_S)
+                if retry_after and retry_after > RETRY_AFTER_CLAMP_S:
                     log(
                         f"WARN: {chunk_label}: Retry-After={retry_after}s "
-                        f"exceeds the 90s clamp; using {delay}s"
+                        f"exceeds the {RETRY_AFTER_CLAMP_S}s clamp; using {delay}s"
                     )
                 log(
                     f"WARN: {chunk_label}: transient API error "
@@ -822,10 +890,10 @@ def main():
     # and lose the buffered combined review.
     budget_minutes = _env_int("REVIEW_BUDGET_MINUTES", DEFAULT_REVIEW_BUDGET_MINUTES, minimum=1)
     deadline = time.monotonic() + budget_minutes * 60
-    # Worst-case per chunk: caps ladder x attempts x request timeout
-    # (+ backoff).  Slightly generous on purpose.
+    # Worst-case per chunk: caps ladder x attempts x (request timeout +
+    # clamp), from the same constants the retry path actually uses.
     caps = parse_num_predict_caps()
-    worst_chunk_s = len(caps) * 3 * (REQUEST_TIMEOUT_S + 90)
+    worst_chunk_s = len(caps) * RETRY_ATTEMPTS * (REQUEST_TIMEOUT_S + RETRY_AFTER_CLAMP_S)
 
     for i, chunk in enumerate(chunks, 1):
         chunk_text = "".join(chunk)
@@ -854,7 +922,13 @@ def main():
         )
 
         if i == 1:
-            user_msg = f"Review this Swift/iOS PR diff:\n\n{chunk_text}"
+            if total_chunks > 1:
+                user_msg = (
+                    f"Review part 1/{total_chunks} of this Swift/iOS PR "
+                    f"diff (files: {display_files(files)}):\n\n{chunk_text}"
+                )
+            else:
+                user_msg = f"Review this Swift/iOS PR diff:\n\n{chunk_text}"
         else:
             carry = build_carryover(findings_so_far)
             user_msg = (
