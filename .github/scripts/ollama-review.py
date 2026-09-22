@@ -101,6 +101,15 @@ class TransientError(Exception):
         self.retry_after = retry_after
 
 
+class LengthTruncated(TransientError):
+    """The review was cut off at num_predict (finish_reason=length).
+
+    Not retried with the same cap - the caller should retry with a
+    higher num_predict and finally accept the truncation with a loud
+    warning marker.
+    """
+
+
 class VerifyError(Exception):
     """A diff-coverage consistency check failed; details already logged."""
 
@@ -400,12 +409,18 @@ SYSTEM_MSG = (
 )
 
 
-def request_review(model, user_msg, api_key, raw_file):
+def request_review(model, user_msg, api_key, raw_file, num_predict=8192,
+                   accept_truncated=False):
     """Send one review request and return the extracted review text.
 
     Raises ReviewError after printing the error to stderr (same prefixes
-    as the original single-request implementation); the caller decides
-    the exit code, so partial results are not lost.
+    as the original single-request implementation); TransientError for
+    retryable failures; the caller decides the exit code, so partial
+    results are not lost.  num_predict bounds the output length; when
+    the model hits it (finish_reason=length) the caller should retry
+    with a higher cap and accept_truncated=True on the last attempt so
+    a long-but-truncated review is kept with a loud warning rather than
+    dropped silently.
     """
     payload = json.dumps({
         "model": model,
@@ -414,7 +429,7 @@ def request_review(model, user_msg, api_key, raw_file):
             {"role": "user", "content": user_msg},
         ],
         "stream": False,
-        "options": {"temperature": 0.3, "num_predict": 8192},
+        "options": {"temperature": 0.3, "num_predict": num_predict},
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -445,7 +460,7 @@ def request_review(model, user_msg, api_key, raw_file):
                 file=sys.stderr,
             )
             err = TransientError(f"HTTP {e.code}", retry_after=retry_after)
-            raise err
+            raise err from e
         print(f"HTTP_ERROR: {e.code}: {body[:2000]}", file=sys.stderr)
         raise ReviewError()
     except (OSError, http.client.HTTPException) as e:
@@ -478,6 +493,7 @@ def request_review(model, user_msg, api_key, raw_file):
 
     try:
         content = data["choices"][0]["message"]["content"]
+        finish_reason = data["choices"][0].get("finish_reason")
     except (KeyError, IndexError, TypeError):
         # Surface API-level error payloads (e.g. {"error": {"message": ...}})
         err = data.get("error")
@@ -497,7 +513,52 @@ def request_review(model, user_msg, api_key, raw_file):
         # retry once more rather than aborting a multi-chunk run.
         raise TransientError("empty review content")
 
+    if finish_reason == "length":
+        # Output was cut off at num_predict - the review is incomplete
+        # and findings are silently missing.  Retry with a raised cap;
+        # on the final attempt keep the truncated text but mark it
+        # loudly (never silently drop findings coverage).
+        if accept_truncated:
+            print(
+                "WARN: Review still hit the num_predict length cap after "
+                "retries; keeping TRUNCATED review with a warning marker.",
+                file=sys.stderr,
+            )
+            content += (
+                "\n\n> [!WARNING]\n"
+                "> This part's review was cut off at the model's output "
+                "length cap; findings may be missing from the tail of "
+                "this part."
+            )
+            return content
+        print(
+            "WARN: Review hit the num_predict length cap "
+            "(finish_reason=length); retrying with a higher cap.",
+            file=sys.stderr,
+        )
+        raise LengthTruncated("finish_reason=length")
+
     return content
+
+
+def request_chunk_review(model, user_msg, api_key, raw_file, chunk_label):
+    """Review one chunk: network retries per cap, then escalate the
+    output-length cap and finally accept a truncated review with a loud
+    warning marker rather than silently dropping findings."""
+    caps = (8192, 24576)
+    for i, cap in enumerate(caps):
+        accept = i == len(caps) - 1
+        try:
+            return call_with_retry(
+                lambda: request_review(
+                    model, user_msg, api_key, raw_file,
+                    num_predict=cap, accept_truncated=accept,
+                ),
+                chunk_label=chunk_label,
+            )
+        except LengthTruncated:
+            continue  # escalate to the next, higher cap
+    raise ReviewError()  # unreachable; last cap always accepts
 
 
 def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk, max_chunks):
@@ -533,11 +594,13 @@ def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk, max_chunks):
 def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
     """Call fn with bounded retry + exponential-ish backoff.
 
-    Transient failures (HTTP 429/5xx, timeouts, connection resets) are
-    retried; deterministic failures (bad key, invalid payload, empty
-    content) raise ReviewError immediately.  Retries only re-spend on
-    requests that never produced output, so a completed call's tokens
-    are never wasted on a retry.
+    Transient failures (HTTP 429/5xx, timeouts, connection resets,
+    empty or truncated-JSON responses) are retried; deterministic
+    failures (bad key, invalid payload, malformed response shape)
+    raise ReviewError immediately.  LengthTruncated (output cap hit)
+    propagates immediately for cap escalation, not same-cap retry.
+    Retries only re-spend on requests that never produced usable
+    output, so a completed call's tokens are never wasted on a retry.
     """
     last_exc = None
     for attempt in range(1, attempts + 1):
@@ -545,6 +608,8 @@ def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
             return fn()
         except ReviewError:
             raise  # deterministic failure, already printed
+        except LengthTruncated:
+            raise  # same-cap retry cannot help; caller escalates
         except TransientError as e:
             last_exc = e
             if attempt < attempts:
@@ -568,12 +633,32 @@ def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
     raise ReviewError()
 
 
-def log_skipped(skipped):
-    """Log the paths filtered as noise, so over-filtering is auditable."""
+def log_skipped(skipped, limit=50):
+    """Log the paths filtered as noise, so over-filtering is auditable.
+
+    Capped so a docs-site rebuild with thousands of files cannot flood
+    the CI log and bury the review content.
+    """
     log("Skipped files:")
-    for s in skipped:
+    for s in skipped[:limit]:
         paths = section_paths(s)
         log(f"  - {paths[1] if paths else '(unknown path)'}")
+    if len(skipped) > limit:
+        log(f"  ... and {len(skipped) - limit} more skipped file(s)")
+
+
+def _env_int(name, default, minimum=None):
+    """Parse an integer env var with fallback; warns on garbage."""
+    raw = os.environ.get(name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        log(f"WARN: Invalid {name}, using default {default}")
+        return default
+    if minimum is not None and value < minimum:
+        log(f"WARN: {name} below {minimum}, using default {default}")
+        return default
+    return value
 
 
 def main():
@@ -597,23 +682,8 @@ def main():
     raw_file = os.environ.get("REVIEW_RAW_FILE", "/tmp/review_raw.json")
     api_key = os.environ.get("OLLAMA_API_KEY", "")
 
-    max_chunk = DEFAULT_MAX_CHARS_PER_CHUNK
-    try:
-        max_chunk = int(os.environ.get("MAX_CHARS_PER_CHUNK", DEFAULT_MAX_CHARS_PER_CHUNK))
-    except ValueError:
-        log(f"WARN: Invalid MAX_CHARS_PER_CHUNK, using default {DEFAULT_MAX_CHARS_PER_CHUNK}")
-    if max_chunk < 1000:
-        log(f"WARN: MAX_CHARS_PER_CHUNK too small, using default {DEFAULT_MAX_CHARS_PER_CHUNK}")
-        max_chunk = DEFAULT_MAX_CHARS_PER_CHUNK
-
-    max_chunks = DEFAULT_MAX_CHUNKS
-    try:
-        max_chunks = int(os.environ.get("MAX_CHUNKS", DEFAULT_MAX_CHUNKS))
-    except ValueError:
-        log(f"WARN: Invalid MAX_CHUNKS, using default {DEFAULT_MAX_CHUNKS}")
-    if max_chunks < 0:
-        log(f"WARN: MAX_CHUNKS negative, using default {DEFAULT_MAX_CHUNKS}")
-        max_chunks = DEFAULT_MAX_CHUNKS
+    max_chunk = _env_int("MAX_CHARS_PER_CHUNK", DEFAULT_MAX_CHARS_PER_CHUNK, minimum=1000)
+    max_chunks = _env_int("MAX_CHUNKS", DEFAULT_MAX_CHUNKS, minimum=0)
 
     # ";;" separator preferred so regexes may contain commas; legacy
     # comma-separated values still work.
@@ -712,8 +782,8 @@ def main():
             )
 
         try:
-            content = call_with_retry(
-                lambda: request_review(model, user_msg, api_key, raw_file),
+            content = request_chunk_review(
+                model, user_msg, api_key, raw_file,
                 chunk_label=f"chunk {i}/{total_chunks}",
             )
         except ReviewError:

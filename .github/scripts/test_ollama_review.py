@@ -224,6 +224,75 @@ def test_display_files():
     assert "+2 more" in m.display_files([f"f{i}.swift" for i in range(10)])
 
 
+def test_request_chunk_review_length_escalation():
+    """finish_reason=length must escalate num_predict, never retry at the
+    same cap, and finally accept truncation with a loud marker."""
+    import urllib.request
+
+    def fake_urlopen(body_factory):
+        calls = {"n": 0}
+        class Resp:
+            def read(self): return body_factory(calls["n"])
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        def fake(req, timeout=None):
+            calls["n"] += 1
+            return Resp()
+        urllib.request.urlopen = fake
+        return calls
+
+    orig_urlopen = urllib.request.urlopen
+    try:
+        # transient length -> one retry at a higher cap, then success
+        def body(n):
+            if n == 1:
+                return b'{"choices": [{"message": {"content": "review..."}, "finish_reason": "length"}]}'
+            return b'{"choices": [{"message": {"content": "full review"}, "finish_reason": "stop"}]}'
+        calls = fake_urlopen(body)
+        out = m.request_chunk_review("m", "msg", "k", "/tmp/x.json", "chunk 1/1")
+        assert out == "full review" and calls["n"] == 2, (out, calls["n"])
+
+        # persistent length -> accepted with a warning marker, 1 call per cap
+        def body2(n):
+            return b'{"choices": [{"message": {"content": "partial review"}, "finish_reason": "length"}]}'
+        calls2 = fake_urlopen(body2)
+        out2 = m.request_chunk_review("m", "msg", "k", "/tmp/x.json", "chunk 1/1")
+        assert "partial review" in out2 and "[!WARNING]" in out2
+        assert calls2["n"] == 2, calls2  # not 3x per cap
+
+        # immediate success -> single call
+        def body3(n):
+            return b'{"choices": [{"message": {"content": "clean review"}, "finish_reason": "stop"}]}'
+        calls3 = fake_urlopen(body3)
+        out3 = m.request_chunk_review("m", "msg", "k", "/tmp/x.json", "chunk 1/1")
+        assert out3 == "clean review" and calls3["n"] == 1
+    finally:
+        urllib.request.urlopen = orig_urlopen
+
+
+def test_env_int():
+    os.environ["MAX_CHUNKS"] = "5"
+    try:
+        assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 5
+        os.environ["MAX_CHUNKS"] = "garbage"
+        assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 40
+        os.environ["MAX_CHUNKS"] = "-3"
+        assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 40
+    finally:
+        del os.environ["MAX_CHUNKS"]
+    assert m._env_int("MAX_CHUNKS", 40, minimum=0) == 40
+    # log_skipped cap: 50 lines then a summary
+    lines = []
+    orig_log = m.log
+    m.log = lines.append
+    try:
+        m.log_skipped([f"diff --git a/d{i}.md b/d{i}.md" for i in range(80)])
+    finally:
+        m.log = orig_log
+    assert sum(1 for l in lines if l.startswith("  - ")) == 50
+    assert any("30 more skipped" in l for l in lines)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
