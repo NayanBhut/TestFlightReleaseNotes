@@ -375,3 +375,77 @@ struct UserInvitationCreateAttributes: Encodable {
     var allAppsVisible: Bool
     var provisioningAllowed: Bool
 }
+
+// MARK: - Batch I (I4): provisioning profile writes
+//
+// Body verified against Apple's OpenAPI spec (EvanBacon mirror):
+// - POST /v1/profiles: attributes name + profileType (both required);
+//   relationships bundleId (single, required) + certificates (array,
+//   required) + devices (array, optional — required server-side only for
+//   development/adhoc types).
+// - DELETE /v1/profiles/{id} (204, no body).
+// Writes need an Admin/Account Holder key; a TestFlight-only key 403s.
+
+/// Profile types (spec enum on ProfileCreateRequest attributes, 14 values).
+enum ProfileTypeOption: String, CaseIterable {
+    case IOS_APP_DEVELOPMENT
+    case IOS_APP_STORE
+    case IOS_APP_ADHOC
+    case IOS_APP_INHOUSE
+    case MAC_APP_DEVELOPMENT
+    case MAC_APP_STORE
+    case MAC_APP_DIRECT
+    case TVOS_APP_DEVELOPMENT
+    case TVOS_APP_STORE
+    case TVOS_APP_ADHOC
+    case TVOS_APP_INHOUSE
+    case MAC_CATALYST_APP_DEVELOPMENT
+    case MAC_CATALYST_APP_STORE
+    case MAC_CATALYST_APP_DIRECT
+
+    /// SNAKE_CASE → title case ("IOS_APP_ADHOC" → "iOS App Adhoc").
+    /// Derived so new enum values render sanely without touching this.
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+            .replacingOccurrences(of: "Ios", with: "iOS")
+            .replacingOccurrences(of: "Tvos", with: "tvOS")
+    }
+}
+
+struct ProfileCreateRequest: Encodable {
+    var data: ProfileCreateData
+}
+
+struct ProfileCreateData: Encodable {
+    var type = "profiles"
+    var attributes: ProfileCreateAttributes
+    var relationships: ProfileCreateRelationships
+}
+
+struct ProfileCreateAttributes: Encodable {
+    var name: String
+    var profileType: String
+}
+
+struct ProfileCreateRelationships: Encodable {
+    var bundleId: ProfileCreateSingleRelationship
+    var certificates: ProfileCreateArrayRelationship
+    /// Omitted when empty (encodeIfPresent) — optional server-side except
+    /// for development/adhoc types, where the server rejects the create.
+    var devices: ProfileCreateArrayRelationship?
+}
+
+struct ProfileCreateSingleRelationship: Encodable {
+    var data: ProfileCreateRef
+}
+
+struct ProfileCreateArrayRelationship: Encodable {
+    var data: [ProfileCreateRef]
+}
+
+struct ProfileCreateRef: Encodable {
+    var type: String
+    var id: String
+}

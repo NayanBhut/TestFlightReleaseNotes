@@ -149,6 +149,7 @@ final class ResourcesViewModel: ObservableObject {
     static let createCertificateKey = "create-certificate"
     static let createBundleIdKey = "create-bundle-id"
     static let inviteUserKey = "invite-user"
+    static let createProfileKey = "create-profile"
 
     func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
@@ -976,6 +977,118 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
+    }
+
+    // MARK: - Provisioning profile writes (Batch I, I4)
+    //
+    // POST /v1/profiles (name + profileType + bundleId/certificates/devices
+    // relationships), DELETE /v1/profiles/{id}. Same WriteResult contract
+    // as above. Pickers read the already-loaded devices/certificates/
+    // bundleIds lists — no new fetch paths.
+
+    /// POST /v1/profiles — create a provisioning profile. Certificates are
+    /// required server-side; devices are required server-side only for
+    /// development/adhoc types (omitted from the body when empty).
+    func createProfile(name: String,
+                       profileType: ProfileTypeOption,
+                       bundleIdId: String?,
+                       certificateIds: Set<String>,
+                       deviceIds: Set<String>) async -> WriteResult {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the profile.") }
+        guard let bundleIdId, !bundleIdId.isEmpty else {
+            return .failure("Pick the bundle ID this profile is for.")
+        }
+        guard !certificateIds.isEmpty else { return .failure("Pick at least one certificate.") }
+        guard !isWriteInFlight(Self.createProfileKey) else { return .ignored }
+        writeInFlight.insert(Self.createProfileKey)
+        defer { writeInFlight.remove(Self.createProfileKey) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(ProfileCreateRequest(
+            data: ProfileCreateData(
+                attributes: ProfileCreateAttributes(
+                    name: trimmedName,
+                    profileType: profileType.rawValue
+                ),
+                relationships: ProfileCreateRelationships(
+                    bundleId: ProfileCreateSingleRelationship(
+                        data: ProfileCreateRef(type: "bundleIds", id: bundleIdId)
+                    ),
+                    certificates: ProfileCreateArrayRelationship(
+                        data: certificateIds.sorted().map { ProfileCreateRef(type: "certificates", id: $0) }
+                    ),
+                    devices: deviceIds.isEmpty ? nil : ProfileCreateArrayRelationship(
+                        data: deviceIds.sorted().map { ProfileCreateRef(type: "devices", id: $0) }
+                    )
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .getProfiles, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the profile request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(ProfileModel.self, from: responseData)
+            prependProfile(model)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to create profile: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/profiles/{id}. The row is dropped locally on 204;
+    /// callers must confirm first (destructive, cannot be undone).
+    func deleteProfile(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getProfiles, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the delete request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var profiles) = profilesState,
+                  let index = profiles.firstIndex(where: { $0.id == id }) else { return .ignored }
+            profiles.remove(at: index)
+            profilesState = profiles.isEmpty ? .empty : .loaded(profiles)
+            if let total = totals[.profiles] {
+                totals[.profiles] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to delete profile: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    private func prependProfile(_ model: ProfileModel) {
+        guard case .loaded(var profiles) = profilesState else {
+            retry(.profiles)
+            return
+        }
+        profiles.removeAll { $0.id == model.id }
+        profiles.insert(model, at: 0)
+        profilesState = .loaded(profiles)
+        if let total = totals[.profiles] {
+            totals[.profiles] = total + 1
+        }
+        searchTexts[.profiles] = nil
+        dataVersion += 1
     }
 
     private func prependBundleId(_ model: BundleIdModel) {
