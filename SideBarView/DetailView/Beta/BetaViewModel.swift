@@ -628,6 +628,70 @@ final class BetaViewModel: ObservableObject {
 
     // MARK: - Tester Email Search
 
+    /// Team roster for the invite sheet's user picker (search + tap
+    /// replaces manual email entry). Drained once per session; silent on
+    /// failure (manual entry still works, the sheet shows the error).
+    @Published var teamUsers: [UserModel] = []
+    @Published var isTeamUsersLoading = false
+    @Published var teamUsersError: String?
+
+    private var teamUsersTask: Task<Void, Never>?
+    private var teamUsersLoaded = false
+
+    func loadTeamUsers() {
+        guard !teamUsersLoaded else { return }
+        teamUsersTask?.cancel()
+        teamUsersTask = Task { await fetchTeamUsers() }
+    }
+
+    private func fetchTeamUsers() async {
+        guard !Task.isCancelled else { return }
+        isTeamUsersLoading = true
+        teamUsersError = nil
+        defer { isTeamUsersLoading = false }
+
+        var accumulated: [UserModel] = []
+        var cursor: String? = nil
+        repeat {
+            guard !Task.isCancelled else { return }
+            var queryParams = ["sort": "username", "limit": "200"]
+            if let cursor {
+                queryParams["cursor"] = cursor
+            }
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: .getUsers, queryParams: queryParams), apiVersion: .v1) else {
+                teamUsersError = "No team selected."
+                return
+            }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled else { return }
+                let model = try getDecoder().decode(UsersDocument.self, from: data)
+                let knownIDs = Set(accumulated.map(\.id))
+                accumulated.append(contentsOf: model.data.filter { !knownIDs.contains($0.id) })
+                cursor = model.meta.paging.nextCursor
+            } catch {
+                guard !Task.isCancelled else { return }
+                betaLogger.error("Failed to load team users: \(error.localizedDescription, privacy: .public)")
+                teamUsersError = (error as? APIError)?.details ?? error.localizedDescription
+                return
+            }
+        } while cursor != nil
+        teamUsers = accumulated
+        teamUsersLoaded = true
+    }
+
+    /// Local match for the invite picker — username plus names, Finder-style.
+    func matchingTeamUsers(query: String) -> [UserModel] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Array(teamUsers.prefix(50)) }
+        return teamUsers.filter {
+            $0.username?.localizedStandardContains(trimmed) == true
+                || $0.firstName?.localizedStandardContains(trimmed) == true
+                || $0.lastName?.localizedStandardContains(trimmed) == true
+        }
+    }
+
     func clearSearch() {
         searchText = ""
         searchResult = nil
