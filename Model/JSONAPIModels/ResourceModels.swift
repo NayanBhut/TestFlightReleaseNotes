@@ -285,3 +285,93 @@ struct BundleIdUpdateData: Encodable {
 struct BundleIdUpdateAttributes: Encodable {
     var name: String
 }
+
+// MARK: - Batch I (I3): user + invitation writes
+//
+// Shapes verified against Apple's OpenAPI spec (EvanBacon mirror):
+// - UserRole enum (11 values): ADMIN, FINANCE, TECHNICAL, ACCOUNT_HOLDER,
+//   READ_ONLY, SALES, MARKETING, APP_MANAGER, DEVELOPER, ACCESS_TO_REPORTS,
+//   CUSTOMER_SUPPORT.
+// - PATCH /v1/users/{id}: attributes roles/allAppsVisible/provisioningAllowed
+//   (all optional); DELETE /v1/users/{id} removes the user (204).
+// - POST /v1/userInvitations: attributes email + firstName + lastName +
+//   roles (all required), allAppsVisible/provisioningAllowed optional.
+// - GET /v1/userInvitations supports filter[email] (used by resend: find
+//   the pending invite, delete it, re-create). There is no dedicated
+//   resend endpoint.
+// Writes need an Admin/Account Holder key; a TestFlight-only key 403s.
+
+/// User roles (spec enum UserRole). Raw values are the wire form.
+enum UserRoleOption: String, CaseIterable {
+    case ADMIN
+    case FINANCE
+    case TECHNICAL
+    case ACCOUNT_HOLDER
+    case READ_ONLY
+    case SALES
+    case MARKETING
+    case APP_MANAGER
+    case DEVELOPER
+    case ACCESS_TO_REPORTS
+    case CUSTOMER_SUPPORT
+
+    /// SNAKE_CASE → title case ("APP_MANAGER" → "App Manager"). Derived so
+    /// new enum values render sanely; "To" is lowercased to read naturally.
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+            .replacingOccurrences(of: " To ", with: " to ")
+    }
+}
+
+@ResourceWrapper(type: "userInvitations")
+struct UserInvitationModel: Equatable {
+    static func == (lhs: UserInvitationModel, rhs: UserInvitationModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var email: String?
+    @ResourceAttribute var firstName: String?
+    @ResourceAttribute var lastName: String?
+    @ResourceAttribute var expirationDate: String?
+    @ResourceAttribute var roles: [String]?
+    @ResourceAttribute var allAppsVisible: Bool?
+    @ResourceAttribute var provisioningAllowed: Bool?
+}
+
+typealias UserInvitationsDocument = CompoundDocument<[UserInvitationModel], Meta>
+
+struct UserUpdateRequest: Encodable {
+    var data: UserUpdateData
+}
+
+struct UserUpdateData: Encodable {
+    var type = "users"
+    var id: String
+    var attributes: UserUpdateAttributes
+}
+
+struct UserUpdateAttributes: Encodable {
+    var roles: [String]
+}
+
+struct UserInvitationCreateRequest: Encodable {
+    var data: UserInvitationCreateData
+}
+
+struct UserInvitationCreateData: Encodable {
+    var type = "userInvitations"
+    var attributes: UserInvitationCreateAttributes
+}
+
+struct UserInvitationCreateAttributes: Encodable {
+    var email: String
+    var firstName: String
+    var lastName: String
+    var roles: [String]
+    var allAppsVisible: Bool
+    var provisioningAllowed: Bool
+}

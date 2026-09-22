@@ -148,6 +148,7 @@ final class ResourcesViewModel: ObservableObject {
     static let registerDeviceKey = "register-device"
     static let createCertificateKey = "create-certificate"
     static let createBundleIdKey = "create-bundle-id"
+    static let inviteUserKey = "invite-user"
 
     func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
@@ -754,6 +755,224 @@ final class ResourcesViewModel: ObservableObject {
             return .success
         } catch {
             resourcesLogger.error("Failed to delete bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    // MARK: - User + invitation writes (Batch I, I3)
+    //
+    // POST /v1/userInvitations (invite), PATCH /v1/users/{id} (roles),
+    // DELETE /v1/users/{id} (remove), resend = find pending invite by
+    // email → DELETE /v1/userInvitations/{id} → re-POST (no dedicated
+    // resend endpoint exists). Same WriteResult contract as above.
+    // Removing users needs an Admin key — a TestFlight-only key 403s,
+    // hence the write-specific hint.
+
+    /// POST /v1/userInvitations — invite a team member. Success carries no
+    /// local list mutation: pending invitees don't appear in /users until
+    /// they accept, so there is no row to prepend.
+    func inviteUser(email: String,
+                    firstName: String,
+                    lastName: String,
+                    roles: Set<UserRoleOption>,
+                    allAppsVisible: Bool,
+                    provisioningAllowed: Bool) async -> WriteResult {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedFirst = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLast = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
+            return .failure("Enter a valid email address.")
+        }
+        guard !trimmedFirst.isEmpty else { return .failure("Enter the invitee's first name.") }
+        guard !trimmedLast.isEmpty else { return .failure("Enter the invitee's last name.") }
+        guard !roles.isEmpty else { return .failure("Pick at least one role.") }
+        guard !isWriteInFlight(Self.inviteUserKey) else { return .ignored }
+        writeInFlight.insert(Self.inviteUserKey)
+        defer { writeInFlight.remove(Self.inviteUserKey) }
+
+        guard let request = invitationCreateRequest(
+            email: trimmedEmail,
+            firstName: trimmedFirst,
+            lastName: trimmedLast,
+            roles: roles,
+            allAppsVisible: allAppsVisible,
+            provisioningAllowed: provisioningAllowed) else {
+            return .failure("Couldn't build the invite request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to invite user: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// Resend an invitation: find the pending invite by email, delete it,
+    /// then re-create with the supplied details. Fails openly when no
+    /// pending invite exists for the email.
+    func resendInvitation(email: String,
+                          firstName: String,
+                          lastName: String,
+                          roles: Set<UserRoleOption>,
+                          allAppsVisible: Bool,
+                          provisioningAllowed: Bool) async -> WriteResult {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
+            return .failure("Enter a valid email address.")
+        }
+        let resendKey = "resend-invitation-\(trimmedEmail.lowercased())"
+        guard !isWriteInFlight(resendKey) else { return .ignored }
+        writeInFlight.insert(resendKey)
+        defer { writeInFlight.remove(resendKey) }
+
+        do {
+            guard let pendingId = try await pendingInvitationId(forEmail: trimmedEmail) else {
+                return .failure("No pending invitation for \(trimmedEmail) — send a new invite instead.")
+            }
+            guard !Task.isCancelled else { return .ignored }
+            guard let deleteRequest = APIClient.shared.getRequest(
+                api: .delete(name: .userInvitations, path: pendingId),
+                apiVersion: .v1) else {
+                return .failure("Couldn't build the resend request.")
+            }
+            _ = try await APIClient.shared.callAPI(with: deleteRequest)
+            guard !Task.isCancelled else { return .ignored }
+            guard let createRequest = invitationCreateRequest(
+                email: trimmedEmail,
+                firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines),
+                lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines),
+                roles: roles,
+                allAppsVisible: allAppsVisible,
+                provisioningAllowed: provisioningAllowed) else {
+                return .failure("Couldn't build the resend request.")
+            }
+            _ = try await APIClient.shared.callAPI(with: createRequest)
+            guard !Task.isCancelled else { return .ignored }
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to resend invitation: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/userInvitations?filter[email]=… — the pending invite id for
+    /// an email, or nil when none is pending. Ephemeral lookup: no list
+    /// state, the caller owns what happens next.
+    private func pendingInvitationId(forEmail email: String) async throws -> String? {
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .userInvitations,
+                      queryParams: ["filter[email]": email, "limit": "1"]),
+            apiVersion: .v1) else {
+            throw APIError.requestFailed
+        }
+        let data = try await APIClient.shared.callAPI(with: request)
+        guard !Task.isCancelled else { return nil }
+        let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
+        return model.data.first?.id
+    }
+
+    private func invitationCreateRequest(email: String,
+                                         firstName: String,
+                                         lastName: String,
+                                         roles: Set<UserRoleOption>,
+                                         allAppsVisible: Bool,
+                                         provisioningAllowed: Bool) -> URLRequest? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard !firstName.isEmpty, !lastName.isEmpty, !roles.isEmpty,
+              let data = try? encoder.encode(UserInvitationCreateRequest(
+                data: UserInvitationCreateData(
+                    attributes: UserInvitationCreateAttributes(
+                        email: email,
+                        firstName: firstName,
+                        lastName: lastName,
+                        roles: roles.map(\.rawValue).sorted(),
+                        allAppsVisible: allAppsVisible,
+                        provisioningAllowed: provisioningAllowed
+                    )
+                )
+              )) else {
+            return nil
+        }
+        return APIClient.shared.getRequest(
+            api: .post(name: .userInvitations, body: data),
+            apiVersion: .v1)
+    }
+
+    /// PATCH /v1/users/{id} — replace the user's roles.
+    func updateUserRoles(_ user: UserModel, roles: Set<UserRoleOption>) async -> WriteResult {
+        guard !roles.isEmpty else { return .failure("Pick at least one role.") }
+        guard !isWriteInFlight(user.id) else { return .ignored }
+        writeInFlight.insert(user.id)
+        defer { writeInFlight.remove(user.id) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(UserUpdateRequest(
+            data: UserUpdateData(
+                id: user.id,
+                attributes: UserUpdateAttributes(roles: roles.map(\.rawValue).sorted())
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .getUsers, body: data, path: user.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the role update request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(UserModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, pagination) since the edit started.
+            guard case .loaded(var users) = usersState,
+                  let index = users.firstIndex(where: { $0.id == user.id }) else { return .ignored }
+            users[index] = model
+            usersState = .loaded(users)
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to update user roles: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/users/{id} — remove a team member. The row is dropped
+    /// locally on 204; callers must confirm first (destructive). May 403
+    /// on a non-Admin key — the permissions hint surfaces, not a raw error.
+    func removeUser(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getUsers, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the remove request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var users) = usersState,
+                  let index = users.firstIndex(where: { $0.id == id }) else { return .ignored }
+            users.remove(at: index)
+            usersState = users.isEmpty ? .empty : .loaded(users)
+            if let total = totals[.users] {
+                totals[.users] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to remove user: \(error.localizedDescription)")
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }

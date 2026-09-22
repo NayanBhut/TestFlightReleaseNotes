@@ -424,6 +424,9 @@ enum APIName: String {
     case getBundleIds = "/bundleIds"
     case getProfiles = "/profiles"
     case getUsers = "/users"
+    // Batch I (I3): top-level collection for team invitations —
+    // GET/POST /v1/userInvitations, DELETE /v1/userInvitations/{id}.
+    case userInvitations = "/userInvitations"
 
     // Batch G (#10): top-level collection route for app info
     // localizations — PATCH /v1/appInfoLocalizations/{id} (verified in the
