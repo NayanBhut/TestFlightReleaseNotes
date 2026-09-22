@@ -161,22 +161,45 @@ final class APIClient {
     }
 
     private static func sanitizedBody(_ data: Data) -> String {
-        guard let text = String(data: data, encoding: .utf8) else {
+        // Slice BEFORE String conversion so multi-MB payloads never
+        // allocate a full string just to be truncated; PII regex then
+        // runs over at most maxLogBytes.
+        let isTruncated = data.count > maxLogBytes
+        let slice = isTruncated ? data.prefix(maxLogBytes) : data[...]
+        guard let text = String(data: slice, encoding: .utf8) else {
             return "<\(data.count) bytes, non-UTF-8>"
         }
-        return redactingPII(in: text)
+        return redactingPII(in: text) + (isTruncated ? "…(truncated, \(data.count) bytes total)" : "")
     }
+
+    /// Generous cap (512 KB) — every realistic request/response logs in
+    /// full for debugging; only genuinely huge payloads truncate.
+    private static let maxLogBytes = 512 * 1024
 
     /// Copy-pasteable curl for the Xcode console (DEBUG only at call
     /// sites). Single-quoted throughout; embedded quotes are escaped.
-    /// The Bearer token is always redacted — fill in a fresh token.
+    /// The Bearer token and emails in URLs/bodies are always redacted —
+    /// fill in a fresh token.
     static func curlCommand(for request: URLRequest) -> String {
         func shellQuoted(_ value: String) -> String {
             "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
         }
         var parts = ["curl", "-X", request.httpMethod ?? "GET"]
         if let url = request.url {
-            parts.append(shellQuoted(url.absoluteString))
+            // Query strings carry emails (filter[email]=…) — redact each
+            // query item's decoded value (percent-encoded emails like
+            // private%40… would otherwise slip past the raw-text regex),
+            // then rebuild the URL.
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            if let items = components?.queryItems {
+                components?.queryItems = items.map { item in
+                    var redacted = item
+                    redacted.value = (item.value ?? "").removingPercentEncoding
+                        .map { redactingPII(in: $0) } ?? item.value
+                    return redacted
+                }
+            }
+            parts.append(shellQuoted(components?.url?.absoluteString ?? url.absoluteString))
         }
         for (field, value) in (request.allHTTPHeaderFields ?? [:]).sorted(by: { $0.key < $1.key }) {
             let logged = field.lowercased() == "authorization" ? "Bearer <TOKEN>" : value
@@ -206,9 +229,6 @@ final class APIClient {
             #if DEBUG
             apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data), privacy: .private)")
             #endif
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw APIError.requestFailed
-            }
             guard (200..<300).contains(httpResponse.statusCode) else {
                 apiLogger.error("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
                 if httpResponse.statusCode == 401 {

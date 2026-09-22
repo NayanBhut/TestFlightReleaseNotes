@@ -81,7 +81,7 @@ final class APIMethodTests: XCTestCase {
     }
 
     // The token is always redacted (even in DEBUG); emails are redacted
-    // as PII. Structure, method and URL log in full.
+    // as PII — including in URL query strings (filter[email]=…).
     func testCurlCommandRedactsSecrets() {
         var request = URLRequest(url: URL(string: "https://api.appstoreconnect.apple.com/v1/users")!)
         request.httpMethod = "POST"
@@ -97,5 +97,17 @@ final class APIMethodTests: XCTestCase {
         XCTAssertFalse(curl.contains("live-token-value"))
         XCTAssertTrue(curl.contains("[redacted]"))
         XCTAssertFalse(curl.contains("tester@example.com"))
+    }
+
+    func testCurlCommandRedactsQueryPII() {
+        // Percent-encoded email in a query value (how URLSession encodes
+        // filter[email]=…): private%40example.com must still redact.
+        let url = URL(string: "https://api.appstoreconnect.apple.com/v1/userInvitations?filter%5Bemail%5D=private%40example.com&limit=1")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let curl = APIClient.curlCommand(for: request)
+        XCTAssertFalse(curl.contains("private%40example.com"))
+        XCTAssertFalse(curl.contains("private@example.com"))
+        XCTAssertTrue(curl.contains("filter%5Bemail%5D=%5Bredacted%5D") || curl.contains("filter[email]=[redacted]"))
     }
 }

@@ -38,26 +38,36 @@ struct ResourcesSectionView: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            HStack(spacing: 8) {
-                Image(systemName: isExpanded ? "chevron.top" : "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Image(systemName: "shippingbox")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text("Resources")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text("Team-wide")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            .onTapGesture {
+            // Button (not .onTapGesture) so the header is keyboard- and
+            // VoiceOver-actionable; full-width contentShape so gaps
+            // between subviews still hit. Standard macOS chevron: down
+            // when collapsed, up when expanded.
+            Button {
                 withAnimation {
                     isExpanded.toggle()
                 }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Image(systemName: "shippingbox")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("Resources")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("Team-wide")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Resources")
+            .accessibilityHint(isExpanded ? "Collapses the resources section" : "Expands the resources section")
+            .accessibilityAddTraits(.isHeader)
             if isExpanded {
                 ForEach(ResourcesViewModel.Kind.allCases) { kind in
                     Button {
@@ -773,8 +783,9 @@ private struct CreateBundleIdForm: View {
     }
 }
 
-/// Shared multi-select for user roles — used by the invite form and the
-/// per-row role editor so the role list can't drift between the two.
+/// Inline multi-select for user roles — used by the per-row role editor
+/// (tighter space than the dropdown, same UserRoleOption source so the
+/// two can't drift).
 private struct RoleMultiSelect: View {
     @Binding var selection: Set<UserRoleOption>
 
@@ -794,13 +805,8 @@ private struct RoleMultiSelect: View {
     }
 }
 
-/// POST /v1/userInvitations — email, names and at least one role are
-/// required. Resend re-issues a pending invite with the form's details
-/// (find by email → delete → re-create; no dedicated resend endpoint).
-/// Needs an Admin key role; a TestFlight-only key 403s.
 /// Dropdown multi-select for user roles — a Menu of checkable items so
-/// eleven roles don't stretch the invite form. The row editor keeps the
-/// inline RoleMultiSelect (tighter space, same UserRoleOption source).
+/// eleven roles don't stretch the invite form.
 private struct RoleDropdownMenu: View {
     @Binding var selection: Set<UserRoleOption>
 
@@ -839,6 +845,10 @@ private struct RoleDropdownMenu: View {
     }
 }
 
+/// POST /v1/userInvitations — email, names and at least one role are
+/// required. Resend re-issues a pending invite with the form's details
+/// (find by email → delete → re-create; no dedicated resend endpoint).
+/// Needs an Admin key role; a TestFlight-only key 403s.
 private struct InviteUserForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     /// Team apps for single-app invites (allAppsVisible == false).
@@ -997,9 +1007,8 @@ private struct InviteUserForm: View {
         case .resend:
             result = await viewModel.resendInvitation(
                 email: email, firstName: firstName, lastName: lastName,
-                roles: roles, allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed,
-                visibleAppIds: visibleAppIds)
+                roles: roles.map(\.rawValue), allAppsVisible: allAppsVisible,
+                provisioningAllowed: provisioningAllowed)
         }
         switch result {
         case .success:
@@ -1151,9 +1160,13 @@ private struct CreateProfileForm: View {
         .onAppear {
             // Relationship pickers reuse the existing fetches — load() is a
             // no-op for kinds already loaded, so this never refetches.
-            viewModel.load(.bundleIds)
-            viewModel.load(.certificates)
-            viewModel.load(.devices)
+            // Relationship pickers reuse the existing fetches — but a
+            // first page alone silently truncates the picker on teams
+            // with >200 items, so the profile form drains ALL pages
+            // (loadAllPages is a no-op refetch guard when already loaded).
+            viewModel.loadAllPages(.bundleIds)
+            viewModel.loadAllPages(.certificates)
+            viewModel.loadAllPages(.devices)
         }
     }
 }
@@ -1290,7 +1303,8 @@ private func certificatePickerLabel(_ certificate: CertificateModel) -> String {
 
 // MARK: - Rows
 
-private struct DeviceRow: View {    let device: DeviceModel
+private struct DeviceRow: View {
+    let device: DeviceModel
     @ObservedObject var viewModel: ResourcesViewModel
     @State private var errorMessage: String?
 
@@ -1742,7 +1756,7 @@ private struct InvitationRow: View {
             email: invitation.email ?? "",
             firstName: invitation.firstName ?? "",
             lastName: invitation.lastName ?? "",
-            roles: Set((invitation.roles ?? []).compactMap(UserRoleOption.init(rawValue:))),
+            roles: invitation.roles ?? [],
             allAppsVisible: invitation.allAppsVisible ?? true,
             provisioningAllowed: invitation.provisioningAllowed ?? false)
         if case .failure(let message) = result {

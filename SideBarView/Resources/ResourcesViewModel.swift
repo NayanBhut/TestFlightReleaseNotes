@@ -872,7 +872,7 @@ final class ResourcesViewModel: ObservableObject {
             email: trimmedEmail,
             firstName: trimmedFirst,
             lastName: trimmedLast,
-            roles: roles,
+            roles: roles.map(\.rawValue),
             allAppsVisible: allAppsVisible,
             provisioningAllowed: provisioningAllowed,
             visibleAppIds: visibleAppIds) else {
@@ -892,19 +892,27 @@ final class ResourcesViewModel: ObservableObject {
     }
 
     /// Resend an invitation: find the pending invite by email, delete it,
-    /// then re-create with the supplied details. Fails openly when no
-    /// pending invite exists for the email.
+    /// then re-create with the supplied details. Roles pass through as
+    /// raw strings so a role this client doesn't recognize is preserved
+    /// verbatim instead of being silently dropped. App-scoped invites
+    /// (allAppsVisible == false) are blocked: the pending invite's
+    /// visibleApps ids aren't reconstructable without an extra
+    /// include=visibleApps fetch, and recreating without them would
+    /// silently mis-scope the invite — revoke + new invite instead.
     func resendInvitation(email: String,
                           firstName: String,
                           lastName: String,
-                          roles: Set<UserRoleOption>,
+                          roles: [String],
                           allAppsVisible: Bool,
-                          provisioningAllowed: Bool,
-                          visibleAppIds: [String] = []) async -> WriteResult {
+                          provisioningAllowed: Bool) async -> WriteResult {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
             return .failure("Enter a valid email address.")
         }
+        guard !allAppsVisible else {
+            return .failure("This invite is scoped to specific apps. Revoke it and send a new invite with the app picker instead.")
+        }
+        guard !roles.isEmpty else { return .failure("The invitation has no roles to re-create.") }
         let resendKey = "resend-invitation-\(trimmedEmail.lowercased())"
         guard !isWriteInFlight(resendKey) else { return .ignored }
         writeInFlight.insert(resendKey)
@@ -922,6 +930,12 @@ final class ResourcesViewModel: ObservableObject {
             }
             _ = try await APIClient.shared.callAPI(with: deleteRequest)
             guard !Task.isCancelled else { return .ignored }
+            var inviteRevoked = true
+            defer {
+                // The delete already happened — the list must reflect
+                // reality no matter how the re-create goes.
+                if inviteRevoked { loadInvitations() }
+            }
             guard let createRequest = invitationCreateRequest(
                 email: trimmedEmail,
                 firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -929,11 +943,18 @@ final class ResourcesViewModel: ObservableObject {
                 roles: roles,
                 allAppsVisible: allAppsVisible,
                 provisioningAllowed: provisioningAllowed,
-                visibleAppIds: visibleAppIds) else {
-                return .failure("Couldn't build the resend request.")
+                visibleAppIds: []) else {
+                return .failure("The old invite was revoked, but the new one couldn't be built — send a fresh invite.")
             }
-            _ = try await APIClient.shared.callAPI(with: createRequest)
+            do {
+                _ = try await APIClient.shared.callAPI(with: createRequest)
+            } catch {
+                guard !Task.isCancelled else { return .ignored }
+                resourcesLogger.error("Failed to re-create invitation: \(error.localizedDescription)")
+                return .failure("\(writeErrorMessage(for: error)) The previous invite was revoked — send a fresh invite.")
+            }
             guard !Task.isCancelled else { return .ignored }
+            inviteRevoked = false
             loadInvitations()
             return .success
         } catch {
@@ -1022,12 +1043,14 @@ final class ResourcesViewModel: ObservableObject {
     private func invitationCreateRequest(email: String,
                                          firstName: String,
                                          lastName: String,
-                                         roles: Set<UserRoleOption>,
+                                         roles: [String],
                                          allAppsVisible: Bool,
                                          provisioningAllowed: Bool,
                                          visibleAppIds: [String]) -> URLRequest? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
+        // Roles pass through as raw strings (deduped, sorted) so callers
+        // can preserve role values this client doesn't recognize.
         guard !firstName.isEmpty, !lastName.isEmpty, !roles.isEmpty,
               let data = try? encoder.encode(UserInvitationCreateRequest(
                 data: UserInvitationCreateData(
@@ -1035,7 +1058,7 @@ final class ResourcesViewModel: ObservableObject {
                         email: email,
                         firstName: firstName,
                         lastName: lastName,
-                        roles: roles.map(\.rawValue).sorted(),
+                        roles: Array(Set(roles)).sorted(),
                         allAppsVisible: allAppsVisible,
                         provisioningAllowed: provisioningAllowed
                     ),
@@ -1053,19 +1076,26 @@ final class ResourcesViewModel: ObservableObject {
             apiVersion: .v1)
     }
 
-    /// PATCH /v1/users/{id} — replace the user's roles.
+    /// PATCH /v1/users/{id} — replace the user's roles. Roles the client
+    /// can't parse (a future Apple role) are preserved verbatim and
+    /// unioned into the outgoing array — editing one role must never
+    /// silently strip another.
     func updateUserRoles(_ user: UserModel, roles: Set<UserRoleOption>) async -> WriteResult {
         guard !roles.isEmpty else { return .failure("Pick at least one role.") }
         guard !isWriteInFlight(user.id) else { return .ignored }
         writeInFlight.insert(user.id)
         defer { writeInFlight.remove(user.id) }
 
+        let knownRoles = Set(roles.map(\.rawValue))
+        // Unrecognized raw roles ride along untouched.
+        let outgoingRoles = Array(knownRoles.union((user.roles ?? []).filter { !knownRoles.contains($0) })).sorted()
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(UserUpdateRequest(
             data: UserUpdateData(
                 id: user.id,
-                attributes: UserUpdateAttributes(roles: roles.map(\.rawValue).sorted())
+                attributes: UserUpdateAttributes(roles: outgoingRoles)
             )
         )), let request = APIClient.shared.getRequest(
             api: .patch(name: .getUsers, body: data, path: user.id),

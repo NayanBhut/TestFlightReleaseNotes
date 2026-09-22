@@ -15,6 +15,12 @@ private let betaLogger = Logger(subsystem: "com.appstore.release-notes", categor
 
 @MainActor
 final class BetaViewModel: ObservableObject {
+    deinit {
+        // A stuck multi-page team roster drain must not keep the VM alive
+        // (same rule as ResourcesViewModel's fetchTasks deinit).
+        teamUsersTask?.cancel()
+    }
+
     // MARK: - ViewState
     @Published var viewState: CurrentAppState = ._none
 
@@ -34,8 +40,10 @@ final class BetaViewModel: ObservableObject {
     @Published var isTestersLoaded = false
     @Published var updatingTesterId: String?
     @Published var updatingBuildId: String?
-    /// Group id with a create/rename/delete in flight — per-group so one
-    /// row's write never blocks another. "create" is the create-form key
+    /// Group id with a create/rename/delete in flight — one group write
+    /// at a time (single optional; the view disables every row's write
+    /// buttons while any one is busy, which is the intended UX for a
+    /// short-lived group mutation). "create" is the create-form key
     /// (never collides with a resource id).
     @Published var updatingGroupId: String?
 

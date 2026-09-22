@@ -475,11 +475,12 @@ struct VersionLocalizationRow: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .accessibilityLabel("Edit \(localization.locale ?? "locale")")
                 }
             }
             if isEditing {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Description (up to 4000 characters)")
+                    Text("Description (up to \(VersionLocalizationLimits.descriptionMaxLength) characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $descriptionText)
@@ -487,11 +488,11 @@ struct VersionLocalizationRow: View {
                         .frame(minHeight: 80, maxHeight: 160)
                         .border(Color.gray.opacity(0.3), width: 1)
                         .disabled(isSaving)
-                    TextField("Keywords, comma-separated (up to 100 characters)", text: $keywords)
+                    TextField("Keywords, comma-separated (up to \(VersionLocalizationLimits.keywordsMaxLength) characters)", text: $keywords)
                         .textFieldStyle(.roundedBorder)
                         .font(.subheadline)
                         .disabled(isSaving)
-                    Text("Promotional Text (up to 170 characters)")
+                    Text("Promotional Text (up to \(VersionLocalizationLimits.promotionalTextMaxLength) characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $promotionalText)
@@ -499,7 +500,7 @@ struct VersionLocalizationRow: View {
                         .frame(minHeight: 44, maxHeight: 90)
                         .border(Color.gray.opacity(0.3), width: 1)
                         .disabled(isSaving)
-                    Text("What's New (up to 4000 characters)")
+                    Text("What's New (up to \(VersionLocalizationLimits.whatsNewMaxLength) characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $whatsNew)

@@ -508,6 +508,11 @@ struct BetaGroupView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            if let limitError = groupLimitError {
+                Text(limitError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
             Text("Test on a throwaway group first. Needs an API key with the Admin role.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -523,23 +528,46 @@ struct BetaGroupView: View {
                         Task {
                             isCreatingGroup = true
                             defer { isCreatingGroup = false }
-                            let limit = Int(newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines))
                             if await betaViewModel.createGroup(
                                 name: newGroupName,
                                 publicLinkEnabled: newGroupPublicLink,
-                                publicLinkLimit: (newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : limit)
+                                publicLinkLimit: groupLimit
                             ) {
                                 showCreateGroupSheet = false
                             }
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canCreateGroup)
                 }
             }
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    /// Parsed limit: nil when empty (unlimited) or unparsable (blocks
+    /// create — a typo must never silently create an unlimited group).
+    private var groupLimit: Int? {
+        let trimmed = newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return Int(trimmed)
+    }
+
+    private var groupLimitError: String? {
+        let trimmed = newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard newGroupPublicLink, !trimmed.isEmpty else { return nil }
+        guard let value = groupLimit else {
+            return "The public link limit must be a whole number (e.g. 100)."
+        }
+        if value <= 0 {
+            return "The public link limit must be greater than zero."
+        }
+        return nil
+    }
+
+    private var canCreateGroup: Bool {
+        newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? false : groupLimitError == nil
     }
 
     private var inviteSheet: some View {
