@@ -19,6 +19,16 @@ struct BetaGroupView: View {
     @State private var inviteLastName = ""
     @State private var buildIdForActions = ""
     @State private var testerPendingRemoval: BetaTesterModel?
+    // Batch I (I5): group CRUD state.
+    @State private var showCreateGroupSheet = false
+    @State private var newGroupName = ""
+    @State private var newGroupPublicLink = false
+    @State private var newGroupLimitText = ""
+    @State private var isCreatingGroup = false
+    @State private var isRenamingGroup = false
+    @State private var draftGroupName = ""
+    @State private var showDeleteGroupConfirm = false
+    @State private var testerPendingDeletion: BetaTesterModel?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +59,9 @@ struct BetaGroupView: View {
         .sheet(isPresented: $showInviteSheet) {
             inviteSheet
         }
+        .sheet(isPresented: $showCreateGroupSheet) {
+            createGroupSheet
+        }
         .onChange(of: selectedApp?.id) { _, _ in
             Task { await refreshGroupsIfStale() }
         }
@@ -70,6 +83,22 @@ struct BetaGroupView: View {
                 testerPendingRemoval = nil
             }
             Button("Cancel", role: .cancel) { testerPendingRemoval = nil }
+        }
+        .confirmationDialog(
+            "Delete \(testerPendingDeletion?.displayName ?? "this tester") from the team? They will lose access to all TestFlight groups.",
+            isPresented: Binding(
+                get: { testerPendingDeletion != nil },
+                set: { if !$0 { testerPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete from Team", role: .destructive) {
+                if let tester = testerPendingDeletion {
+                    Task { await betaViewModel.deleteTester(tester) }
+                }
+                testerPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { testerPendingDeletion = nil }
         }
     }
 
@@ -104,6 +133,19 @@ struct BetaGroupView: View {
             }
             Button(action: { Task { await refreshGroupsIfStale(force: true) } }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .disabled(selectedApp == nil || betaViewModel.viewState == .betaGroupsLoading)
+            // Batch I (I5): group create opens a sheet; writes need an
+            // Admin key, failures surface via the existing TestFlight alert.
+            Button(action: {
+                newGroupName = ""
+                newGroupPublicLink = false
+                newGroupLimitText = ""
+                showCreateGroupSheet = true
+            }) {
+                Label("New Group", systemImage: "plus")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
@@ -169,11 +211,66 @@ struct BetaGroupView: View {
     private var groupDetail: some View {
         if let group = betaViewModel.selectedGroup {
             VStack(alignment: .leading, spacing: 0) {
-                // Group title
+                // Group title with rename/delete (Batch I, I5).
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(group.name ?? "Unnamed group")
-                        .font(.title3)
-                        .fontWeight(.semibold)
+                    HStack {
+                        if isRenamingGroup {
+                            TextField("Group name", text: $draftGroupName)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.title3)
+                                .disabled(betaViewModel.updatingGroupId != nil)
+                            Button("Cancel") {
+                                isRenamingGroup = false
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(betaViewModel.updatingGroupId != nil)
+                            if betaViewModel.updatingGroupId != nil {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Button("Save") {
+                                    Task {
+                                        if await betaViewModel.renameGroup(group, newName: draftGroupName) {
+                                            isRenamingGroup = false
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(draftGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        } else {
+                            Text(group.name ?? "Unnamed group")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            if betaViewModel.updatingGroupId == group.id {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Button("Rename") {
+                                    draftGroupName = group.name ?? ""
+                                    isRenamingGroup = true
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(betaViewModel.updatingGroupId != nil)
+                                Button("Delete", role: .destructive) {
+                                    showDeleteGroupConfirm = true
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(betaViewModel.updatingGroupId != nil)
+                                .alert("Delete this beta group?", isPresented: $showDeleteGroupConfirm) {
+                                    Button("Cancel", role: .cancel) {}
+                                    Button("Delete", role: .destructive) {
+                                        Task { await betaViewModel.deleteGroup(group) }
+                                    }
+                                } message: {
+                                    Text("Testers keep team access but lose this group's builds. This cannot be undone.")
+                                }
+                            }
+                        }
+                    }
                     Text(groupDetailSubtitle(group))
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -268,6 +365,9 @@ struct BetaGroupView: View {
                         if betaViewModel.updatingTesterId == tester.id {
                             ProgressView().scaleEffect(0.7)
                         } else {
+                            // Trash = remove from this group; the circled
+                            // trash deletes the tester from the team
+                            // entirely (DELETE /v1/betaTesters/{id}).
                             Button(role: .destructive) {
                                 testerPendingRemoval = tester
                             } label: {
@@ -277,6 +377,15 @@ struct BetaGroupView: View {
                             .foregroundColor(.red)
                             .accessibilityLabel("Remove \(tester.displayName) from group")
                             .help("Remove from group")
+                            Button(role: .destructive) {
+                                testerPendingDeletion = tester
+                            } label: {
+                                Image(systemName: "trash.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Delete \(tester.displayName) from team")
+                            .help("Delete from team")
                         }
                     }
                     .padding(.vertical, 4)
@@ -369,6 +478,62 @@ struct BetaGroupView: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.3), lineWidth: 1))
             }
         }
+    }
+
+    // MARK: - Group Create (Batch I, I5)
+
+    /// POST /v1/betaGroups — name plus optional public-link settings.
+    /// Stays open on failure (createGroup returns false); the TestFlight
+    /// alert surfaces the error.
+    private var createGroupSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Beta Group")
+                .font(.headline)
+            TextField("Group name (required)", text: $newGroupName)
+                .textFieldStyle(.roundedBorder)
+                .disabled(isCreatingGroup)
+            Toggle("Enable public link", isOn: $newGroupPublicLink)
+                .disabled(isCreatingGroup)
+            TextField("Public link limit (optional, number of testers)", text: $newGroupLimitText)
+                .textFieldStyle(.roundedBorder)
+                .disabled(isCreatingGroup || !newGroupPublicLink)
+            if newGroupPublicLink {
+                Text("Leave the limit empty for an unlimited public link.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Text("Test on a throwaway group first. Needs an API key with the Admin role.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { showCreateGroupSheet = false }
+                    .buttonStyle(.plain)
+                    .disabled(isCreatingGroup)
+                if isCreatingGroup {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Button("Create Group") {
+                        Task {
+                            isCreatingGroup = true
+                            defer { isCreatingGroup = false }
+                            let limit = Int(newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines))
+                            if await betaViewModel.createGroup(
+                                name: newGroupName,
+                                publicLinkEnabled: newGroupPublicLink,
+                                publicLinkLimit: (newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : limit)
+                            ) {
+                                showCreateGroupSheet = false
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
     }
 
     private var inviteSheet: some View {

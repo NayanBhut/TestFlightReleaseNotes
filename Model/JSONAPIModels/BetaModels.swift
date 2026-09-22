@@ -158,3 +158,57 @@ enum BetaReviewSubmissionBody {
         return try? JSONSerialization.data(withJSONObject: body, options: [])
     }
 }
+
+// MARK: - Batch I (I5): beta group writes
+//
+// Bodies verified against Apple's OpenAPI spec (EvanBacon mirror):
+// - POST /v1/betaGroups: attributes name (required) + publicLinkEnabled /
+//   publicLinkLimitEnabled / publicLinkLimit / feedbackEnabled (optional);
+//   relationships.app (required).
+// - PATCH /v1/betaGroups/{id}: id + attributes (rename uses name only).
+// - DELETE /v1/betaGroups/{id} and DELETE /v1/betaTesters/{id} (204).
+
+struct BetaGroupCreateRequest: Encodable {
+    var data: BetaGroupCreateData
+}
+
+struct BetaGroupCreateData: Encodable {
+    var type = "betaGroups"
+    var attributes: BetaGroupCreateAttributes
+    var relationships: BetaGroupCreateRelationships
+}
+
+struct BetaGroupCreateAttributes: Encodable {
+    var name: String
+    var publicLinkEnabled: Bool
+    var publicLinkLimitEnabled: Bool
+    /// Omitted when nil (encodeIfPresent) — unlimited public link.
+    var publicLinkLimit: Int?
+}
+
+struct BetaGroupCreateRelationships: Encodable {
+    var app: BetaGroupAppRelationship
+}
+
+struct BetaGroupAppRelationship: Encodable {
+    var data: BetaGroupAppRef
+}
+
+struct BetaGroupAppRef: Encodable {
+    var type = "apps"
+    var id: String
+}
+
+struct BetaGroupUpdateRequest: Encodable {
+    var data: BetaGroupUpdateData
+}
+
+struct BetaGroupUpdateData: Encodable {
+    var type = "betaGroups"
+    var id: String
+    var attributes: BetaGroupUpdateAttributes
+}
+
+struct BetaGroupUpdateAttributes: Encodable {
+    var name: String
+}
