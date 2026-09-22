@@ -90,6 +90,8 @@ struct ResourceListContentView: View {
     // Batch G (#10): write forms toggle from the header.
     @State private var showRegisterDeviceForm = false
     @State private var showCreateCertificateForm = false
+    // Batch I (I2): bundle ID create form toggles from the header.
+    @State private var showCreateBundleIdForm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -104,6 +106,12 @@ struct ResourceListContentView: View {
             if kind == .certificates, showCreateCertificateForm {
                 CreateCertificateForm(viewModel: viewModel) {
                     showCreateCertificateForm = false
+                }
+                Divider()
+            }
+            if kind == .bundleIds, showCreateBundleIdForm {
+                CreateBundleIdForm(viewModel: viewModel) {
+                    showCreateBundleIdForm = false
                 }
                 Divider()
             }
@@ -179,6 +187,16 @@ struct ResourceListContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Create a certificate")
+            }
+            if kind == .bundleIds {
+                Button {
+                    showCreateBundleIdForm.toggle()
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Register a bundle ID")
             }
             Button {
                 dismiss()
@@ -342,7 +360,7 @@ struct ResourceListContentView: View {
             }
         case .bundleIds:
             ForEach(viewModel.filteredBundleIds, id: \.id) { bundleId in
-                BundleIdRow(bundleId: bundleId)
+                BundleIdRow(bundleId: bundleId, viewModel: viewModel)
             }
         case .profiles:
             ForEach(viewModel.filteredProfiles, id: \.id) { profile in
@@ -583,10 +601,99 @@ private struct CreateCertificateForm: View {
     }
 }
 
+/// POST /v1/bundleIds — name, identifier and platform are required;
+/// seedId is optional. Needs an Admin key role; a TestFlight-only key 403s.
+private struct CreateBundleIdForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: () -> Void
+    @State private var name = ""
+    @State private var identifier = ""
+    @State private var platform: BundleIdPlatformOption = .IOS
+    @State private var seedId = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("New Bundle ID")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+                .disabled(isSaving)
+            TextField("Bundle identifier (e.g. com.example.app)", text: $identifier)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                .disabled(isSaving)
+            HStack {
+                Picker("Platform", selection: $platform) {
+                    ForEach(BundleIdPlatformOption.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 200)
+                .disabled(isSaving)
+                Spacer()
+            }
+            TextField("Seed ID (optional)", text: $seedId)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                .disabled(isSaving)
+            Text("Test on a throwaway identifier first. Needs an API key with the Admin role.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    .disabled(isSaving)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Create") {
+                        Task { @MainActor in
+                            isSaving = true
+                            defer { isSaving = false }
+                            let result = await viewModel.createBundleId(
+                                name: name,
+                                identifier: identifier,
+                                platform: platform,
+                                seedId: seedId)
+                            if case .success = result {
+                                onDone()
+                            } else if case .failure(let message) = result {
+                                // .ignored: duplicate in flight / cancelled —
+                                // keep the form open, nothing was created.
+                                errorMessage = message
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 // MARK: - Rows
 
-private struct DeviceRow: View {
-    let device: DeviceModel
+private struct DeviceRow: View {    let device: DeviceModel
     @ObservedObject var viewModel: ResourcesViewModel
     @State private var errorMessage: String?
 
@@ -745,6 +852,13 @@ private struct CertificateRow: View {
 
 private struct BundleIdRow: View {
     let bundleId: BundleIdModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var isRenaming = false
+    @State private var draftName = ""
+    @State private var showDeleteConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(bundleId.id) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -752,22 +866,100 @@ private struct BundleIdRow: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(bundleId.name ?? "Unknown identifier")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                if isRenaming {
+                    TextField("Bundle ID name", text: $draftName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                        .disabled(isBusy)
+                } else {
+                    Text(bundleId.name ?? "Unknown identifier")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
                 Text(bundleId.identifier ?? "")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
-            Text(bundleId.platform ?? "")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(bundleId.platform ?? "")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if isRenaming {
+                    HStack(spacing: 6) {
+                        Button("Cancel") {
+                            isRenaming = false
+                            errorMessage = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(isBusy)
+                        if isBusy {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            Button("Save") {
+                                Task { @MainActor in
+                                    if case .failure(let message) = await viewModel.renameBundleId(
+                                        bundleId, newName: draftName) {
+                                        errorMessage = message
+                                    } else {
+                                        isRenaming = false
+                                        errorMessage = nil
+                                    }
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                } else if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    HStack(spacing: 6) {
+                        Button("Rename") {
+                            draftName = bundleId.name ?? ""
+                            errorMessage = nil
+                            isRenaming = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Rename \(bundleId.name ?? "bundle ID")")
+                        // Deleting is destructive — confirm first (same alert
+                        // pattern as CertificateRow's revoke).
+                        Button("Delete") { showDeleteConfirm = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Delete \(bundleId.name ?? "bundle ID")")
+                    }
+                }
+            }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Delete this bundle ID?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.deleteBundleId(id: bundleId.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("Profiles and capabilities using this identifier will break. This cannot be undone.")
+        }
     }
 }
 

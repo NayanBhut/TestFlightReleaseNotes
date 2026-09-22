@@ -226,3 +226,62 @@ struct CertificateCreateAttributes: Encodable {
     var csrContent: String
     var certificateType: String
 }
+
+// MARK: - Batch I (I2): bundle ID writes
+//
+// Bodies verified against Apple's OpenAPI spec (EvanBacon mirror of the
+// official spec):
+// - POST /v1/bundleIds: attributes identifier + name + platform (all
+//   required), seedId optional. Platform enum is BundleIdPlatform:
+//   IOS, MAC_OS (no UNIVERSAL — that's device-only in practice).
+// - PATCH /v1/bundleIds/{id}: attributes name only ("Modify a bundle id:
+//   Update a specific bundle ID's name" — Apple docs).
+// - DELETE /v1/bundleIds/{id}: delete (204, no body).
+// Writes need an API key with an elevated role (Admin/Account Holder for
+// provisioning); a TestFlight-only key 403s.
+
+/// Bundle ID platform values (spec enum BundleIdPlatform).
+enum BundleIdPlatformOption: String, CaseIterable {
+    case IOS
+    case MAC_OS
+
+    /// Explicit mapping: derived `.capitalized` would render "Ios" /
+    /// "Mac Os". Two stable cases, same precedent as DevicePlatform.
+    var displayName: String {
+        switch self {
+        case .IOS: return "iOS"
+        case .MAC_OS: return "macOS"
+        }
+    }
+}
+
+struct BundleIdCreateRequest: Encodable {
+    var data: BundleIdCreateData
+}
+
+struct BundleIdCreateData: Encodable {
+    var type = "bundleIds"
+    var attributes: BundleIdCreateAttributes
+}
+
+struct BundleIdCreateAttributes: Encodable {
+    var name: String
+    var identifier: String
+    var platform: String
+    /// Optional team seed id; nil is omitted from the body (encodeIfPresent).
+    var seedId: String?
+}
+
+struct BundleIdUpdateRequest: Encodable {
+    var data: BundleIdUpdateData
+}
+
+struct BundleIdUpdateData: Encodable {
+    var type = "bundleIds"
+    var id: String
+    var attributes: BundleIdUpdateAttributes
+}
+
+struct BundleIdUpdateAttributes: Encodable {
+    var name: String
+}
