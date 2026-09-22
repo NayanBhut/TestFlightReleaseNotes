@@ -17,6 +17,9 @@ struct BetaGroupView: View {
     @State private var inviteEmail = ""
     @State private var inviteFirstName = ""
     @State private var inviteLastName = ""
+    @State private var inviteUserSearch = ""
+    @State private var pickedTeamUserId: String?
+    @State private var pickedTeamUserEmail = ""
     @State private var buildIdForActions = ""
     @State private var testerPendingRemoval: BetaTesterModel?
     // Batch I (I5): group CRUD state.
@@ -318,6 +321,9 @@ struct BetaGroupView: View {
                     inviteEmail = ""
                     inviteFirstName = ""
                     inviteLastName = ""
+                    inviteUserSearch = ""
+                    pickedTeamUserId = nil
+                    pickedTeamUserEmail = ""
                     showInviteSheet = true
                 }) {
                     Label("Invite tester", systemImage: "plus")
@@ -540,8 +546,76 @@ struct BetaGroupView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Invite Beta Tester")
                 .font(.headline)
+            // Team picker: search + tap fills the fields below (manual
+            // entry still works for people outside the team).
+            TextField("Search team members…", text: $inviteUserSearch)
+                .textFieldStyle(.roundedBorder)
+            if betaViewModel.isTeamUsersLoading && betaViewModel.teamUsers.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Loading team…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if let teamError = betaViewModel.teamUsersError, betaViewModel.teamUsers.isEmpty {
+                Text(teamError)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                let matches = betaViewModel.matchingTeamUsers(query: inviteUserSearch)
+                if !matches.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(matches, id: \.id) { user in
+                                Button {
+                                    inviteEmail = user.username ?? ""
+                                    inviteFirstName = user.firstName ?? ""
+                                    inviteLastName = user.lastName ?? ""
+                                    pickedTeamUserId = user.id
+                                    pickedTeamUserEmail = user.username ?? ""
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text("\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces).isEmpty ? (user.username ?? "Unknown user") : "\(user.firstName ?? "") \(user.lastName ?? "")")
+                                                .font(.subheadline)
+                                                .foregroundColor(.primary)
+                                            Text(user.username ?? "")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        if pickedTeamUserId == user.id {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.accentColor)
+                                        }
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(RoundedRectangle(cornerRadius: 6)
+                                        .fill(pickedTeamUserId == user.id ? Color.accentColor.opacity(0.12) : Color.clear))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Invite \(user.username ?? "user")")
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                } else if !inviteUserSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("No team member matches — type the email below to invite someone new.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
             TextField("Email (required)", text: $inviteEmail)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: inviteEmail) { _, newEmail in
+                    // Manual edits after picking unpick (the checkmark
+                    // tracks the picked address, not free text).
+                    if newEmail != pickedTeamUserEmail {
+                        pickedTeamUserId = nil
+                    }
+                }
             HStack {
                 TextField("First name", text: $inviteFirstName)
                     .textFieldStyle(.roundedBorder)
@@ -573,6 +647,7 @@ struct BetaGroupView: View {
         }
         .padding(20)
         .frame(width: 420)
+        .onAppear { betaViewModel.loadTeamUsers() }
     }
 
     // MARK: - Builds & Review
