@@ -136,9 +136,6 @@ struct ResourceListContentView: View {
                 }
                 Divider()
             }
-            if kind == .users {
-                invitationsSection
-            }
             content
         }
         // min→max ranges make the sheet window resizable; the screen-
@@ -420,6 +417,25 @@ struct ResourceListContentView: View {
             ForEach(viewModel.filteredUsers, id: \.id) { user in
                 UserRow(user: user, viewModel: viewModel)
             }
+            // Pending (unaccepted) invites render as plain rows in the
+            // same list — no separate section. A failed invites fetch
+            // surfaces as a retry row so it never blocks the users list.
+            ForEach(viewModel.filteredInvitations, id: \.id) { invitation in
+                InvitationRow(invitation: invitation, viewModel: viewModel)
+            }
+            if case .error(let message) = viewModel.invitationsState {
+                HStack {
+                    Text("Couldn't load pending invitations: \(message)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry") { viewModel.loadInvitations() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+            }
         }
     }
 
@@ -467,59 +483,6 @@ struct ResourceListContentView: View {
             }
             // Chrome background so rows never peek through behind the pinned bar.
             .background(Color(nsColor: .controlBackgroundColor))
-        }
-    }
-
-    // MARK: - Pending invitations (users kind only)
-
-    /// Unaccepted invites live in /userInvitations, not /users — this
-    /// section surfaces them with Resend / Revoke. Hidden while empty or
-    /// idle (no pending invites is the norm); errors stay inline with a
-    /// Retry so one failing section never blocks the users list.
-    @ViewBuilder private var invitationsSection: some View {
-        switch viewModel.invitationsState {
-        case .idle, .empty:
-            EmptyView()
-        case .loading:
-            HStack {
-                Spacer()
-                ProgressView()
-                    .scaleEffect(0.7)
-                Text("Loading pending invitations…")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding(.vertical, 8)
-            Divider()
-        case .error(let message):
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Couldn't load pending invitations: \(message)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Retry") { viewModel.loadInvitations() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
-        case .loaded(let invitations):
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Pending invitations (\(invitations.count))")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                ForEach(invitations, id: \.id) { invitation in
-                    InvitationRow(invitation: invitation, viewModel: viewModel)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                }
-            }
-            .padding(.bottom, 4)
-            Divider()
         }
     }
 }
@@ -1693,10 +1656,19 @@ private struct InvitationRow: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(invitation.email ?? "Unknown email")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .textSelection(.enabled)
+                HStack(spacing: 6) {
+                    Text(invitation.email ?? "Unknown email")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .textSelection(.enabled)
+                    Text("Pending")
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.12))
+                        .cornerRadius(4)
+                }
                 Text("\(invitation.firstName ?? "") \(invitation.lastName ?? "")")
                     .font(.caption)
                     .foregroundColor(.secondary)
