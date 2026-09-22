@@ -27,8 +27,10 @@ Environment variables:
   REVIEW_RAW_FILE       Path to save the raw API response of the LAST chunk
                         call for debugging (default: /tmp/review_raw.json)
   MAX_CHARS_PER_CHUNK   Max characters per chunk (default: 150000).  A
-                        single file section larger than this becomes its
-                        own oversized chunk; files are never split mid-file.
+                        single file section larger than this is split on
+                        hunk boundaries with the diff header re-prepended
+                        to each piece; a single hunk larger than the cap
+                        is kept whole as a last resort.
   SKIP_PATH_PATTERNS    Regexes matched against the a/ and
                         b/ paths of each "diff --git" section, separated
                         by ";;" (preferred - commas inside regexes stay
@@ -39,11 +41,6 @@ Environment variables:
                         "docs/" is anchored as "(^|/)docs/" so only real
                         docs directories match, not e.g. "apidocs/".
                         Default: "(^|/)docs/;;(?i)\.md$;;\.xcodeproj/"
-  MAX_CHARS_PER_CHUNK   Max characters per chunk (default: 150000).  A
-                        single file section larger than this is split on
-                        hunk boundaries with the diff header re-prepended
-                        to each piece; a single hunk larger than the cap
-                        is kept whole as a last resort.
   MAX_CHUNKS           Safety cap on the number of review API calls
                         (default: 40).  Exceeding it fails the run
                         loudly rather than reviewing an incomplete diff -
@@ -56,6 +53,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -90,6 +88,10 @@ def log(msg):
 
 class ReviewError(Exception):
     """A review API call failed; the error has already been printed to stderr."""
+
+
+class TransientError(Exception):
+    """A retryable API failure (429/5xx/timeout/network); nothing was generated."""
 
 
 class VerifyError(Exception):
@@ -172,7 +174,9 @@ def split_oversized_section(section, max_chars):
         return [section]
     header = section[: m.start()]
     body = section[m.start() :]
-    pieces, buf, buf_size = [], [], len(header)
+    # Budget is uniform: count BODY bytes only; every emitted piece
+    # re-prepends `header`, checked against max_chars - len(header).
+    pieces, buf, buf_size = [], [], 0
     # re.split on a body that starts with "@@" yields an empty leading
     # element - drop it or we would emit a header-only piece with no hunk.
     for hunk in (h for h in re.split(r"(?m)^(?=@)", body) if h):
@@ -283,19 +287,21 @@ def build_carryover(findings_so_far, max_chars=8000):
         if len(block) > max_chars:
             # Cap a single oversized block - never let one multi-KB block
             # ride along in every subsequent prompt.  Truncate at a line
-            # boundary when possible; a single over-long line is hard-cut.
+            # boundary when possible; a single over-long line is hard-cut
+            # so at least its head is carried over.
             lines, acc = [], 0
             for line in block.splitlines():
                 budget = max_chars - acc
-                if not lines or budget <= 0:
+                if budget <= 0:
                     break
                 if len(line) + 1 > budget:
-                    lines.append(line[: max(0, budget - 1)])
+                    if not lines:
+                        lines.append(line[: max(0, budget - 1)])
                     break
                 lines.append(line)
                 acc += len(line) + 1
             text.append("\n".join(lines) + "\n... (oversized finding truncated)")
-            total = max_chars
+            total += len(text[-1])
             continue
         if text and total + len(block) > max_chars:
             text.append("... (earlier findings list truncated at a block boundary)")
@@ -367,11 +373,19 @@ def request_review(model, user_msg, api_key, raw_file):
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
+        if e.code == 429 or 500 <= e.code <= 599:
+            # Transient: rate limit / server error - worth a bounded retry.
+            print(
+                f"HTTP_ERROR (transient): {e.code}: {body[:2000]}",
+                file=sys.stderr,
+            )
+            raise TransientError(f"HTTP {e.code}")
         print(f"HTTP_ERROR: {e.code}: {body[:2000]}", file=sys.stderr)
         raise ReviewError()
     except Exception as e:
-        print(f"REQUEST_ERROR: {str(e)}", file=sys.stderr)
-        raise ReviewError()
+        # Timeouts, connection resets, DNS blips - all transient.
+        print(f"REQUEST_ERROR (transient): {str(e)}", file=sys.stderr)
+        raise TransientError(str(e))
 
     # Save the raw response for debugging (non-fatal on failure).
     # Overwritten per chunk, so it ends up holding the LAST call's response.
@@ -433,6 +447,35 @@ def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk):
         for s in chunk:
             paths = section_paths(s)
             print(f"    - {paths[1] if paths else '(unknown path)'}")
+
+
+def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
+    """Call fn with bounded retry + exponential-ish backoff.
+
+    Transient failures (HTTP 429/5xx, timeouts, connection resets) are
+    retried; deterministic failures (bad key, invalid payload, empty
+    content) raise ReviewError immediately.  Retries only re-spend on
+    requests that never produced output, so a completed call's tokens
+    are never wasted on a retry.
+    """
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except ReviewError:
+            raise  # deterministic failure, already printed
+        except TransientError as e:
+            last_exc = e
+            if attempt < attempts:
+                delay = delays[min(attempt - 1, len(delays) - 1)]
+                log(
+                    f"WARN: {chunk_label}: transient API error "
+                    f"(attempt {attempt}/{attempts}): {e}; retrying in {delay}s"
+                )
+                time.sleep(delay)
+    log(f"ERROR: {chunk_label}: transient API error persisted after "
+         f"{attempts} attempts: {last_exc}")
+    raise ReviewError()
 
 
 def main():
@@ -575,7 +618,10 @@ def main():
             )
 
         try:
-            content = request_review(model, user_msg, api_key, raw_file)
+            content = call_with_retry(
+                lambda: request_review(model, user_msg, api_key, raw_file),
+                chunk_label=f"chunk {i}/{total_chunks}",
+            )
         except ReviewError:
             if combined_parts:
                 # Chunk N failed after earlier chunks succeeded: fail the
