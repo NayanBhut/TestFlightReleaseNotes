@@ -1033,12 +1033,13 @@ private struct CreateProfileForm: View {
                 items: certificates.map {
                     ChecklistDropdownMenu.Item(
                         id: $0.id,
-                        title: $0.displayName ?? $0.name ?? $0.id,
-                        subtitle: certificateExpiryLabel($0.expirationDate)
+                        title: certificatePickerLabel($0),
+                        subtitle: nil
                     )
                 },
                 selection: $certificateIds,
-                emptyHint: "No certificates loaded — open Resources → Certificates first."
+                emptyHint: "No certificates loaded — open Resources → Certificates first.",
+                allowsSelectAll: true
             )
             .disabled(isSaving)
             Text("Devices (\(deviceIds.count) selected, optional)")
@@ -1054,7 +1055,8 @@ private struct CreateProfileForm: View {
                     )
                 },
                 selection: $deviceIds,
-                emptyHint: "No devices loaded — open Resources → Devices first."
+                emptyHint: "No devices loaded — open Resources → Devices first.",
+                allowsSelectAll: true
             )
             .disabled(isSaving)
             Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
@@ -1132,6 +1134,9 @@ private struct ChecklistDropdownMenu: View {
     let items: [Item]
     @Binding var selection: Set<String>
     var emptyHint: String? = nil
+    /// When true, the menu opens with Select All / Clear actions on top
+    /// (mirrors the Apple Developer site's picker).
+    var allowsSelectAll = false
 
     private var label: String {
         switch selection.count {
@@ -1148,6 +1153,15 @@ private struct ChecklistDropdownMenu: View {
                 .foregroundColor(.secondary)
         } else {
             Menu {
+                if allowsSelectAll {
+                    Button("Select All") {
+                        selection = Set(items.map(\.id))
+                    }
+                    Button("Clear") {
+                        selection = []
+                    }
+                    Divider()
+                }
                 ForEach(items, id: \.id) { item in
                     Toggle(isOn: Binding(
                         get: { selection.contains(item.id) },
@@ -1155,13 +1169,15 @@ private struct ChecklistDropdownMenu: View {
                             if isOn { selection.insert(item.id) } else { selection.remove(item.id) }
                         }
                     )) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.title)
-                            if let subtitle = item.subtitle {
+                        if let subtitle = item.subtitle {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.title)
                                 Text(subtitle)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
+                        } else {
+                            Text(item.title)
                         }
                     }
                 }
@@ -1212,6 +1228,24 @@ private func certificateExpiryLabel(_ raw: String?) -> String? {
     guard let date = certificateExpiryDate(raw) else { return nil }
     let formatted = certificateExpiryDisplayFormatter.string(from: date)
     return date < Date() ? "expired \(formatted)" : "expires \(formatted)"
+}
+
+/// Compact Dev/Prod tag for picker rows ("IOS_DEVELOPMENT" → "Dev").
+/// Anything else falls back to the raw type string.
+private func certificateTypeShort(_ raw: String?) -> String {
+    guard let raw else { return "Cert" }
+    if raw.contains("DEVELOPMENT") { return "Dev" }
+    if raw.contains("DISTRIBUTION") { return "Prod" }
+    return raw
+}
+
+/// One-line picker label: name · Dev/Prod · expiry. Compact by design —
+/// the dropdown menu sizes to content, so every extra line costs space.
+private func certificatePickerLabel(_ certificate: CertificateModel) -> String {
+    let name = certificate.displayName ?? certificate.name ?? certificate.id
+    let type = certificateTypeShort(certificate.certificateType)
+    let expiry = certificateExpiryLabel(certificate.expirationDate) ?? "expiry unknown"
+    return "\(name) · \(type) · \(expiry)"
 }
 
 // MARK: - Rows
