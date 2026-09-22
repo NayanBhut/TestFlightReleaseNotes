@@ -125,9 +125,25 @@ def test_carryover_fences_and_caps():
     assert "detailed" in c2 and "small finding" not in c2
     assert c2.count("(oversized finding truncated") == 1
     assert "block boundary" not in c2
+    # oversized block after earlier blocks: budget accounts prior spend,
+    # and the omission marker counts only fully-dropped findings
+    small = [f"- **[BUG]** finding {i}\n- File: f{i}.swift" for i in range(8)]
+    big = "- **[BUG]** " + "detailed " * 300
+    c3 = m.build_carryover(small + [big], max_chars=400)
+    fence = c3[c3.index("<<<UNTRUSTED") : c3.index(">>>END")]
+    assert len(fence) < 600, len(fence)  # cap respected despite prior spend
+    assert c3.count("(oversized finding truncated") == 1
+    assert "detailed" in c3  # oversized head still carried
+    # small blocks that no longer fit are dropped whole + counted omitted
+    c4 = m.build_carryover(small, max_chars=100)
+    assert "further earlier findings omitted" in c4
+    assert "finding 0" in c4 and "finding 5" not in c4  # early kept, late dropped
     # finding blocks capture detail lines (file context for dedup)
     review = "- **[BUG]** crash\n- File: a.swift\n- Description: bad\n\nother"
     assert "a.swift" in m.extract_findings(review)[0]
+    # CRLF diff: header still parses (trailing \r tolerated)
+    crlf = "diff --git a/x.swift b/x.swift\r\nindex 111..222\r\n--- a/x.swift\r\n"
+    assert m.section_paths(crlf) == ["x.swift", "x.swift"]
     # numbered bold format also recognized
     assert "b.swift" in m.extract_findings("**1. [SECURITY] x**\n- File: b.swift\n")[0]
 
@@ -138,6 +154,25 @@ def test_retry_semantics():
     orig_sleep = _t.sleep
     _t.sleep = sleeps.append  # record durations; no real waiting
     try:
+        # IncompleteRead (truncated body) is transient - covered by
+        # http.client.HTTPException, must NOT crash the retry path
+        import http.client
+        import urllib.request
+
+        def incomplete(req, timeout=None):
+            raise http.client.IncompleteRead(b"partial")
+        orig_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = incomplete
+        try:
+            m.request_review("m", "msg", "k", "/tmp/x.json")
+            raise AssertionError("should raise")
+        except m.TransientError:
+            pass
+        except http.client.IncompleteRead:
+            raise AssertionError("IncompleteRead escaped the retry path")
+        finally:
+            urllib.request.urlopen = orig_urlopen
+
         calls = {"n": 0}
         def flaky():
             calls["n"] += 1
@@ -153,6 +188,9 @@ def test_retry_semantics():
         except m.ReviewError:
             pass
         # Retry-After honored but clamped to 90s - assert on actual sleeps
+        # TransientError carries retry_after explicitly
+        e = m.TransientError("HTTP 429", retry_after=7200)
+        assert e.retry_after == 7200
         calls2 = {"n": 0}
         def flaky_hostile():
             calls2["n"] += 1

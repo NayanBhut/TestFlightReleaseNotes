@@ -49,6 +49,7 @@ Environment variables:
 """
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -91,7 +92,13 @@ class ReviewError(Exception):
 
 
 class TransientError(Exception):
-    """A retryable API failure (429/5xx/timeout/network); nothing was generated."""
+    """A retryable API failure (429/5xx/timeout/network); nothing was
+    generated.  retry_after carries the server's Retry-After hint, if
+    any."""
+
+    def __init__(self, msg, retry_after=None):
+        super().__init__(msg)
+        self.retry_after = retry_after
 
 
 class VerifyError(Exception):
@@ -111,9 +118,10 @@ def split_sections(diff):
 def section_paths(section):
     """Extract the a/ and b/ paths from a section's "diff --git" header.
 
-    Handles plain and git-quoted headers (see GIT_HEADER_LINE_RE).
+    Handles plain and git-quoted headers (see GIT_HEADER_LINE_RE); a
+    trailing \\r (CRLF diffs from Windows checkouts) is tolerated.
     """
-    first_line = section.split("\n", 1)[0]
+    first_line = section.split("\n", 1)[0].rstrip("\r")
     m = GIT_HEADER_LINE_RE.match(first_line)
     if not m:
         return []
@@ -214,7 +222,7 @@ def verify_no_loss(kept, skipped, raw_diff):
     list for that.
     """
     total_in = count_headers(raw_diff)
-    total_out = count_headers("".join(kept)) + count_headers("".join(skipped))
+    total_out = sum(count_headers(s) for s in kept) + sum(count_headers(s) for s in skipped)
     if total_in != total_out:
         log(
             f"ERROR: BUG in diff filtering: {total_in} 'diff --git' headers in "
@@ -323,36 +331,36 @@ def build_carryover(findings_so_far, max_chars=8000):
             seen.add(key)
             unique.append(key)
     text, total = [], 0
-    for idx, block in enumerate(unique):
-        remaining = len(unique) - idx - 1
+    for block in unique:
+        if total >= max_chars:
+            break  # budget exhausted; marker below reports omissions
         if len(block) > max_chars:
-            # Cap a single oversized block - never let one multi-KB block
-            # ride along in every subsequent prompt.  Truncate at a line
-            # boundary when possible; a single over-long line is hard-cut
-            # so at least its head is carried over.
+            # One block alone exceeds the entire budget: keep its head
+            # (line-boundary cut; hard-cut a single over-long line) so
+            # the model still sees the gist, then stop.
+            budget = max_chars - total
             lines, acc = [], 0
             for line in block.splitlines():
-                budget = max_chars - acc
-                if budget <= 0:
+                room = budget - acc
+                if room <= 0:
                     break
-                if len(line) + 1 > budget:
+                if len(line) + 1 > room:
                     if not lines:
-                        lines.append(line[: max(0, budget - 1)])
+                        lines.append(line[: max(0, room - 1)])
                     break
                 lines.append(line)
                 acc += len(line) + 1
             text.append("\n".join(lines) + "\n... (oversized finding truncated)")
-            total += len(text[-1])
-            break  # budget effectively spent; nothing further can fit
-        if text and total + len(block) > max_chars:
-            text.append("... (earlier findings list truncated at a block boundary)")
+            break
+        if total + len(block) > max_chars:
+            # Whole block does not fit the remaining budget: drop it
+            # (and the rest) rather than cutting a finding mid-block.
             break
         text.append(block)
         total += len(block)
     # If we stopped early, tell the model the list is partial so it does
     # not treat an incomplete carry-over as exhaustive.
-    consumed = sum(1 for t in text if not t.startswith("..."))
-    omitted = len(unique) - consumed
+    omitted = len(unique) - len(text)
     if omitted > 0:
         text.append(f"... ({omitted} further earlier findings omitted)")
     return (
@@ -436,15 +444,17 @@ def request_review(model, user_msg, api_key, raw_file):
                 f"HTTP_ERROR (transient): {e.code}: {body[:2000]}",
                 file=sys.stderr,
             )
-            err = TransientError(f"HTTP {e.code}")
-            err.retry_after = retry_after
+            err = TransientError(f"HTTP {e.code}", retry_after=retry_after)
             raise err
         print(f"HTTP_ERROR: {e.code}: {body[:2000]}", file=sys.stderr)
         raise ReviewError()
-    except OSError as e:
-        # Network-level failures (URLError/TimeoutError/ConnectionError
-        # are all OSError subclasses) - transient; HTTPError was handled
-        # above and is also a URLError subclass.
+    except (OSError, http.client.HTTPException) as e:
+        # Transient network-level failures: OSError covers URLError,
+        # TimeoutError, ConnectionError; HTTPException covers truncated
+        # mid-read bodies (IncompleteRead, BadStatusLine) from flaky
+        # proxies.  HTTPError was handled above (it is a URLError
+        # subclass).  Deterministic errors (e.g. UnicodeDecodeError)
+        # are not retried.
         print(f"REQUEST_ERROR (transient): {str(e)}", file=sys.stderr)
         raise TransientError(str(e))
 
@@ -719,6 +729,12 @@ def main():
             sys.exit(1)
 
         findings_so_far.extend(extract_findings(content))
+
+        # Stream each chunk's review to stderr immediately so findings
+        # survive even a runner-level timeout kill (the buffered
+        # combined output would be lost on SIGKILL/SIGTERM).
+        print("--- CHUNK REVIEW (streamed) ---", file=sys.stderr, flush=True)
+        print(content, file=sys.stderr, flush=True)
 
         if total_chunks > 1:
             header = (
