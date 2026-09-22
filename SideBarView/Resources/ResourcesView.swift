@@ -94,6 +94,8 @@ struct ResourceListContentView: View {
     @State private var showCreateBundleIdForm = false
     // Batch I (I3): user invite form toggles from the header.
     @State private var showInviteUserForm = false
+    // Batch I (I4): profile create form toggles from the header.
+    @State private var showCreateProfileForm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -120,6 +122,12 @@ struct ResourceListContentView: View {
             if kind == .users, showInviteUserForm {
                 InviteUserForm(viewModel: viewModel) {
                     showInviteUserForm = false
+                }
+                Divider()
+            }
+            if kind == .profiles, showCreateProfileForm {
+                CreateProfileForm(viewModel: viewModel) {
+                    showCreateProfileForm = false
                 }
                 Divider()
             }
@@ -215,6 +223,16 @@ struct ResourceListContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Invite a user")
+            }
+            if kind == .profiles {
+                Button {
+                    showCreateProfileForm.toggle()
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Create a provisioning profile")
             }
             Button {
                 dismiss()
@@ -382,7 +400,7 @@ struct ResourceListContentView: View {
             }
         case .profiles:
             ForEach(viewModel.filteredProfiles, id: \.id) { profile in
-                ProfileRow(profile: profile)
+                ProfileRow(profile: profile, viewModel: viewModel)
             }
         case .users:
             ForEach(viewModel.filteredUsers, id: \.id) { user in
@@ -876,6 +894,171 @@ private struct InviteUserForm: View {
     }
 }
 
+/// POST /v1/profiles — name, type, bundle ID and at least one
+/// certificate; devices optional (required server-side only for
+/// development/adhoc types). Pickers read the lists the view model
+/// already fetched — opening one kind never refetches another.
+/// Needs an Admin key role; a TestFlight-only key 403s.
+private struct CreateProfileForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: () -> Void
+    @State private var name = ""
+    @State private var profileType: ProfileTypeOption = .IOS_APP_DEVELOPMENT
+    @State private var bundleIdId: String?
+    @State private var certificateIds: Set<String> = []
+    @State private var deviceIds: Set<String> = []
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var bundleIds: [BundleIdModel] { viewModel.bundleIdsState.loadedValue ?? [] }
+    private var certificates: [CertificateModel] { viewModel.certificatesState.loadedValue ?? [] }
+    private var devices: [DeviceModel] { viewModel.devicesState.loadedValue ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("New Provisioning Profile")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            TextField("Profile name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+                .disabled(isSaving)
+            Picker("Type", selection: $profileType) {
+                ForEach(ProfileTypeOption.allCases, id: \.self) { option in
+                    Text(option.displayName).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(isSaving)
+            Picker("Bundle ID", selection: $bundleIdId) {
+                Text("Select a bundle ID").tag(nil as String?)
+                ForEach(bundleIds, id: \.id) { bundleId in
+                    Text("\(bundleId.name ?? bundleId.identifier ?? bundleId.id) (\(bundleId.identifier ?? ""))")
+                        .tag(bundleId.id as String?)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(isSaving || bundleIds.isEmpty)
+            if bundleIds.isEmpty {
+                Text("No bundle IDs loaded — open Resources → Bundle IDs first so the picker has something to offer.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Text("Certificates (\(certificateIds.count) selected)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if certificates.isEmpty {
+                        Text("No certificates loaded — open Resources → Certificates first.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(certificates, id: \.id) { certificate in
+                        Toggle(
+                            certificate.displayName ?? certificate.name ?? certificate.id,
+                            isOn: Binding(
+                                get: { certificateIds.contains(certificate.id) },
+                                set: { isOn in
+                                    if isOn { certificateIds.insert(certificate.id) }
+                                    else { certificateIds.remove(certificate.id) }
+                                }
+                            )
+                        )
+                        .toggleStyle(.checkbox)
+                        .font(.subheadline)
+                        .disabled(isSaving)
+                    }
+                }
+            }
+            .frame(maxHeight: 110)
+            Text("Devices (\(deviceIds.count) selected, optional)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if devices.isEmpty {
+                        Text("No devices loaded — open Resources → Devices first.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(devices, id: \.id) { device in
+                        Toggle(
+                            "\(device.name ?? device.id) (\(device.udid ?? ""))",
+                            isOn: Binding(
+                                get: { deviceIds.contains(device.id) },
+                                set: { isOn in
+                                    if isOn { deviceIds.insert(device.id) }
+                                    else { deviceIds.remove(device.id) }
+                                }
+                            )
+                        )
+                        .toggleStyle(.checkbox)
+                        .font(.subheadline)
+                        .disabled(isSaving)
+                    }
+                }
+            }
+            .frame(maxHeight: 110)
+            Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    .disabled(isSaving)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Create") {
+                        Task { @MainActor in
+                            isSaving = true
+                            defer { isSaving = false }
+                            let result = await viewModel.createProfile(
+                                name: name,
+                                profileType: profileType,
+                                bundleIdId: bundleIdId,
+                                certificateIds: certificateIds,
+                                deviceIds: deviceIds)
+                            if case .success = result {
+                                onDone()
+                            } else if case .failure(let message) = result {
+                                // .ignored: duplicate in flight / cancelled —
+                                // keep the form open, nothing was created.
+                                errorMessage = message
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || bundleIdId == nil
+                              || certificateIds.isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            // Relationship pickers reuse the existing fetches — load() is a
+            // no-op for kinds already loaded, so this never refetches.
+            viewModel.load(.bundleIds)
+            viewModel.load(.certificates)
+            viewModel.load(.devices)
+        }
+    }
+}
+
 // MARK: - Rows
 
 private struct DeviceRow: View {    let device: DeviceModel
@@ -1150,6 +1333,11 @@ private struct BundleIdRow: View {
 
 private struct ProfileRow: View {
     let profile: ProfileModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var showDeleteConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(profile.id) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1172,20 +1360,50 @@ private struct ProfileRow: View {
                 Text("Expires: \(profile.expirationDate ?? "—")")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(profile.profileType ?? "")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Text(profile.platform ?? "")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                // Deleting is destructive — confirm first (same alert
+                // pattern as CertificateRow's revoke).
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Delete") { showDeleteConfirm = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.red)
+                        .accessibilityLabel("Delete \(profile.name ?? "profile")")
+                }
             }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Delete this profile?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.deleteProfile(id: profile.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("Builds signed with this profile will fail to install. This cannot be undone.")
+        }
     }
 }
 
