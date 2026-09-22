@@ -1,41 +1,53 @@
 ## 📋 PR Description
 
-Batch E — release-notes quality (#3 + #4 + #5) plus user-reported follow-up fixes.
+Batch I — provisioning writes (bundle IDs, users/invitations, profiles, beta groups, version localizations) plus the `App Store Tests` unit-test target. I1 (Export wiring) and I7 (review reply edit/delete) skipped — out of scope for this batch.
 
 ### What changed?
 
-**#3 — Per-locale completeness view**
-- `DetailViewModel.localeCompleteness()`: matrix of all supported locales × builds, each cell showing whether notes exist (✓) or are empty (—)
-- `DetailViewModel.completeLocaleCount()`: returns e.g. (6, 8) — locales complete / total
-- `BuildDetailsView` header: new **Locales** popover showing the matrix, with completeness count
+**I2 — Bundle ID writes**
+- `BundleIdCreateRequest` (name, identifier, platform, optional seedId) / `BundleIdUpdateRequest` (name only) — shapes verified against Apple's OpenAPI spec (`BundleIdPlatform`: `IOS`, `MAC_OS`)
+- `ResourcesViewModel`: `createBundleId`, `renameBundleId`, `deleteBundleId` (`WriteResult` contract, Admin-role 403 hint)
+- `ResourcesView`: New button + form, per-row Rename (inline) / Delete (confirm)
 
-**#4 — Diff before save**
-- `BuildRowView`: **Review changes** button (appears when notes have unsaved changes) opens a diff sheet showing added (green) and removed (red) lines vs the last saved version
-- Bulk view: one section **per dirty locale** (computed post-flush from the saved snapshot), so a second edited locale is never hidden behind the selected tab
-- On save, `committedText` updates → diff clears on reopen
+**I3 — User & invitation management**
+- `UserRoleOption` (all 11 spec roles), `UserUpdateRequest`, `UserInvitationCreateRequest` (email/first/last/roles + `visibleApps` relationship for single-app invites)
+- `ResourcesViewModel`: `inviteUser`, `updateUserRoles`, `removeUser` (confirm), `resendInvitation` (find by `filter[email]` → delete → re-create; no dedicated resend endpoint exists)
+- `ResourcesView`: Invite form (roles dropdown, single/multi-app picker), row Edit roles / Remove (confirm); pending invitations render as rows above users with Resend/Revoke
+- Users list auto-drains all pages on open so local search covers the whole team (progress footer while draining, Retry resumes)
 
-**#5 — Unified empty/loading/error renderers**
-- New `Helper/StateView.swift` with `EmptyStateView`, `LoadingStateView`, `StateErrorView`
-- Replaces 3 duplicated `emptyState(icon:title:subtitle:)` functions (BetaGroupView, AppInfoView, ReviewsView)
-- Replaces 5 inline loading blocks (AppInfoView.section, ReviewsView ×2, BetaGroupView.loadingState)
-- All 3 views now use shared components; deleted local duplicates
+**I4 — Provisioning profiles**
+- `ProfileTypeOption` (all 14 spec types), `ProfileCreateRequest` (bundleId + certificates required, devices optional)
+- `ResourcesViewModel`: `createProfile`, `deleteProfile`; form pickers reuse the already-loaded bundle/cert/device lists
+- Cert/device pickers are compact dropdowns with Select All/Clear; cert rows show `name · Dev/Prod · expires <date>`
 
-**Follow-up fixes (user-reported)**
-- **Remove localization**: explicit **× inside each locale tab** (select and remove are sibling buttons, never nested — the earlier right-click menu could present a neighboring tab's entry); confirm alert names the locale; temp drafts drop locally, server notes go through `DELETE /v1/betaBuildLocalizations/{id}` (spec-verified: id-only path param, no body, 204); delete failures surface with kind-routed Retry
-- **Per-locale diff baseline**: `DetailViewModel.savedNotes` snapshot (captured on load skipping temp drafts, refreshed on save success) feeds the row baseline via a new `savedWhatsNew` prop — switching locales can no longer launder a draft into "saved"; Review changes + Update now work per locale
-- **Update all**: saves every dirty locale with savable text, each on its own save key (hidden when the current tab is the only dirty one); empty text stays Remove-only, mirroring row Update
-- **Beta Groups loader**: `LoadingStateView` is a centered VStack again
+**I5 — Beta group CRUD + tester removal**
+- `BetaGroupCreateRequest` (name + public-link options + app relationship), `BetaGroupUpdateRequest` (name)
+- `BetaViewModel`: `createGroup`, `renameGroup`, `deleteGroup`, `deleteTester` (team delete, distinct from remove-from-group); 403 → Admin hint
+- `BetaGroupView`: New Group sheet, inline rename, delete (confirm), per-tester remove-from-group vs delete-from-team actions
+- Invite sheet: searchable team-member picker (tap fills email/names; manual entry still works for outsiders)
 
-**Locale correctness (user-reported)**
-- `BetaLocalizationLocales.supported` now matches Apple's official 50-language table 1:1 (locale-shortcodes doc): fixes `de`→`de-DE`, `nl`→`nl-NL`, adds `fr-CA` + 11 more (`bn-BD gu-IN kn-IN ml-IN mr-IN or-IN pa-IN sl-SI ta-IN te-IN ur-PK`); this was the `'locale' value is invalid` failure on Update All
-- `BetaLocalizationLocales.displayName`: every code maps to Apple's language name (e.g. `de-DE` → German)
-- The + menu is now a **searchable picker** (auto-focused search over name + code, rows show `German / de-DE`); names also surface on tab remove tooltips/alerts, Review-changes headers, and the Locales matrix
-- Save-error alert prefixes the failing locale, so bulk failures name which locale failed
+**I6 — Version localization editor**
+- `VersionLocalizationUpdateRequest` (description, keywords, promotionalText, whatsNew, marketingUrl, supportUrl; reuses the Batch G unchanged/clear/set field encoding)
+- `DetailViewModel.saveVersionLocalization` with Apple metadata limits (keywords 100, promo 170, description/whatsNew 4000, http(s) URLs) + per-id in-flight set + App Manager 403 hint
+- App Info tab "Version Localizations" card: inline Edit/Save/Cancel per locale, stays open on failure
+
+**I8 — Unit test target + core tests**
+- New `App Store Tests` XCTest target (app-hosted, JSONAPI linked, Debug/Release configs), wired into the `App Store` scheme Test action
+- 35 tests, all green: ViewState, BuildDisplayHelper, APIMethod path/query composition, JSON:API fixtures (incl. the `description`-key fix), validators/enums/field-encoding, invite-body relationships, DEBUG curl redaction
+- `CredentialStorage` live selection untested by design (private init runs a real-keychain migration — needs a keychain seam)
+
+**Follow-up fixes (user-reported, same branch)**
+- Roles/app/cert/device pickers converted from inline lists to dropdowns so forms fit their sheets
+- Profile picker lists sized to content (no mid-row clipping)
+- Load-more footer hidden while the invite form is open
+- Pending invitations on top of the users list
+- `Resources` sidebar section: custom collapsible header with animated chevron
+- DEBUG-only API logging: full bodies + copy-pasteable `[API][CURL]` lines, token and emails always redacted; `scripts/block-temp-logging.sh` installed as pre-commit/pre-push guard
 
 ### Test Scenarios Covered
 <!-- Check all that apply -->
 - [x] New feature added
-- [x] Bug fix
+- [ ] Bug fix
 - [x] UI changes
 - [x] Swift build passes
 - [ ] Ollama Cloud PR Review passes
