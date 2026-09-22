@@ -1031,7 +1031,11 @@ private struct CreateProfileForm: View {
             ChecklistDropdownMenu(
                 title: "Certificates",
                 items: certificates.map {
-                    (id: $0.id, label: $0.displayName ?? $0.name ?? $0.id)
+                    ChecklistDropdownMenu.Item(
+                        id: $0.id,
+                        title: $0.displayName ?? $0.name ?? $0.id,
+                        subtitle: certificateExpiryLabel($0.expirationDate)
+                    )
                 },
                 selection: $certificateIds,
                 emptyHint: "No certificates loaded — open Resources → Certificates first."
@@ -1043,7 +1047,11 @@ private struct CreateProfileForm: View {
             ChecklistDropdownMenu(
                 title: "Devices",
                 items: devices.map {
-                    (id: $0.id, label: "\($0.name ?? $0.id) (\($0.udid ?? ""))")
+                    ChecklistDropdownMenu.Item(
+                        id: $0.id,
+                        title: "\($0.name ?? $0.id) (\($0.udid ?? ""))",
+                        subtitle: nil
+                    )
                 },
                 selection: $deviceIds,
                 emptyHint: "No devices loaded — open Resources → Devices first."
@@ -1111,10 +1119,17 @@ private struct CreateProfileForm: View {
 /// Dropdown multi-select of checkable rows — compacts long picker lists
 /// (certificates, devices) so the create form fits the sheet instead of
 /// pushing its buttons and the list off-screen. Same styling as
-/// RoleDropdownMenu.
+/// RoleDropdownMenu. Rows support a subtitle line (e.g. certificate
+/// expiry) so same-named items stay distinguishable.
 private struct ChecklistDropdownMenu: View {
+    struct Item: Hashable {
+        let id: String
+        let title: String
+        let subtitle: String?
+    }
+
     let title: String
-    let items: [(id: String, label: String)]
+    let items: [Item]
     @Binding var selection: Set<String>
     var emptyHint: String? = nil
 
@@ -1134,12 +1149,21 @@ private struct ChecklistDropdownMenu: View {
         } else {
             Menu {
                 ForEach(items, id: \.id) { item in
-                    Toggle(item.label, isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { selection.contains(item.id) },
                         set: { isOn in
                             if isOn { selection.insert(item.id) } else { selection.remove(item.id) }
                         }
-                    ))
+                    )) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title)
+                            if let subtitle = item.subtitle {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
             } label: {
                 Text(label)
@@ -1157,6 +1181,37 @@ private struct ChecklistDropdownMenu: View {
             )
         }
     }
+}
+
+/// Shared certificate expiry parsing — the row and the profile picker
+/// both render it. App Store Connect returns fractional seconds on some
+/// endpoints; the plain parser silently fails on those, so try it as a
+/// fallback.
+private let certificateExpiryParser = ISO8601DateFormatter()
+private let certificateExpiryParserFractional: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private let certificateExpiryDisplayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "MMM d, yyyy"
+    return formatter
+}()
+
+private func certificateExpiryDate(_ raw: String?) -> Date? {
+    guard let raw, !raw.isEmpty else { return nil }
+    return certificateExpiryParserFractional.date(from: raw) ?? certificateExpiryParser.date(from: raw)
+}
+
+/// "expires Feb 9, 2027" / "expired Feb 9, 2027" / nil when unknown —
+/// mirrors the Apple Developer site's certificate picker rows.
+private func certificateExpiryLabel(_ raw: String?) -> String? {
+    guard let date = certificateExpiryDate(raw) else { return nil }
+    let formatted = certificateExpiryDisplayFormatter.string(from: date)
+    return date < Date() ? "expired \(formatted)" : "expires \(formatted)"
 }
 
 // MARK: - Rows
@@ -1238,19 +1293,9 @@ private struct CertificateRow: View {
 
     private var isBusy: Bool { viewModel.isWriteInFlight(certificate.id) }
 
-    private static let expiryParser = ISO8601DateFormatter()
-    /// App Store Connect returns fractional seconds on some endpoints;
-    /// the plain parser silently fails on those, so try it as a fallback.
-    private static let expiryParserFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
     private var isExpired: Bool {
-        guard let date = certificate.expirationDate else { return false }
-        let parsed = Self.expiryParserFractional.date(from: date) ?? Self.expiryParser.date(from: date)
-        return parsed.map { $0 < Date() } ?? false
+        guard let date = certificateExpiryDate(certificate.expirationDate) else { return false }
+        return date < Date()
     }
 
     var body: some View {
