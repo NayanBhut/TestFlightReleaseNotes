@@ -55,12 +55,16 @@ def test_noise_filtering_every_path_rule():
     )
     kept, skipped = m.filter_sections(secs, NOISE_PATTERNS)
     assert len(kept) == 3 and len(skipped) == 3
-    kept_paths = [m.section_paths(s)[1] for s in kept]
-    assert kept_paths == [
+    assert [m.section_paths(s)[1] for s in kept] == [
         "Sources/apidocs/Parser.swift",
-        "CHANGELOG.MD",
         "lib/xcodeproj/config.yml",
-    ] or "apidocs" in kept_paths[0]
+        "Model/Swift.swift",
+    ]
+    assert [m.section_paths(s)[1] for s in skipped] == [
+        "docs/a.md",
+        "CHANGELOG.MD",
+        "App.xcodeproj/project.pbxproj",
+    ]
     # rename out of a noise dir is kept (not every path matches)
     secs2 = m.split_sections(make_section("docs/x.swift", "Sources/x.swift"))
     kept2, skipped2 = m.filter_sections(secs2, NOISE_PATTERNS)
@@ -130,34 +134,50 @@ def test_carryover_fences_and_caps():
 
 def test_retry_semantics():
     import time as _t
-    _t.sleep = lambda s: None  # no real waiting
-    calls = {"n": 0}
-    def flaky():
-        calls["n"] += 1
-        if calls["n"] < 3:
-            raise m.TransientError("HTTP 429")
-        return "ok"
-    assert m.call_with_retry(flaky, delays=(0, 0)) == "ok" and calls["n"] == 3
-    def boom():
-        raise m.ReviewError()
+    sleeps = []
+    orig_sleep = _t.sleep
+    _t.sleep = sleeps.append  # record durations; no real waiting
     try:
-        m.call_with_retry(boom, delays=(0,))
-        raise AssertionError("ReviewError should propagate")
-    except m.ReviewError:
-        pass
-    # Retry-After honored but clamped to 90s
-    def hostile():
-        e = m.TransientError("HTTP 429")
-        e.retry_after = 7200
-        raise e
-    calls2 = {"n": 0}
-    def flaky_hostile():
-        calls2["n"] += 1
-        if calls2["n"] == 1:
-            hostile()
-        return "ok"
-    m.call_with_retry(flaky_hostile, delays=(2, 8))  # must not sleep 7200
-    assert calls2["n"] == 2
+        calls = {"n": 0}
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise m.TransientError("HTTP 429")
+            return "ok"
+        assert m.call_with_retry(flaky, delays=(0, 0)) == "ok" and calls["n"] == 3
+        def boom():
+            raise m.ReviewError()
+        try:
+            m.call_with_retry(boom, delays=(0,))
+            raise AssertionError("ReviewError should propagate")
+        except m.ReviewError:
+            pass
+        # Retry-After honored but clamped to 90s - assert on actual sleeps
+        calls2 = {"n": 0}
+        def flaky_hostile():
+            calls2["n"] += 1
+            if calls2["n"] == 1:
+                e = m.TransientError("HTTP 429")
+                e.retry_after = 7200
+                raise e
+            return "ok"
+        m.call_with_retry(flaky_hostile, delays=(2, 8))
+        assert calls2["n"] == 2
+        assert sleeps and max(sleeps) <= 90, f"clamp broken, slept {sleeps}"
+        # Retry-After below the clamp is honored exactly
+        calls3 = {"n": 0}
+        sleeps.clear()
+        def flaky_polite():
+            calls3["n"] += 1
+            if calls3["n"] == 1:
+                e = m.TransientError("HTTP 429")
+                e.retry_after = 5
+                raise e
+            return "ok"
+        m.call_with_retry(flaky_polite, delays=(2, 8))
+        assert sleeps == [5], sleeps
+    finally:
+        _t.sleep = orig_sleep
 
 
 def test_display_files():
