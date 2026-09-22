@@ -125,8 +125,9 @@ final class ResourcesViewModel: ObservableObject {
     private var loadedKinds: Set<Kind> = []
     private var fetchTasks: [Kind: Task<Void, Never>] = [:]
     /// Kinds with a page request in flight — per-kind so paginating one
-    /// kind never swallows another kind's Load-more tap.
-    private var isPaginatingKinds: Set<Kind> = []
+    /// kind never swallows another kind's Load-more tap. Published so the
+    /// footer can render the auto-drain progress (users kind).
+    @Published private(set) var isPaginatingKinds: Set<Kind> = []
 
     // MARK: - Writes (Batch G #10)
 
@@ -278,14 +279,24 @@ final class ResourcesViewModel: ObservableObject {
     // MARK: - Loading
 
     /// Loads a kind's first page once per team session; the Refresh
-    /// button refetches via retry(_:).
+    /// button refetches via retry(_:). Users drain ALL pages up front so
+    /// local search covers the whole team (a match on an unloaded page
+    /// would otherwise never surface).
     func load(_ kind: Kind) {
         if loadedKinds.contains(kind) { return }
-        fetchTasks[kind]?.cancel()
-        fetchTasks[kind] = Task { await fetch(kind) }
+        if kind == .users {
+            loadAllPages(kind)
+        } else {
+            fetchTasks[kind]?.cancel()
+            fetchTasks[kind] = Task { await fetch(kind) }
+        }
     }
 
     func retry(_ kind: Kind) {
+        if kind == .users {
+            loadAllPages(kind)
+            return
+        }
         fetchTasks[kind]?.cancel()
         fetchTasks[kind] = Task { await fetch(kind) }
     }
@@ -295,8 +306,40 @@ final class ResourcesViewModel: ObservableObject {
         // before the cancelled predecessor runs its defer, so the internal
         // guard would no-op the tap while leaving the first request killed.
         guard !cursor.isEmpty, !isPaginatingKinds.contains(kind) else { return }
+        // Users auto-drain: footer taps resume the drain from the current
+        // cursor instead of appending a single page.
+        if kind == .users {
+            loadAllPages(kind)
+            return
+        }
         fetchTasks[kind]?.cancel()
         fetchTasks[kind] = Task { await fetch(kind, cursor: cursor) }
+    }
+
+    /// Fetches every page for a kind, one after another. Sequential awaits
+    /// keep cursor epochs safe (no overlapping page requests) and each
+    /// fetch() carries its own cancellation/merge guards. Cancelling the
+    /// task stops the drain at a page boundary — the loaded rows stay.
+    func loadAllPages(_ kind: Kind) {
+        // A fresh drain owns its failure flag: a previous page failure
+        // must not wedge the loop below before its first fetch runs
+        // (each fetch re-arms the flag on failure).
+        paginationFailedKinds.remove(kind)
+        fetchTasks[kind]?.cancel()
+        fetchTasks[kind] = Task { await drainPages(kind) }
+    }
+
+    private func drainPages(_ kind: Kind) async {
+        if !loadedKinds.contains(kind) {
+            await fetch(kind)
+        }
+        // Stops on: last page (cursor nil), page failure (flag set —
+        // footer offers Retry, which resumes via loadMore), cancellation.
+        while let cursor = nextCursors[kind],
+              !paginationFailedKinds.contains(kind),
+              !Task.isCancelled {
+            await fetch(kind, cursor: cursor)
+        }
     }
 
     // MARK: - Fetch
@@ -330,6 +373,7 @@ final class ResourcesViewModel: ObservableObject {
         guard let request = APIClient.shared.getRequest(
             api: .get(name: kind.apiName, queryParams: queryParams), apiVersion: .v1) else {
             if !paginating {
+                nextCursors[kind] = nil
                 setError("No team selected. Add a team to load \(kind.displayName.lowercased()).", for: kind)
             }
             return
@@ -346,6 +390,9 @@ final class ResourcesViewModel: ObservableObject {
             if paginating {
                 paginationFailedKinds.insert(kind)
             } else {
+                // A failed first page invalidates any cursor from an older
+                // query epoch — the drain loop must not chase it.
+                nextCursors[kind] = nil
                 setError(friendlyMessage(for: error), for: kind)
             }
         }

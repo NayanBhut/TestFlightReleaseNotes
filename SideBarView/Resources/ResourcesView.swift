@@ -440,6 +440,14 @@ struct ResourceListContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                    } else if kind == .users && viewModel.isPaginatingKinds.contains(kind) {
+                        // Users auto-drain: show progress, not a dead button
+                        // (taps during the drain are ignored by the guard).
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Loading all users… (\(viewModel.loadedCount(for: kind)) so far)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     } else {
                         Button("Load more") {
                             viewModel.loadMore(kind, cursor: nextCursor)
