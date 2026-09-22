@@ -414,14 +414,14 @@ struct ResourceListContentView: View {
                 ProfileRow(profile: profile, viewModel: viewModel)
             }
         case .users:
-            ForEach(viewModel.filteredUsers, id: \.id) { user in
-                UserRow(user: user, viewModel: viewModel)
-            }
-            // Pending (unaccepted) invites render as plain rows in the
-            // same list — no separate section. A failed invites fetch
+            // Pending (unaccepted) invites render first, then accepted
+            // users — no separate section. A failed invites fetch
             // surfaces as a retry row so it never blocks the users list.
             ForEach(viewModel.filteredInvitations, id: \.id) { invitation in
                 InvitationRow(invitation: invitation, viewModel: viewModel)
+            }
+            ForEach(viewModel.filteredUsers, id: \.id) { user in
+                UserRow(user: user, viewModel: viewModel)
             }
             if case .error(let message) = viewModel.invitationsState {
                 HStack {
