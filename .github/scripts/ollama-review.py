@@ -186,6 +186,16 @@ def split_oversized_section(section, max_chars):
         buf_size += len(hunk)
     if buf:
         pieces.append(header + "".join(buf))
+    # Local losslessness check: the pieces must reconstruct the section
+    # exactly (bodies concatenate to the original body; the header is
+    # re-prepended to every piece by design).
+    if header + "".join(p[len(header):] for p in pieces) != section:
+        log(
+            "ERROR: BUG in hunk splitting: pieces do not reconstruct the "
+            "original section. Aborting rather than reviewing an "
+            "incomplete diff."
+        )
+        raise VerifyError()
     # A single hunk larger than the cap ends up as one oversized piece -
     # the documented last resort; better than splitting mid-hunk.
     return pieces or [section]
@@ -214,17 +224,26 @@ def verify_no_loss(kept, skipped, raw_diff):
         raise VerifyError()
 
 
-def verify_chunks(chunks, kept):
-    """Consistency assertion against chunking bugs: the chunks must
-    reproduce the filtered diff exactly (no section lost, duplicated, or
-    reordered).  Cannot detect over-filtering upstream.
+def verify_chunks(chunks, kept, max_chars):
+    """Consistency assertion against chunking bugs: the chunk pieces must
+    exactly match the pieces the splitter produces for the filtered
+    sections (no piece lost, duplicated, or reordered in packing).
+
+    Split sections re-prepend their header to every piece, so raw
+    concatenation would over-count headers; comparing against the
+    splitter's own expected pieces (whose losslessness is asserted
+    locally inside split_oversized_section) keeps this check exact.
+    Cannot detect over-filtering upstream.
     """
-    chunked = "".join(sec for chunk in chunks for sec in chunk)
-    if chunked != "".join(kept):
+    expected = []
+    for sec in kept:
+        expected.extend(split_oversized_section(sec, max_chars))
+    actual = [p for chunk in chunks for p in chunk]
+    if actual != expected:
         log(
-            "ERROR: BUG in chunking: chunked text does not match the filtered "
-            "diff (a file section was lost, duplicated, or reordered). "
-            "Aborting rather than reviewing an incomplete diff."
+            "ERROR: BUG in chunking: chunk pieces do not match the expected "
+            "split of the filtered diff (a piece was lost, duplicated, or "
+            "reordered). Aborting rather than reviewing an incomplete diff."
         )
         raise VerifyError()
 
@@ -323,7 +342,7 @@ def build_carryover(findings_so_far, max_chars=8000):
                 acc += len(line) + 1
             text.append("\n".join(lines) + "\n... (oversized finding truncated)")
             total += len(text[-1])
-            continue
+            break  # budget effectively spent; nothing further can fit
         if text and total + len(block) > max_chars:
             text.append("... (earlier findings list truncated at a block boundary)")
             break
@@ -394,7 +413,7 @@ def request_review(model, user_msg, api_key, raw_file):
 
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
-            raw = resp.read().decode("utf-8")
+            raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         if e.code == 429 or 500 <= e.code <= 599:
@@ -415,8 +434,10 @@ def request_review(model, user_msg, api_key, raw_file):
             raise err
         print(f"HTTP_ERROR: {e.code}: {body[:2000]}", file=sys.stderr)
         raise ReviewError()
-    except Exception as e:
-        # Timeouts, connection resets, DNS blips - all transient.
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+        # Timeouts, connection resets, DNS blips - transient network
+        # failures only; deterministic errors (e.g. UnicodeDecodeError)
+        # are not retried.
         print(f"REQUEST_ERROR (transient): {str(e)}", file=sys.stderr)
         raise TransientError(str(e))
 
@@ -606,7 +627,7 @@ def main():
 
     chunks = chunk_sections(kept, max_chunk)
     try:
-        verify_chunks(chunks, kept)
+        verify_chunks(chunks, kept, max_chunk)
     except VerifyError:
         sys.exit(1)
 
@@ -655,8 +676,8 @@ def main():
         files = list(dict.fromkeys(p[1] for p in path_pairs if p))
         log(
             f"Reviewing chunk {i}/{total_chunks} "
-            f"({len(chunk_text):,} chars, {len(chunk)} file"
-            f"{'s' if len(chunk) != 1 else ''})..."
+            f"({len(chunk_text):,} chars, {len(files)} file"
+            f"{'s' if len(files) != 1 else ''})..."
         )
 
         if i == 1:
@@ -696,7 +717,7 @@ def main():
         else:
             combined_parts.append(content)
 
-    covered = sum(len("".join(c)) for c in chunks)
+    covered = len("".join(kept))
     log(
         f"Review complete: {total_chunks} chunk(s), {covered:,} chars of diff "
         f"covered, {len(findings_so_far)} finding block(s) reported."
