@@ -47,7 +47,23 @@
 		CDDEC3052BD7C1B400D73E95 /* SpinnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDDEC3042BD7C1B400D73E95 /* SpinnerView.swift */; };
 		F511D9CB8F68D9D9B0341314 /* ExportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A043BAE1603803A839C0CB52 /* ExportManager.swift */; };
 		D4E5F6071A2B3C4D5E6F7082 /* BuildProcessingMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6071A2B3C4D5E6F7081 /* BuildProcessingMonitor.swift */; };
+		FE2E5F9AA0A9880B683B75E3 /* ViewStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0E15D8A22F0488C7836041 /* ViewStateTests.swift */; };
+		9F1BB80B84C929D5710B4031 /* BuildDisplayHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A16A19C399E5309EAABF97F /* BuildDisplayHelperTests.swift */; };
+		696D69A94C9314D7469E03FF /* APIMethodTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C4D5A196EF3EA84E17D74B9 /* APIMethodTests.swift */; };
+		20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */; };
+		F6A269D26A45DE35489CF8E5 /* ValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 872D0E1656CED3F05CC37A21 /* ValidationTests.swift */; };
+		2931303759E64EC8AB9B79DC /* JSONAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 8D2F23252DD06B8C00B1AB0C /* JSONAPI */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D4B2C664C9C8BAE65FB0A373 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CD616D7A2A8F62A4004ADF44 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD616D812A8F62A4004ADF44;
+			remoteInfo = "App Store";
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		135FDE103FEA42BBBA742219 /* AppIconImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconImageCache.swift; sourceTree = "<group>"; };
@@ -92,6 +108,12 @@
 		CDC9F4942BE5F96700AEF643 /* DetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailViewModel.swift; sourceTree = "<group>"; };
 		CDDEC3042BD7C1B400D73E95 /* SpinnerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpinnerView.swift; sourceTree = "<group>"; };
 		D39AEBC5F43692E9C43F6A3F /* Pods_App_Store.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App_Store.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		DC0E15D8A22F0488C7836041 /* ViewStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewStateTests.swift; sourceTree = "<group>"; };
+		8A16A19C399E5309EAABF97F /* BuildDisplayHelperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildDisplayHelperTests.swift; sourceTree = "<group>"; };
+		4C4D5A196EF3EA84E17D74B9 /* APIMethodTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIMethodTests.swift; sourceTree = "<group>"; };
+		609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONDecodingTests.swift; sourceTree = "<group>"; };
+		872D0E1656CED3F05CC37A21 /* ValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ValidationTests.swift; sourceTree = "<group>"; };
+		BEA7DC44EBB0E103E4732876 /* App Store Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "App Store Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,6 +122,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				8D2F23262DD06B8C00B1AB0C /* JSONAPI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D5946C7ADA7BA3EE3033233 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2931303759E64EC8AB9B79DC /* JSONAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,6 +208,7 @@
 				CD616D842A8F62A4004ADF44 /* App Store */,
 				CD616D832A8F62A4004ADF44 /* Products */,
 				CEAA54BC40EB83FD0207991A /* Frameworks */,
+				E1882254A265E30A23F02087 /* App Store Tests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -185,6 +216,7 @@
 			isa = PBXGroup;
 			children = (
 				CD616D822A8F62A4004ADF44 /* App Store.app */,
+				BEA7DC44EBB0E103E4732876 /* App Store Tests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -290,6 +322,18 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		E1882254A265E30A23F02087 /* App Store Tests */ = {
+			isa = PBXGroup;
+			children = (
+				DC0E15D8A22F0488C7836041 /* ViewStateTests.swift */,
+				8A16A19C399E5309EAABF97F /* BuildDisplayHelperTests.swift */,
+				4C4D5A196EF3EA84E17D74B9 /* APIMethodTests.swift */,
+				609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */,
+				872D0E1656CED3F05CC37A21 /* ValidationTests.swift */,
+			);
+			path = "App Store Tests";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -313,6 +357,27 @@
 			productReference = CD616D822A8F62A4004ADF44 /* App Store.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B6AA5756F6C9C5E8C83CC00D /* App Store Tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F5EFCB92600C26EE01F60316 /* Build configuration list for PBXNativeTarget "App Store Tests" */;
+			buildPhases = (
+				CD354DD92494C7AE9492DF31 /* Sources */,
+				6D5946C7ADA7BA3EE3033233 /* Frameworks */,
+				2AE9F02E07D404CEDE665A6E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6E94D52DE569CE936C2B2553 /* PBXTargetDependency */,
+			);
+			name = "App Store Tests";
+			packageProductDependencies = (
+				8D2F23252DD06B8C00B1AB0C /* JSONAPI */,
+			);
+			productName = "App Store Tests";
+			productReference = BEA7DC44EBB0E103E4732876 /* App Store Tests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -325,6 +390,9 @@
 				TargetAttributes = {
 					CD616D812A8F62A4004ADF44 = {
 						CreatedOnToolsVersion = 14.3;
+					};
+					B6AA5756F6C9C5E8C83CC00D = {
+						CreatedOnToolsVersion = 16.0;
 					};
 				};
 			};
@@ -345,6 +413,7 @@
 			projectRoot = "";
 			targets = (
 				CD616D812A8F62A4004ADF44 /* App Store */,
+				B6AA5756F6C9C5E8C83CC00D /* App Store Tests */,
 			);
 		};
 /* End PBXProject section */
@@ -356,6 +425,13 @@
 			files = (
 				CD616D8D2A8F62A5004ADF44 /* Preview Assets.xcassets in Resources */,
 				CD616D8A2A8F62A5004ADF44 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2AE9F02E07D404CEDE665A6E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -406,7 +482,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CD354DD92494C7AE9492DF31 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FE2E5F9AA0A9880B683B75E3 /* ViewStateTests.swift in Sources */,
+				9F1BB80B84C929D5710B4031 /* BuildDisplayHelperTests.swift in Sources */,
+				696D69A94C9314D7469E03FF /* APIMethodTests.swift in Sources */,
+				20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */,
+				F6A269D26A45DE35489CF8E5 /* ValidationTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6E94D52DE569CE936C2B2553 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD616D812A8F62A4004ADF44 /* App Store */;
+			targetProxy = D4B2C664C9C8BAE65FB0A373 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		CD616D8F2A8F62A5004ADF44 /* Debug */ = {
@@ -606,6 +702,75 @@
 			};
 			name = Release;
 		};
+		9F713FEA73C39F4D598E03A9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.demos.App-Store-Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App Store.app/Contents/MacOS/App Store";
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		267AA258A82B7313DEF4B818 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.demos.App-Store-Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App Store.app/Contents/MacOS/App Store";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -623,6 +788,15 @@
 			buildConfigurations = (
 				CD616D922A8F62A5004ADF44 /* Debug */,
 				CD616D932A8F62A5004ADF44 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F5EFCB92600C26EE01F60316 /* Build configuration list for PBXNativeTarget "App Store Tests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9F713FEA73C39F4D598E03A9 /* Debug */,
+				267AA258A82B7313DEF4B818 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
