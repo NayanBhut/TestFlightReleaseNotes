@@ -245,13 +245,18 @@ UNTRUSTED_END = ">>>END-UNTRUSTED-PREVIOUS-FINDINGS"
 
 
 def sanitize_finding_block(block):
-    """Mangle lines that could forge the carry-over fence sentinels."""
+    """Mangle lines that could forge the carry-over fence sentinels.
+
+    Destroys the exact sentinel bytes anywhere in the line (not just at
+    the start), so attacker text cannot close the untrusted-data fence
+    early in a later chunk's prompt.
+    """
     safe = []
     for line in block.splitlines():
         if UNTRUSTED_START in line or UNTRUSTED_END in line:
-            safe.append(line.lstrip("<>"))
-        else:
-            safe.append(line)
+            line = line.replace(UNTRUSTED_START, r"\<UNTRUSTED-PREVIOUS-FINDINGS")
+            line = line.replace(UNTRUSTED_END, r"\>END-UNTRUSTED-PREVIOUS-FINDINGS")
+        safe.append(line)
     return "\n".join(safe)
 
 
@@ -452,7 +457,7 @@ def request_review(model, user_msg, api_key, raw_file):
     return content
 
 
-def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk):
+def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk, max_chunks):
     total_in = len(raw_diff)
     noise_chars = sum(len(s) for s in skipped)
     print(
@@ -467,6 +472,11 @@ def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk):
     if not chunks:
         print("  No reviewable source changes (all sections filtered as noise).")
         return
+    if max_chunks and len(chunks) > max_chunks:
+        print(
+            f"  \u26a0\ufe0f Plan exceeds MAX_CHUNKS={max_chunks} "
+            f"({len(chunks)} chunks); the real run will FAIL."
+        )
     print(f"  Chunk plan (MAX_CHARS_PER_CHUNK={max_chunk:,}):")
     for i, chunk in enumerate(chunks, 1):
         size = sum(len(s) for s in chunk)
@@ -497,7 +507,14 @@ def call_with_retry(fn, attempts=3, delays=(2, 8), chunk_label="request"):
             if attempt < attempts:
                 backoff = delays[min(attempt - 1, len(delays) - 1)]
                 retry_after = getattr(e, "retry_after", None)
-                delay = max(backoff, retry_after) if retry_after else backoff
+                # Honor Retry-After, but clamp: a hostile/buggy header
+                # (e.g. 7200s) must not stall the CI job for hours.
+                delay = min(max(backoff, retry_after or 0), 90)
+                if retry_after and retry_after > 90:
+                    log(
+                        f"WARN: {chunk_label}: Retry-After={retry_after}s "
+                        f"exceeds the 90s clamp; using {delay}s"
+                    )
                 log(
                     f"WARN: {chunk_label}: transient API error "
                     f"(attempt {attempt}/{attempts}): {e}; retrying in {delay}s"
@@ -594,7 +611,7 @@ def main():
         sys.exit(1)
 
     if args.dry_run:
-        print_dry_run_plan(chunks, skipped, diff, max_chunk)
+        print_dry_run_plan(chunks, skipped, diff, max_chunk, max_chunks)
         sys.exit(0)
 
     if not kept:
@@ -633,7 +650,9 @@ def main():
     for i, chunk in enumerate(chunks, 1):
         chunk_text = "".join(chunk)
         path_pairs = [section_paths(s) for s in chunk]
-        files = [p[1] for p in path_pairs if p]
+        # Dedupe preserving order: a single file split on hunk boundaries
+        # appears once per piece - display it once.
+        files = list(dict.fromkeys(p[1] for p in path_pairs if p))
         log(
             f"Reviewing chunk {i}/{total_chunks} "
             f"({len(chunk_text):,} chars, {len(chunk)} file"
