@@ -46,9 +46,21 @@ Environment variables:
                         loudly rather than reviewing an incomplete diff -
                         the coverage guarantee is never silently reduced.
                         Set 0 for unlimited.
+  NUM_PREDICT_CAPS     Comma-separated ascending output-length caps tried
+                        per chunk when the model hits num_predict
+                        (default: 8192,24576).  The last cap accepts a
+                        truncated review with a loud warning marker.
+  REVIEW_BUDGET_MINUTES
+                        Wall-clock budget for the review loop (default:
+                        90, sized under the workflow's 120-minute job
+                        ceiling).  When another chunk's worst case
+                        cannot fit, the run stops loudly with partial
+                        output instead of being runner-killed.
 """
 
 import argparse
+import datetime
+import email.utils
 import http.client
 import json
 import os
@@ -60,11 +72,26 @@ import urllib.request
 
 API_URL = "https://ollama.com/v1/chat/completions"
 
+# Per-request timeout.  Sized so the worst case fits the job budget:
+# MAX_CHUNKS_DEFAULT * 2 caps * 3 attempts * REQUEST_TIMEOUT_S must
+# stay well under the workflow's timeout-minutes ceiling.
+REQUEST_TIMEOUT_S = 300
+
+DEFAULT_NUM_PREDICT_CAPS = (8192, 24576)
+
+# Wall-clock budget for the whole review loop.  Default sized against the
+# workflow's timeout-minutes: 120 ceiling minus build/test overhead.
+DEFAULT_REVIEW_BUDGET_MINUTES = 90
+
 DEFAULT_MAX_CHARS_PER_CHUNK = 150000
 # "docs/" is anchored as (^|/)docs/ so paths like Sources/apidocs/ do NOT
 # match; (?i)\.md$ also skips CHANGELOG.MD etc.  ";;" separator so regexes
-# may contain commas.
-DEFAULT_SKIP_PATH_PATTERNS = r"(^|/)docs/;;(?i)\.md$;;\.xcodeproj/"
+# may contain commas.  Lockfile/resolved files are generated churn with
+# zero review value.
+DEFAULT_SKIP_PATH_PATTERNS = (
+    r"(^|/)docs/;;(?i)\.md$;;\.xcodeproj/;;(^|/)Package\.resolved$"
+    r";;(^|/)Podfile\.lock$;;(^|/)Gemfile\.lock$"
+)
 # Finite by default: an oversized PR fails loudly instead of fanning out
 # unbounded paid API calls (0 = unlimited, explicit opt-in).
 DEFAULT_MAX_CHUNKS = 40
@@ -361,12 +388,13 @@ def build_carryover(findings_so_far, max_chars=8000):
                 acc += len(line) + 1
             text.append("\n".join(lines) + "\n... (oversized finding truncated)")
             break
-        if total + len(block) > max_chars:
-            # Whole block does not fit the remaining budget: drop it
-            # (and the rest) rather than cutting a finding mid-block.
+        if total + len(block) + 1 > max_chars:
+            # Whole block does not fit the remaining budget (including
+            # the join separator): drop it and the rest rather than
+            # cutting a finding mid-block.
             break
         text.append(block)
-        total += len(block)
+        total += len(block) + 1  # +1 for the "\n" added by "\n".join
     # If we stopped early, tell the model the list is partial so it does
     # not treat an incomplete carry-over as exhaustive.
     omitted = len(unique) - len(text)
@@ -442,17 +470,26 @@ def request_review(model, user_msg, api_key, raw_file, num_predict=8192,
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         if e.code == 429 or 500 <= e.code <= 599:
             # Transient: rate limit / server error - worth a bounded retry.
-            # Respect Retry-After if the API sends one.
+            # Respect Retry-After in both delta-seconds and HTTP-date form.
             retry_after = None
             try:
                 ra = e.headers.get("Retry-After") if e.headers else None
-                retry_after = int(ra) if ra and ra.isdigit() else None
+                if ra:
+                    if ra.strip().isdigit():
+                        retry_after = int(ra.strip())
+                    else:
+                        # RFC 9110 allows an HTTP-date; parse to seconds.
+                        dt = email.utils.parsedate_to_datetime(ra)
+                        retry_after = max(
+                            0,
+                            int((dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()),
+                        )
             except (ValueError, TypeError):
                 retry_after = None
             print(
@@ -541,11 +578,12 @@ def request_review(model, user_msg, api_key, raw_file, num_predict=8192,
     return content
 
 
-def request_chunk_review(model, user_msg, api_key, raw_file, chunk_label):
+def request_chunk_review(model, user_msg, api_key, raw_file, chunk_label, caps=None):
     """Review one chunk: network retries per cap, then escalate the
     output-length cap and finally accept a truncated review with a loud
     warning marker rather than silently dropping findings."""
-    caps = (8192, 24576)
+    if caps is None:
+        caps = parse_num_predict_caps()
     for i, cap in enumerate(caps):
         accept = i == len(caps) - 1
         try:
@@ -559,6 +597,23 @@ def request_chunk_review(model, user_msg, api_key, raw_file, chunk_label):
         except LengthTruncated:
             continue  # escalate to the next, higher cap
     raise ReviewError()  # unreachable; last cap always accepts
+
+
+def parse_num_predict_caps():
+    """Parse NUM_PREDICT_CAPS (comma-separated ascending ints) with
+    validation; falls back to the default ladder on garbage."""
+    raw = os.environ.get("NUM_PREDICT_CAPS", "")
+    if not raw:
+        return DEFAULT_NUM_PREDICT_CAPS
+    try:
+        caps = tuple(int(v.strip()) for v in raw.split(",") if v.strip())
+    except ValueError:
+        log(f"WARN: Invalid NUM_PREDICT_CAPS, using default {DEFAULT_NUM_PREDICT_CAPS}")
+        return DEFAULT_NUM_PREDICT_CAPS
+    if not caps or any(c < 100 for c in caps):
+        log(f"WARN: NUM_PREDICT_CAPS values too small, using default {DEFAULT_NUM_PREDICT_CAPS}")
+        return DEFAULT_NUM_PREDICT_CAPS
+    return caps
 
 
 def print_dry_run_plan(chunks, skipped, raw_diff, max_chunk, max_chunks):
@@ -717,8 +772,10 @@ def main():
     except VerifyError:
         sys.exit(1)
 
-    chunks = chunk_sections(kept, max_chunk)
+    # chunk_sections can raise VerifyError via split_oversized_section's
+    # losslessness assertion; keep the abort path uniform with the others.
     try:
+        chunks = chunk_sections(kept, max_chunk)
         verify_chunks(chunks, kept, max_chunk)
     except VerifyError:
         sys.exit(1)
@@ -759,6 +816,16 @@ def main():
     combined_parts = []
     findings_so_far = []
     total_chunks = len(chunks)
+    # Wall-clock budget (REVIEW_BUDGET_MINUTES, default sized to fit the
+    # workflow's timeout-minutes ceiling).  Fail loudly when another
+    # chunk's worst case cannot fit - never let the runner kill the job
+    # and lose the buffered combined review.
+    budget_minutes = _env_int("REVIEW_BUDGET_MINUTES", DEFAULT_REVIEW_BUDGET_MINUTES, minimum=1)
+    deadline = time.monotonic() + budget_minutes * 60
+    # Worst-case per chunk: caps ladder x attempts x request timeout
+    # (+ backoff).  Slightly generous on purpose.
+    caps = parse_num_predict_caps()
+    worst_chunk_s = len(caps) * 3 * (REQUEST_TIMEOUT_S + 90)
 
     for i, chunk in enumerate(chunks, 1):
         chunk_text = "".join(chunk)
@@ -766,6 +833,20 @@ def main():
         # Dedupe preserving order: a single file split on hunk boundaries
         # appears once per piece - display it once.
         files = list(dict.fromkeys(p[1] for p in path_pairs if p))
+
+        if time.monotonic() + worst_chunk_s > deadline:
+            print(
+                f"ERROR: Review budget ({budget_minutes} min) cannot cover "
+                f"chunk {i}/{total_chunks} worst case ({worst_chunk_s // 60} min); "
+                f"stopping with {i - 1} of {total_chunks} chunks reviewed. "
+                f"Raise REVIEW_BUDGET_MINUTES / MAX_CHARS_PER_CHUNK or "
+                f"reduce PR size.",
+                file=sys.stderr,
+            )
+            if combined_parts:
+                log("--- REVIEW OUTPUT (partial; would have been posted) ---")
+                print("\n\n".join(combined_parts), file=sys.stderr)
+            sys.exit(1)
         log(
             f"Reviewing chunk {i}/{total_chunks} "
             f"({len(chunk_text):,} chars, {len(files)} file"
