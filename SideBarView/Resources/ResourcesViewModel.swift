@@ -772,13 +772,15 @@ final class ResourcesViewModel: ObservableObject {
 
     /// POST /v1/userInvitations — invite a team member. Success carries no
     /// local list mutation: pending invitees don't appear in /users until
-    /// they accept, so there is no row to prepend.
+    /// they accept, so there is no row to prepend. Pass app ids to scope
+    /// a single-app invite (allAppsVisible == false); empty = all apps.
     func inviteUser(email: String,
                     firstName: String,
                     lastName: String,
                     roles: Set<UserRoleOption>,
                     allAppsVisible: Bool,
-                    provisioningAllowed: Bool) async -> WriteResult {
+                    provisioningAllowed: Bool,
+                    visibleAppIds: [String] = []) async -> WriteResult {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedFirst = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedLast = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -788,6 +790,9 @@ final class ResourcesViewModel: ObservableObject {
         guard !trimmedFirst.isEmpty else { return .failure("Enter the invitee's first name.") }
         guard !trimmedLast.isEmpty else { return .failure("Enter the invitee's last name.") }
         guard !roles.isEmpty else { return .failure("Pick at least one role.") }
+        if !allAppsVisible, visibleAppIds.isEmpty {
+            return .failure("Pick the app this user can access, or turn on \"All apps visible\".")
+        }
         guard !isWriteInFlight(Self.inviteUserKey) else { return .ignored }
         writeInFlight.insert(Self.inviteUserKey)
         defer { writeInFlight.remove(Self.inviteUserKey) }
@@ -798,7 +803,8 @@ final class ResourcesViewModel: ObservableObject {
             lastName: trimmedLast,
             roles: roles,
             allAppsVisible: allAppsVisible,
-            provisioningAllowed: provisioningAllowed) else {
+            provisioningAllowed: provisioningAllowed,
+            visibleAppIds: visibleAppIds) else {
             return .failure("Couldn't build the invite request.")
         }
 
@@ -821,7 +827,8 @@ final class ResourcesViewModel: ObservableObject {
                           lastName: String,
                           roles: Set<UserRoleOption>,
                           allAppsVisible: Bool,
-                          provisioningAllowed: Bool) async -> WriteResult {
+                          provisioningAllowed: Bool,
+                          visibleAppIds: [String] = []) async -> WriteResult {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
             return .failure("Enter a valid email address.")
@@ -849,7 +856,8 @@ final class ResourcesViewModel: ObservableObject {
                 lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines),
                 roles: roles,
                 allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed) else {
+                provisioningAllowed: provisioningAllowed,
+                visibleAppIds: visibleAppIds) else {
                 return .failure("Couldn't build the resend request.")
             }
             _ = try await APIClient.shared.callAPI(with: createRequest)
@@ -883,7 +891,8 @@ final class ResourcesViewModel: ObservableObject {
                                          lastName: String,
                                          roles: Set<UserRoleOption>,
                                          allAppsVisible: Bool,
-                                         provisioningAllowed: Bool) -> URLRequest? {
+                                         provisioningAllowed: Bool,
+                                         visibleAppIds: [String]) -> URLRequest? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard !firstName.isEmpty, !lastName.isEmpty, !roles.isEmpty,
@@ -896,6 +905,11 @@ final class ResourcesViewModel: ObservableObject {
                         roles: roles.map(\.rawValue).sorted(),
                         allAppsVisible: allAppsVisible,
                         provisioningAllowed: provisioningAllowed
+                    ),
+                    relationships: visibleAppIds.isEmpty ? nil : UserInvitationCreateRelationships(
+                        visibleApps: UserInvitationVisibleAppsRelationship(
+                            data: visibleAppIds.map { UserInvitationAppRef(id: $0) }
+                        )
                     )
                 )
               )) else {

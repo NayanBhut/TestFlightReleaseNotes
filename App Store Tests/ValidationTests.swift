@@ -91,6 +91,44 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(json.contains("whatsNew"))
     }
 
+    // MARK: - Invite body relationships (Batch I fix)
+
+    func testInviteBodyVisibleApps() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        // Single-app invite carries the visibleApps relationship.
+        let scoped = UserInvitationCreateRequest(
+            data: UserInvitationCreateData(
+                attributes: UserInvitationCreateAttributes(
+                    email: "a@b.com", firstName: "Ada", lastName: "L",
+                    roles: ["DEVELOPER"], allAppsVisible: false, provisioningAllowed: false
+                ),
+                relationships: UserInvitationCreateRelationships(
+                    visibleApps: UserInvitationVisibleAppsRelationship(
+                        data: [UserInvitationAppRef(id: "app-1")]
+                    )
+                )
+            )
+        )
+        let scopedJSON = String(data: try encoder.encode(scoped), encoding: .utf8) ?? ""
+        XCTAssertTrue(scopedJSON.contains("\"visibleApps\""))
+        XCTAssertTrue(scopedJSON.contains("\"app-1\""))
+
+        // All-apps invite omits relationships entirely.
+        let allApps = UserInvitationCreateRequest(
+            data: UserInvitationCreateData(
+                attributes: UserInvitationCreateAttributes(
+                    email: "a@b.com", firstName: "Ada", lastName: "L",
+                    roles: ["DEVELOPER"], allAppsVisible: true, provisioningAllowed: false
+                ),
+                relationships: nil
+            )
+        )
+        let allAppsJSON = String(data: try encoder.encode(allApps), encoding: .utf8) ?? ""
+        XCTAssertFalse(allAppsJSON.contains("visibleApps"))
+    }
+
     // MARK: - CredentialStorage (keychain-backed: pure parts only)
 
     func testCredentialCodableRoundTrip() throws {

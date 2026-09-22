@@ -365,6 +365,21 @@ struct UserInvitationCreateRequest: Encodable {
 struct UserInvitationCreateData: Encodable {
     var type = "userInvitations"
     var attributes: UserInvitationCreateAttributes
+    /// Present only for single-app invites (allAppsVisible == false).
+    var relationships: UserInvitationCreateRelationships?
+}
+
+struct UserInvitationCreateRelationships: Encodable {
+    var visibleApps: UserInvitationVisibleAppsRelationship
+}
+
+struct UserInvitationVisibleAppsRelationship: Encodable {
+    var data: [UserInvitationAppRef]
+}
+
+struct UserInvitationAppRef: Encodable {
+    var type = "apps"
+    var id: String
 }
 
 struct UserInvitationCreateAttributes: Encodable {
