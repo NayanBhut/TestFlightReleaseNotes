@@ -80,7 +80,10 @@ final class APIMethodTests: XCTestCase {
         XCTAssertEqual(APIName.getUsers.rawValue, "/users")
     }
 
-    func testCurlCommandRedactsSecrets() {
+    // TEMPORARY (matches the temporary live-token logging): asserts the
+    // token is present for debugging while emails stay redacted. Update
+    // alongside the logging when it is removed before merge.
+    func testCurlCommandKeepsTokenRedactsEmail() {
         var request = URLRequest(url: URL(string: "https://api.appstoreconnect.apple.com/v1/users")!)
         request.httpMethod = "POST"
         request.allHTTPHeaderFields = [
@@ -91,8 +94,8 @@ final class APIMethodTests: XCTestCase {
         let curl = APIClient.curlCommand(for: request)
         XCTAssertTrue(curl.hasPrefix("curl -X POST"))
         XCTAssertTrue(curl.contains("https://api.appstoreconnect.apple.com/v1/users"))
-        XCTAssertTrue(curl.contains("Bearer <TOKEN>"))
-        XCTAssertFalse(curl.contains("live-token-value"))
+        XCTAssertTrue(curl.contains("Bearer live-token-value"))
+        XCTAssertFalse(curl.contains("<TOKEN>"))
         XCTAssertTrue(curl.contains("[redacted]"))
         XCTAssertFalse(curl.contains("tester@example.com"))
     }

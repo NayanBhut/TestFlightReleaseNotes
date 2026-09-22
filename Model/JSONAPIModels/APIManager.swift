@@ -143,11 +143,12 @@ final class APIClient {
         return task
     }
     
-    /// DEBUG logs may end up in bug reports or screen recordings: emails
-    /// (PII) and the Bearer token are always redacted, but bodies are
-    /// logged in full (no truncation) so failing writes can be debugged
-    /// from the console. Use the [API][CURL] line to reproduce any request
-    /// (fill in <TOKEN> — tokens are deliberately never printed).
+    /// TEMPORARY DEBUG AID — prints the LIVE Bearer token. Added for
+    /// active debugging; MUST be removed before merging to main. The
+    /// branch owner is reminded of this on every commit until removed.
+    /// Emails (PII) stay redacted; bodies log in full (no truncation) so
+    /// failing writes can be debugged from the console. Use the
+    /// [API][CURL] line to reproduce any request.
     private static let piiRedactionRegex = try? NSRegularExpression(
         pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
 
@@ -167,6 +168,7 @@ final class APIClient {
 
     /// Copy-pasteable curl for the Xcode console (DEBUG only at call
     /// sites). Single-quoted throughout; embedded quotes are escaped.
+    /// TEMPORARY: includes the live Authorization header (see above).
     static func curlCommand(for request: URLRequest) -> String {
         func shellQuoted(_ value: String) -> String {
             "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -176,9 +178,8 @@ final class APIClient {
             parts.append(shellQuoted(url.absoluteString))
         }
         for (field, value) in (request.allHTTPHeaderFields ?? [:]).sorted(by: { $0.key < $1.key }) {
-            let logged = field.lowercased() == "authorization" ? "Bearer <TOKEN>" : value
             parts.append("-H")
-            parts.append(shellQuoted("\(field): \(logged)"))
+            parts.append(shellQuoted("\(field): \(value)"))
         }
         if let body = request.httpBody, !body.isEmpty {
             parts.append("--data")
