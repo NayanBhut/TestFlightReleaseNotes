@@ -42,6 +42,11 @@ class DetailViewModel: ObservableObject {
     /// Localization ids with a PATCH in flight — per-localization so saving
     /// one locale never blocks another (same rule as updatingSaveKeys).
     @Published private(set) var savingAppInfoLocalizationIds: Set<String> = []
+    // MARK: Batch I (I6) — version localization writes
+    /// Version localization ids with a PATCH in flight. Stored here (not
+    /// in the extension below): extensions must not contain stored
+    /// properties.
+    @Published private(set) var savingVersionLocalizationIds: Set<String> = []
 
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
@@ -495,7 +500,6 @@ extension DetailViewModel {
     }
 
     // MARK: - App Info writes (Batch G #10)
-
     /// Outcome of an App Info save, so the editor can tell "saved" apart
     /// from "ignored" (already in flight / task cancelled) — an ignored
     /// save must leave the editor open, not close it like a success.
@@ -634,6 +638,139 @@ extension DetailViewModel {
             return apiError.details
         }
         return error.localizedDescription
+    }
+
+    // MARK: - Version localization writes (Batch I, I6)
+    //
+    // PATCH /v1/appStoreVersionLocalizations/{id} for description,
+    // keywords, promotionalText, whatsNew, marketingUrl, supportUrl.
+    // Same save contract as the Batch G app info editor.
+
+    /// Outcome of a version localization save (same contract as
+    /// AppInfoSaveResult — separate type so call sites read unambiguously).
+    enum VersionLocalizationSaveResult {
+        case success
+        case failure(String)
+        case ignored
+    }
+
+    /// PATCH /v1/appStoreVersionLocalizations/{id}. Returns .success,
+    /// .failure with an inline error message (the editor stays open on
+    /// failure so typed input is never silently discarded), or .ignored
+    /// when a duplicate save is in flight or the task was cancelled.
+    ///
+    /// Field mapping reuses the Batch G rule: a draft equal to the saved
+    /// value (or blank when the saved value is blank) is .unchanged
+    /// (omitted); a blanked draft over a non-blank saved value is .clear
+    /// (JSON null); otherwise .set.
+    func saveVersionLocalization(id: String,
+                                 description: String,
+                                 keywords: String,
+                                 promotionalText: String,
+                                 whatsNew: String,
+                                 marketingUrl: String,
+                                 supportUrl: String) async -> VersionLocalizationSaveResult {
+        let descriptionField = Self.updateField(draft: description, original: versionLocalizationValue(id: id, \.descriptionData))
+        let keywordsField = Self.updateField(draft: keywords, original: versionLocalizationValue(id: id, \.keywords))
+        let promotionalTextField = Self.updateField(draft: promotionalText, original: versionLocalizationValue(id: id, \.promotionalText))
+        let whatsNewField = Self.updateField(draft: whatsNew, original: versionLocalizationValue(id: id, \.whatsNew))
+        let marketingUrlField = Self.updateField(draft: marketingUrl, original: versionLocalizationValue(id: id, \.marketingUrl))
+        let supportUrlField = Self.updateField(draft: supportUrl, original: versionLocalizationValue(id: id, \.supportUrl))
+
+        if let message = validateVersionLocalization(description: descriptionField,
+                                                     keywords: keywordsField,
+                                                     promotionalText: promotionalTextField,
+                                                     whatsNew: whatsNewField,
+                                                     marketingUrl: marketingUrlField,
+                                                     supportUrl: supportUrlField) {
+            return .failure(message)
+        }
+        guard !savingVersionLocalizationIds.contains(id) else { return .ignored }
+        savingVersionLocalizationIds.insert(id)
+        defer { savingVersionLocalizationIds.remove(id) }
+
+        let body = VersionLocalizationUpdateRequest(
+            data: VersionLocalizationUpdateData(
+                id: id,
+                attributes: VersionLocalizationUpdateAttributes(
+                    descriptionData: descriptionField,
+                    keywords: keywordsField,
+                    marketingUrl: marketingUrlField,
+                    promotionalText: promotionalTextField,
+                    supportUrl: supportUrlField,
+                    whatsNew: whatsNewField
+                )
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .appStoreVersionLocalizations, body: data, path: id),
+                apiVersion: .v1) else {
+            return .failure("Couldn't build the update request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(AppStoreVersionLocalizationsModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, app switch) since the save started.
+            guard case .loaded(var localizations) = versionLocalizationsState,
+                  let index = localizations.firstIndex(where: { $0.id == id }) else { return .ignored }
+            localizations[index] = model
+            versionLocalizationsState = .loaded(localizations)
+            return .success
+        } catch {
+            detailLogger.error("Failed to update version localization: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(appInfoWriteErrorMessage(for: error))
+        }
+    }
+
+    /// Saved attribute for a version localization, "" when nil.
+    private func versionLocalizationValue(id: String,
+                                          _ keyPath: (AppStoreVersionLocalizationsModel) -> String?) -> String {
+        guard case .loaded(let localizations) = versionLocalizationsState,
+              let loc = localizations.first(where: { $0.id == id }) else { return "" }
+        return keyPath(loc) ?? ""
+    }
+
+    private func validateVersionLocalization(description: AppInfoLocalizationFieldValue,
+                                             keywords: AppInfoLocalizationFieldValue,
+                                             promotionalText: AppInfoLocalizationFieldValue,
+                                             whatsNew: AppInfoLocalizationFieldValue,
+                                             marketingUrl: AppInfoLocalizationFieldValue,
+                                             supportUrl: AppInfoLocalizationFieldValue) -> String? {
+        if case .set(let value) = keywords,
+           value.count > VersionLocalizationLimits.keywordsMaxLength {
+            return "Keywords can't be longer than \(VersionLocalizationLimits.keywordsMaxLength) characters."
+        }
+        if case .set(let value) = promotionalText,
+           value.count > VersionLocalizationLimits.promotionalTextMaxLength {
+            return "Promotional text can't be longer than \(VersionLocalizationLimits.promotionalTextMaxLength) characters."
+        }
+        if case .set(let value) = description,
+           value.count > VersionLocalizationLimits.descriptionMaxLength {
+            return "Description can't be longer than \(VersionLocalizationLimits.descriptionMaxLength) characters."
+        }
+        if case .set(let value) = whatsNew,
+           value.count > VersionLocalizationLimits.whatsNewMaxLength {
+            return "What's New can't be longer than \(VersionLocalizationLimits.whatsNewMaxLength) characters."
+        }
+        for field in [marketingUrl, supportUrl] {
+            if case .set(let value) = field {
+                guard let parsed = URL(string: value),
+                      let scheme = parsed.scheme?.lowercased(),
+                      scheme == "http" || scheme == "https",
+                      parsed.host != nil else {
+                    return "Marketing and support URLs must be valid http(s) URLs."
+                }
+            }
+        }
+        return nil
     }
 
     func updateBuildWhatsNew(buildId: String, locale: String, whatsNew: String) {
