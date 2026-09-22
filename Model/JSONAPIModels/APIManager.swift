@@ -434,6 +434,12 @@ enum APIName: String {
     // Unlike appInfos (app-scoped subpath only), this one is top-level, so
     // it gets its own case. Reused for POST (create) if that's ever added.
     case appInfoLocalizations = "/appInfoLocalizations"
+    // Batch I (I6): top-level route for version localizations —
+    // PATCH /v1/appStoreVersionLocalizations/{id}. Not under
+    // /appStoreVersions/{id}/ (that subpath is read-only list); reusing
+    // .getAppStoreVersions would build /v1/appStoreVersions/{id}, which is
+    // the wrong resource entirely.
+    case appStoreVersionLocalizations = "/appStoreVersionLocalizations"
 }
 
 enum APIVersion: String {

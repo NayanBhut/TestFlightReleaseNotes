@@ -197,15 +197,7 @@ struct AppInfoView: View {
                 ForEach(localizations, id: \.id) { loc in
                     VStack(alignment: .leading, spacing: 8) {
                         if loc.id != localizations.first?.id { Divider() }
-                        Text(loc.locale ?? "Locale")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        InfoRow(label: "Description", value: loc.descriptionData)
-                        InfoRow(label: "Keywords", value: loc.keywords)
-                        InfoRow(label: "Promotional Text", value: loc.promotionalText)
-                        InfoRow(label: "Marketing URL", value: loc.marketingUrl)
-                        InfoRow(label: "Support URL", value: loc.supportUrl)
-                        InfoRow(label: "What's New", value: loc.whatsNew)
+                        VersionLocalizationRow(localization: loc, viewModel: viewModel)
                     }
                 }
             }
@@ -387,6 +379,172 @@ struct AppInfoLocalizationRow: View {
                                     subtitle: subtitle,
                                     privacyPolicyUrl: privacyPolicyUrl,
                                     privacyChoicesUrl: privacyChoicesUrl
+                                )
+                                switch result {
+                                case .success:
+                                    isEditing = false
+                                    errorMessage = nil
+                                case .failure(let message):
+                                    errorMessage = message
+                                case .ignored:
+                                    // In-flight duplicate or cancelled — keep
+                                    // the editor open, nothing was saved.
+                                    break
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(isSaving || !hasChanges)
+                    }
+                }
+                .padding(8)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .cornerRadius(6)
+            }
+        }
+    }
+}
+
+// MARK: - Version localization editor (Batch I, I6)
+
+/// Read-only rows plus an inline editor for description, keywords,
+/// promotional text, what's new and marketing/support URLs
+/// (PATCH /v1/appStoreVersionLocalizations/{id}). Mirrors
+/// AppInfoLocalizationRow's Edit/Save/Cancel pattern: the editor stays
+/// open on failure so typed input is never silently discarded.
+struct VersionLocalizationRow: View {
+    let localization: AppStoreVersionLocalizationsModel
+    @ObservedObject var viewModel: DetailViewModel
+    @State private var isEditing = false
+    @State private var descriptionText = ""
+    @State private var keywords = ""
+    @State private var promotionalText = ""
+    @State private var whatsNew = ""
+    @State private var marketingUrl = ""
+    @State private var supportUrl = ""
+    @State private var errorMessage: String?
+
+    private var isSaving: Bool {
+        viewModel.savingVersionLocalizationIds.contains(localization.id)
+    }
+
+    // Mirrors updateField in the view model: trimmed == saved means
+    // unchanged; anything else is .set or .clear — a change.
+    private var hasChanges: Bool {
+        trimmed(descriptionText) != (localization.descriptionData ?? "")
+            || trimmed(keywords) != (localization.keywords ?? "")
+            || trimmed(promotionalText) != (localization.promotionalText ?? "")
+            || trimmed(whatsNew) != (localization.whatsNew ?? "")
+            || trimmed(marketingUrl) != (localization.marketingUrl ?? "")
+            || trimmed(supportUrl) != (localization.supportUrl ?? "")
+    }
+
+    private func trimmed(_ draft: String) -> String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(localization.locale ?? "Locale")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    InfoRow(label: "Description", value: localization.descriptionData)
+                    InfoRow(label: "Keywords", value: localization.keywords)
+                    InfoRow(label: "Promotional Text", value: localization.promotionalText)
+                    InfoRow(label: "Marketing URL", value: localization.marketingUrl)
+                    InfoRow(label: "Support URL", value: localization.supportUrl)
+                    InfoRow(label: "What's New", value: localization.whatsNew)
+                }
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else if !isEditing {
+                    Button("Edit") {
+                        descriptionText = localization.descriptionData ?? ""
+                        keywords = localization.keywords ?? ""
+                        promotionalText = localization.promotionalText ?? ""
+                        whatsNew = localization.whatsNew ?? ""
+                        marketingUrl = localization.marketingUrl ?? ""
+                        supportUrl = localization.supportUrl ?? ""
+                        errorMessage = nil
+                        isEditing = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            if isEditing {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Description (up to 4000 characters)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $descriptionText)
+                        .font(.subheadline)
+                        .frame(minHeight: 80, maxHeight: 160)
+                        .border(Color.gray.opacity(0.3), width: 1)
+                        .disabled(isSaving)
+                    TextField("Keywords, comma-separated (up to 100 characters)", text: $keywords)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                        .disabled(isSaving)
+                    Text("Promotional Text (up to 170 characters)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $promotionalText)
+                        .font(.subheadline)
+                        .frame(minHeight: 44, maxHeight: 90)
+                        .border(Color.gray.opacity(0.3), width: 1)
+                        .disabled(isSaving)
+                    Text("What's New (up to 4000 characters)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $whatsNew)
+                        .font(.subheadline)
+                        .frame(minHeight: 60, maxHeight: 140)
+                        .border(Color.gray.opacity(0.3), width: 1)
+                        .disabled(isSaving)
+                    TextField("Marketing URL (http(s))", text: $marketingUrl)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                        .disabled(isSaving)
+                    TextField("Support URL (http(s))", text: $supportUrl)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                        .disabled(isSaving)
+                    // Blank draft over a saved value clears that field.
+                    Text("Blank a field to clear it. Saving needs an API key with the App Manager role or higher.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack {
+                        Button("Cancel") {
+                            isEditing = false
+                            errorMessage = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.secondary)
+                        .disabled(isSaving)
+                        Spacer()
+                        Button("Save") {
+                            Task { @MainActor in
+                                let result = await viewModel.saveVersionLocalization(
+                                    id: localization.id,
+                                    description: descriptionText,
+                                    keywords: keywords,
+                                    promotionalText: promotionalText,
+                                    whatsNew: whatsNew,
+                                    marketingUrl: marketingUrl,
+                                    supportUrl: supportUrl
                                 )
                                 switch result {
                                 case .success:
