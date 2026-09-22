@@ -48,6 +48,10 @@ jobs:
     # (as documented in the PR template)
     if: github.event_name == 'pull_request' && !contains(github.event.pull_request.title, '[skip-review]')
     runs-on: ubuntu-latest
+    # Hard ceiling for the whole review job (chunks x retry can otherwise
+    # exceed the GitHub-hosted runner limit on a pathological PR; a runner-
+    # level kill would lose everything, this fails cleanly instead)
+    timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: write
@@ -63,6 +67,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Run the ollama-review.py regression tests before the review itself:
+      # the review pipeline now aborts runs on VerifyError, so parsing/
+      # splitting regressions must fail fast here (no secrets needed).
+      - name: Test ollama-review.py
+        run: python3 .github/scripts/test_ollama_review.py
 
       # ── TEST SCENARIO 1: Ollama Cloud Auth ──
       # Purpose: Verify the API key is valid WITHOUT consuming paid tokens.
@@ -228,13 +238,11 @@ jobs:
             exit 0
           fi
 
-          # Limit diff size to avoid hitting token limits
-          DIFF_SIZE=${#DIFF}
-          MAX_DIFF_SIZE=200000
-          if [ "$DIFF_SIZE" -gt "$MAX_DIFF_SIZE" ]; then
-            echo "⚠️ Diff is large ($DIFF_SIZE chars), truncating to $MAX_DIFF_SIZE..."
-            DIFF="${DIFF:0:$MAX_DIFF_SIZE}"
-          fi
+          # Diff size is handled entirely by ollama-review.py: it filters
+          # noise file sections (docs/markdown/xcodeproj) and splits the
+          # rest into chunks of roughly MAX_CHARS_PER_CHUNK chars (a
+          # single larger file is split on hunk boundaries), so the full
+          # diff is reviewed regardless of PR size.
 
           # Call Ollama Cloud for review
           # The script saves the raw API response to /tmp/review_raw.json (for

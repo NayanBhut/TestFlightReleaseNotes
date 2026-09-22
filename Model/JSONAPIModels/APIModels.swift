@@ -372,3 +372,67 @@ enum AppInfoLocalizationLimits {
     static let nameMaxLength = 30
     static let subtitleMaxLength = 30
 }
+
+// MARK: - Batch I (I6): version localization writes
+//
+// PATCH /v1/appStoreVersionLocalizations/{id} — attribute set verified
+// against Apple's OpenAPI spec (AppStoreVersionLocalizationUpdateRequest):
+// description, keywords, marketingUrl, promotionalText, supportUrl,
+// whatsNew, all nullable. `locale` is immutable on update.
+// Field semantics reuse AppInfoLocalizationFieldValue (unchanged = omit,
+// clear = JSON null, set = value) — the encoding contract is identical.
+
+struct VersionLocalizationUpdateRequest: Encodable {
+    var data: VersionLocalizationUpdateData
+}
+
+struct VersionLocalizationUpdateData: Encodable {
+    var type = "appStoreVersionLocalizations"
+    var id: String
+    var attributes: VersionLocalizationUpdateAttributes
+}
+
+struct VersionLocalizationUpdateAttributes: Encodable {
+    var descriptionData: AppInfoLocalizationFieldValue
+    var keywords: AppInfoLocalizationFieldValue
+    var marketingUrl: AppInfoLocalizationFieldValue
+    var promotionalText: AppInfoLocalizationFieldValue
+    var supportUrl: AppInfoLocalizationFieldValue
+    var whatsNew: AppInfoLocalizationFieldValue
+
+    private enum CodingKeys: String, CodingKey {
+        // The wire key is `description` (see the model comment above).
+        case descriptionData = "description"
+        case keywords, marketingUrl, promotionalText, supportUrl, whatsNew
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try Self.encodeField(descriptionData, forKey: .descriptionData, in: &container)
+        try Self.encodeField(keywords, forKey: .keywords, in: &container)
+        try Self.encodeField(marketingUrl, forKey: .marketingUrl, in: &container)
+        try Self.encodeField(promotionalText, forKey: .promotionalText, in: &container)
+        try Self.encodeField(supportUrl, forKey: .supportUrl, in: &container)
+        try Self.encodeField(whatsNew, forKey: .whatsNew, in: &container)
+    }
+
+    private static func encodeField(_ field: AppInfoLocalizationFieldValue,
+                                    forKey key: CodingKeys,
+                                    in container: inout KeyedEncodingContainer<CodingKeys>) throws {
+        switch field {
+        case .unchanged: break
+        case .clear: try container.encodeNil(forKey: key)
+        case .set(let value): try container.encode(value, forKey: key)
+        }
+    }
+}
+
+/// Client-side limits from Apple's metadata rules: keywords ≤ 100,
+/// promotionalText ≤ 170, description/whatsNew ≤ 4000, URLs must be http(s).
+/// The server remains the source of truth.
+enum VersionLocalizationLimits {
+    static let keywordsMaxLength = 100
+    static let promotionalTextMaxLength = 170
+    static let descriptionMaxLength = 4000
+    static let whatsNewMaxLength = 4000
+}

@@ -17,8 +17,21 @@ struct BetaGroupView: View {
     @State private var inviteEmail = ""
     @State private var inviteFirstName = ""
     @State private var inviteLastName = ""
+    @State private var inviteUserSearch = ""
+    @State private var pickedTeamUserId: String?
+    @State private var pickedTeamUserEmail = ""
     @State private var buildIdForActions = ""
     @State private var testerPendingRemoval: BetaTesterModel?
+    // Batch I (I5): group CRUD state.
+    @State private var showCreateGroupSheet = false
+    @State private var newGroupName = ""
+    @State private var newGroupPublicLink = false
+    @State private var newGroupLimitText = ""
+    @State private var isCreatingGroup = false
+    @State private var isRenamingGroup = false
+    @State private var draftGroupName = ""
+    @State private var showDeleteGroupConfirm = false
+    @State private var testerPendingDeletion: BetaTesterModel?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +62,9 @@ struct BetaGroupView: View {
         .sheet(isPresented: $showInviteSheet) {
             inviteSheet
         }
+        .sheet(isPresented: $showCreateGroupSheet) {
+            createGroupSheet
+        }
         .onChange(of: selectedApp?.id) { _, _ in
             Task { await refreshGroupsIfStale() }
         }
@@ -70,6 +86,22 @@ struct BetaGroupView: View {
                 testerPendingRemoval = nil
             }
             Button("Cancel", role: .cancel) { testerPendingRemoval = nil }
+        }
+        .confirmationDialog(
+            "Delete \(testerPendingDeletion?.displayName ?? "this tester") from the team? They will lose access to all TestFlight groups.",
+            isPresented: Binding(
+                get: { testerPendingDeletion != nil },
+                set: { if !$0 { testerPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete from Team", role: .destructive) {
+                if let tester = testerPendingDeletion {
+                    Task { await betaViewModel.deleteTester(tester) }
+                }
+                testerPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { testerPendingDeletion = nil }
         }
     }
 
@@ -104,6 +136,19 @@ struct BetaGroupView: View {
             }
             Button(action: { Task { await refreshGroupsIfStale(force: true) } }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .disabled(selectedApp == nil || betaViewModel.viewState == .betaGroupsLoading)
+            // Batch I (I5): group create opens a sheet; writes need an
+            // Admin key, failures surface via the existing TestFlight alert.
+            Button(action: {
+                newGroupName = ""
+                newGroupPublicLink = false
+                newGroupLimitText = ""
+                showCreateGroupSheet = true
+            }) {
+                Label("New Group", systemImage: "plus")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
@@ -169,11 +214,66 @@ struct BetaGroupView: View {
     private var groupDetail: some View {
         if let group = betaViewModel.selectedGroup {
             VStack(alignment: .leading, spacing: 0) {
-                // Group title
+                // Group title with rename/delete (Batch I, I5).
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(group.name ?? "Unnamed group")
-                        .font(.title3)
-                        .fontWeight(.semibold)
+                    HStack {
+                        if isRenamingGroup {
+                            TextField("Group name", text: $draftGroupName)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.title3)
+                                .disabled(betaViewModel.updatingGroupId != nil)
+                            Button("Cancel") {
+                                isRenamingGroup = false
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(betaViewModel.updatingGroupId != nil)
+                            if betaViewModel.updatingGroupId != nil {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Button("Save") {
+                                    Task {
+                                        if await betaViewModel.renameGroup(group, newName: draftGroupName) {
+                                            isRenamingGroup = false
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(draftGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        } else {
+                            Text(group.name ?? "Unnamed group")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            if betaViewModel.updatingGroupId == group.id {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Button("Rename") {
+                                    draftGroupName = group.name ?? ""
+                                    isRenamingGroup = true
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(betaViewModel.updatingGroupId != nil)
+                                Button("Delete", role: .destructive) {
+                                    showDeleteGroupConfirm = true
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(betaViewModel.updatingGroupId != nil)
+                                .alert("Delete this beta group?", isPresented: $showDeleteGroupConfirm) {
+                                    Button("Cancel", role: .cancel) {}
+                                    Button("Delete", role: .destructive) {
+                                        Task { await betaViewModel.deleteGroup(group) }
+                                    }
+                                } message: {
+                                    Text("Testers keep team access but lose this group's builds. This cannot be undone.")
+                                }
+                            }
+                        }
+                    }
                     Text(groupDetailSubtitle(group))
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -221,6 +321,9 @@ struct BetaGroupView: View {
                     inviteEmail = ""
                     inviteFirstName = ""
                     inviteLastName = ""
+                    inviteUserSearch = ""
+                    pickedTeamUserId = nil
+                    pickedTeamUserEmail = ""
                     showInviteSheet = true
                 }) {
                     Label("Invite tester", systemImage: "plus")
@@ -268,6 +371,9 @@ struct BetaGroupView: View {
                         if betaViewModel.updatingTesterId == tester.id {
                             ProgressView().scaleEffect(0.7)
                         } else {
+                            // Trash = remove from this group; the circled
+                            // trash deletes the tester from the team
+                            // entirely (DELETE /v1/betaTesters/{id}).
                             Button(role: .destructive) {
                                 testerPendingRemoval = tester
                             } label: {
@@ -277,6 +383,15 @@ struct BetaGroupView: View {
                             .foregroundColor(.red)
                             .accessibilityLabel("Remove \(tester.displayName) from group")
                             .help("Remove from group")
+                            Button(role: .destructive) {
+                                testerPendingDeletion = tester
+                            } label: {
+                                Image(systemName: "trash.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Delete \(tester.displayName) from team")
+                            .help("Delete from team")
                         }
                     }
                     .padding(.vertical, 4)
@@ -371,12 +486,164 @@ struct BetaGroupView: View {
         }
     }
 
+    // MARK: - Group Create (Batch I, I5)
+
+    /// POST /v1/betaGroups — name plus optional public-link settings.
+    /// Stays open on failure (createGroup returns false); the TestFlight
+    /// alert surfaces the error.
+    private var createGroupSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Beta Group")
+                .font(.headline)
+            TextField("Group name (required)", text: $newGroupName)
+                .textFieldStyle(.roundedBorder)
+                .disabled(isCreatingGroup)
+            Toggle("Enable public link", isOn: $newGroupPublicLink)
+                .disabled(isCreatingGroup)
+            TextField("Public link limit (optional, number of testers)", text: $newGroupLimitText)
+                .textFieldStyle(.roundedBorder)
+                .disabled(isCreatingGroup || !newGroupPublicLink)
+            if newGroupPublicLink {
+                Text("Leave the limit empty for an unlimited public link.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if let limitError = groupLimitError {
+                Text(limitError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            Text("Test on a throwaway group first. Needs an API key with the Admin role.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { showCreateGroupSheet = false }
+                    .buttonStyle(.plain)
+                    .disabled(isCreatingGroup)
+                if isCreatingGroup {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Button("Create Group") {
+                        Task {
+                            isCreatingGroup = true
+                            defer { isCreatingGroup = false }
+                            if await betaViewModel.createGroup(
+                                name: newGroupName,
+                                publicLinkEnabled: newGroupPublicLink,
+                                publicLinkLimit: groupLimit
+                            ) {
+                                showCreateGroupSheet = false
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canCreateGroup)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    /// Parsed limit: nil when empty (unlimited) or unparsable (blocks
+    /// create — a typo must never silently create an unlimited group).
+    private var groupLimit: Int? {
+        let trimmed = newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return Int(trimmed)
+    }
+
+    private var groupLimitError: String? {
+        let trimmed = newGroupLimitText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard newGroupPublicLink, !trimmed.isEmpty else { return nil }
+        guard let value = groupLimit else {
+            return "The public link limit must be a whole number (e.g. 100)."
+        }
+        if value <= 0 {
+            return "The public link limit must be greater than zero."
+        }
+        return nil
+    }
+
+    private var canCreateGroup: Bool {
+        newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? false : groupLimitError == nil
+    }
+
     private var inviteSheet: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Invite Beta Tester")
                 .font(.headline)
+            // Team picker: search + tap fills the fields below (manual
+            // entry still works for people outside the team).
+            TextField("Search team members…", text: $inviteUserSearch)
+                .textFieldStyle(.roundedBorder)
+            if betaViewModel.isTeamUsersLoading && betaViewModel.teamUsers.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Loading team…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if let teamError = betaViewModel.teamUsersError, betaViewModel.teamUsers.isEmpty {
+                Text(teamError)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                let matches = betaViewModel.matchingTeamUsers(query: inviteUserSearch)
+                if !matches.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(matches, id: \.id) { user in
+                                Button {
+                                    inviteEmail = user.username ?? ""
+                                    inviteFirstName = user.firstName ?? ""
+                                    inviteLastName = user.lastName ?? ""
+                                    pickedTeamUserId = user.id
+                                    pickedTeamUserEmail = user.username ?? ""
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text("\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces).isEmpty ? (user.username ?? "Unknown user") : "\(user.firstName ?? "") \(user.lastName ?? "")")
+                                                .font(.subheadline)
+                                                .foregroundColor(.primary)
+                                            Text(user.username ?? "")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        if pickedTeamUserId == user.id {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.accentColor)
+                                        }
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(RoundedRectangle(cornerRadius: 6)
+                                        .fill(pickedTeamUserId == user.id ? Color.accentColor.opacity(0.12) : Color.clear))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Invite \(user.username ?? "user")")
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                } else if !inviteUserSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("No team member matches — type the email below to invite someone new.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
             TextField("Email (required)", text: $inviteEmail)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: inviteEmail) { _, newEmail in
+                    // Manual edits after picking unpick (the checkmark
+                    // tracks the picked address, not free text).
+                    if newEmail != pickedTeamUserEmail {
+                        pickedTeamUserId = nil
+                    }
+                }
             HStack {
                 TextField("First name", text: $inviteFirstName)
                     .textFieldStyle(.roundedBorder)
@@ -408,6 +675,7 @@ struct BetaGroupView: View {
         }
         .padding(20)
         .frame(width: 420)
+        .onAppear { betaViewModel.loadTeamUsers() }
     }
 
     // MARK: - Builds & Review

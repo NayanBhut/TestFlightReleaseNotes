@@ -33,6 +33,7 @@ final class ResourcesViewModel: ObservableObject {
     deinit {
         // A stuck network call must not keep the VM alive.
         for task in fetchTasks.values { task.cancel() }
+        invitationsFetchTask?.cancel()
     }
 
     // MARK: - Kinds
@@ -125,8 +126,9 @@ final class ResourcesViewModel: ObservableObject {
     private var loadedKinds: Set<Kind> = []
     private var fetchTasks: [Kind: Task<Void, Never>] = [:]
     /// Kinds with a page request in flight — per-kind so paginating one
-    /// kind never swallows another kind's Load-more tap.
-    private var isPaginatingKinds: Set<Kind> = []
+    /// kind never swallows another kind's Load-more tap. Published so the
+    /// footer can render the auto-drain progress (users kind).
+    @Published private(set) var isPaginatingKinds: Set<Kind> = []
 
     // MARK: - Writes (Batch G #10)
 
@@ -147,6 +149,19 @@ final class ResourcesViewModel: ObservableObject {
     /// Create-form write keys (never collide with resource ids).
     static let registerDeviceKey = "register-device"
     static let createCertificateKey = "create-certificate"
+    static let createBundleIdKey = "create-bundle-id"
+    static let inviteUserKey = "invite-user"
+    static let createProfileKey = "create-profile"
+
+    // MARK: - Pending invitations (Batch I follow-up)
+    //
+    // Pending invites live in /userInvitations, not /users — without this
+    // list an unaccepted invitee is invisible until they accept.
+
+    /// Pending team invitations. Single page (limit 200): pending invites
+    /// are a handful, and paging them is out of scope.
+    @Published var invitationsState: ViewState<[UserInvitationModel]> = .idle
+    private var invitationsFetchTask: Task<Void, Never>?
 
     func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
@@ -173,6 +188,7 @@ final class ResourcesViewModel: ObservableObject {
     private var bundleIdsFilterCache = FilterCache<BundleIdModel>()
     private var profilesFilterCache = FilterCache<ProfileModel>()
     private var usersFilterCache = FilterCache<UserModel>()
+    private var invitationsFilterCache = FilterCache<UserInvitationModel>()
 
     func searchText(for kind: Kind) -> String { searchTexts[kind] ?? "" }
 
@@ -248,15 +264,24 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
+    /// Pending invites share the users search box (same kind query) so a
+    /// typed email matches members and invitees together.
+    var filteredInvitations: [UserInvitationModel] {
+        cachedFilter(&invitationsFilterCache, kind: .users, source: invitationsState.loadedValue ?? []) {
+            [$0.email, $0.firstName, $0.lastName, ($0.roles ?? []).joined(separator: " ")]
+        }
+    }
+
     /// Row count after filtering, without the view needing to know which
     /// array backs the current kind (drives the header's "N of M").
+    /// Users includes pending invitations (same list, same search box).
     func filteredCount(for kind: Kind) -> Int {
         switch kind {
         case .devices: return filteredDevices.count
         case .certificates: return filteredCertificates.count
         case .bundleIds: return filteredBundleIds.count
         case .profiles: return filteredProfiles.count
-        case .users: return filteredUsers.count
+        case .users: return filteredUsers.count + filteredInvitations.count
         }
     }
 
@@ -268,21 +293,31 @@ final class ResourcesViewModel: ObservableObject {
         case .certificates: return certificatesState.loadedValue?.count ?? 0
         case .bundleIds: return bundleIdsState.loadedValue?.count ?? 0
         case .profiles: return profilesState.loadedValue?.count ?? 0
-        case .users: return usersState.loadedValue?.count ?? 0
+        case .users: return (usersState.loadedValue?.count ?? 0) + (invitationsState.loadedValue?.count ?? 0)
         }
     }
 
     // MARK: - Loading
 
     /// Loads a kind's first page once per team session; the Refresh
-    /// button refetches via retry(_:).
+    /// button refetches via retry(_:). Users drain ALL pages up front so
+    /// local search covers the whole team (a match on an unloaded page
+    /// would otherwise never surface).
     func load(_ kind: Kind) {
         if loadedKinds.contains(kind) { return }
-        fetchTasks[kind]?.cancel()
-        fetchTasks[kind] = Task { await fetch(kind) }
+        if kind == .users {
+            loadAllPages(kind)
+        } else {
+            fetchTasks[kind]?.cancel()
+            fetchTasks[kind] = Task { await fetch(kind) }
+        }
     }
 
     func retry(_ kind: Kind) {
+        if kind == .users {
+            loadAllPages(kind)
+            return
+        }
         fetchTasks[kind]?.cancel()
         fetchTasks[kind] = Task { await fetch(kind) }
     }
@@ -292,8 +327,40 @@ final class ResourcesViewModel: ObservableObject {
         // before the cancelled predecessor runs its defer, so the internal
         // guard would no-op the tap while leaving the first request killed.
         guard !cursor.isEmpty, !isPaginatingKinds.contains(kind) else { return }
+        // Users auto-drain: footer taps resume the drain from the current
+        // cursor instead of appending a single page.
+        if kind == .users {
+            loadAllPages(kind)
+            return
+        }
         fetchTasks[kind]?.cancel()
         fetchTasks[kind] = Task { await fetch(kind, cursor: cursor) }
+    }
+
+    /// Fetches every page for a kind, one after another. Sequential awaits
+    /// keep cursor epochs safe (no overlapping page requests) and each
+    /// fetch() carries its own cancellation/merge guards. Cancelling the
+    /// task stops the drain at a page boundary — the loaded rows stay.
+    func loadAllPages(_ kind: Kind) {
+        // A fresh drain owns its failure flag: a previous page failure
+        // must not wedge the loop below before its first fetch runs
+        // (each fetch re-arms the flag on failure).
+        paginationFailedKinds.remove(kind)
+        fetchTasks[kind]?.cancel()
+        fetchTasks[kind] = Task { await drainPages(kind) }
+    }
+
+    private func drainPages(_ kind: Kind) async {
+        if !loadedKinds.contains(kind) {
+            await fetch(kind)
+        }
+        // Stops on: last page (cursor nil), page failure (flag set —
+        // footer offers Retry, which resumes via loadMore), cancellation.
+        while let cursor = nextCursors[kind],
+              !paginationFailedKinds.contains(kind),
+              !Task.isCancelled {
+            await fetch(kind, cursor: cursor)
+        }
     }
 
     // MARK: - Fetch
@@ -327,6 +394,7 @@ final class ResourcesViewModel: ObservableObject {
         guard let request = APIClient.shared.getRequest(
             api: .get(name: kind.apiName, queryParams: queryParams), apiVersion: .v1) else {
             if !paginating {
+                nextCursors[kind] = nil
                 setError("No team selected. Add a team to load \(kind.displayName.lowercased()).", for: kind)
             }
             return
@@ -343,6 +411,9 @@ final class ResourcesViewModel: ObservableObject {
             if paginating {
                 paginationFailedKinds.insert(kind)
             } else {
+                // A failed first page invalidates any cursor from an older
+                // query epoch — the drain loop must not chase it.
+                nextCursors[kind] = nil
                 setError(friendlyMessage(for: error), for: kind)
             }
         }
@@ -410,6 +481,9 @@ final class ResourcesViewModel: ObservableObject {
     func resetForTeamSwitch() {
         for task in fetchTasks.values { task.cancel() }
         fetchTasks = [:]
+        invitationsFetchTask?.cancel()
+        invitationsFetchTask = nil
+        invitationsState = .idle
         loadedKinds = []
         devicesState = .idle
         certificatesState = .idle
@@ -631,6 +705,582 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
+    }
+
+    // MARK: - Bundle ID writes (Batch I, I2)
+    //
+    // POST /v1/bundleIds (identifier + name + platform required, seedId
+    // optional), PATCH /v1/bundleIds/{id} (name only), DELETE
+    // /v1/bundleIds/{id}. Same WriteResult contract as the Batch G writes.
+
+    /// POST /v1/bundleIds — register a bundle ID. On success the search
+    /// filter is cleared and the row is prepended (same as devices).
+    func createBundleId(name: String,
+                        identifier: String,
+                        platform: BundleIdPlatformOption,
+                        seedId: String?) async -> WriteResult {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSeedId = (seedId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the bundle ID.") }
+        guard !trimmedIdentifier.isEmpty else { return .failure("Enter the bundle identifier (e.g. com.example.app).") }
+        guard !isWriteInFlight(Self.createBundleIdKey) else { return .ignored }
+        writeInFlight.insert(Self.createBundleIdKey)
+        defer { writeInFlight.remove(Self.createBundleIdKey) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(BundleIdCreateRequest(
+            data: BundleIdCreateData(
+                attributes: BundleIdCreateAttributes(
+                    name: trimmedName,
+                    identifier: trimmedIdentifier,
+                    platform: platform.rawValue,
+                    seedId: trimmedSeedId.isEmpty ? nil : trimmedSeedId
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .getBundleIds, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the bundle ID request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(BundleIdModel.self, from: responseData)
+            prependBundleId(model)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to create bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// PATCH /v1/bundleIds/{id} — rename only (the server exposes no other
+    /// updatable attribute).
+    func renameBundleId(_ bundleId: BundleIdModel, newName: String) async -> WriteResult {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the bundle ID.") }
+        guard !isWriteInFlight(bundleId.id) else { return .ignored }
+        writeInFlight.insert(bundleId.id)
+        defer { writeInFlight.remove(bundleId.id) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(BundleIdUpdateRequest(
+            data: BundleIdUpdateData(
+                id: bundleId.id,
+                attributes: BundleIdUpdateAttributes(name: trimmedName)
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .getBundleIds, body: data, path: bundleId.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the rename request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(BundleIdModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, pagination) since the rename started.
+            guard case .loaded(var bundleIds) = bundleIdsState,
+                  let index = bundleIds.firstIndex(where: { $0.id == bundleId.id }) else { return .ignored }
+            bundleIds[index] = model
+            bundleIdsState = .loaded(bundleIds)
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to rename bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/bundleIds/{id}. The row is dropped locally on 204;
+    /// callers must confirm first (destructive, cannot be undone).
+    func deleteBundleId(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getBundleIds, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the delete request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var bundleIds) = bundleIdsState,
+                  let index = bundleIds.firstIndex(where: { $0.id == id }) else { return .ignored }
+            bundleIds.remove(at: index)
+            bundleIdsState = bundleIds.isEmpty ? .empty : .loaded(bundleIds)
+            if let total = totals[.bundleIds] {
+                totals[.bundleIds] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to delete bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    // MARK: - User + invitation writes (Batch I, I3)
+    //
+    // POST /v1/userInvitations (invite), PATCH /v1/users/{id} (roles),
+    // DELETE /v1/users/{id} (remove), resend = find pending invite by
+    // email → DELETE /v1/userInvitations/{id} → re-POST (no dedicated
+    // resend endpoint exists). Same WriteResult contract as above.
+    // Removing users needs an Admin key — a TestFlight-only key 403s,
+    // hence the write-specific hint.
+
+    /// POST /v1/userInvitations — invite a team member. Success carries no
+    /// local list mutation: pending invitees don't appear in /users until
+    /// they accept, so there is no row to prepend. Pass app ids to scope
+    /// a single-app invite (allAppsVisible == false); empty = all apps.
+    func inviteUser(email: String,
+                    firstName: String,
+                    lastName: String,
+                    roles: Set<UserRoleOption>,
+                    allAppsVisible: Bool,
+                    provisioningAllowed: Bool,
+                    visibleAppIds: [String] = []) async -> WriteResult {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedFirst = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLast = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
+            return .failure("Enter a valid email address.")
+        }
+        guard !trimmedFirst.isEmpty else { return .failure("Enter the invitee's first name.") }
+        guard !trimmedLast.isEmpty else { return .failure("Enter the invitee's last name.") }
+        guard !roles.isEmpty else { return .failure("Pick at least one role.") }
+        if !allAppsVisible, visibleAppIds.isEmpty {
+            return .failure("Pick at least one app this user can access, or turn on \"All apps visible\".")
+        }
+        guard !isWriteInFlight(Self.inviteUserKey) else { return .ignored }
+        writeInFlight.insert(Self.inviteUserKey)
+        defer { writeInFlight.remove(Self.inviteUserKey) }
+
+        guard let request = invitationCreateRequest(
+            email: trimmedEmail,
+            firstName: trimmedFirst,
+            lastName: trimmedLast,
+            roles: roles.map(\.rawValue),
+            allAppsVisible: allAppsVisible,
+            provisioningAllowed: provisioningAllowed,
+            visibleAppIds: visibleAppIds) else {
+            return .failure("Couldn't build the invite request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            loadInvitations()
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to invite user: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// Resend an invitation: find the pending invite by email, delete it,
+    /// then re-create with the supplied details. Roles pass through as
+    /// raw strings so a role this client doesn't recognize is preserved
+    /// verbatim instead of being silently dropped. App-scoped invites
+    /// (allAppsVisible == false) are blocked: the pending invite's
+    /// visibleApps ids aren't reconstructable without an extra
+    /// include=visibleApps fetch, and recreating without them would
+    /// silently mis-scope the invite — revoke + new invite instead.
+    func resendInvitation(email: String,
+                          firstName: String,
+                          lastName: String,
+                          roles: [String],
+                          allAppsVisible: Bool,
+                          provisioningAllowed: Bool) async -> WriteResult {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
+            return .failure("Enter a valid email address.")
+        }
+        guard !allAppsVisible else {
+            return .failure("This invite is scoped to specific apps. Revoke it and send a new invite with the app picker instead.")
+        }
+        guard !roles.isEmpty else { return .failure("The invitation has no roles to re-create.") }
+        let resendKey = "resend-invitation-\(trimmedEmail.lowercased())"
+        guard !isWriteInFlight(resendKey) else { return .ignored }
+        writeInFlight.insert(resendKey)
+        defer { writeInFlight.remove(resendKey) }
+
+        do {
+            guard let pendingId = try await pendingInvitationId(forEmail: trimmedEmail) else {
+                return .failure("No pending invitation for \(trimmedEmail) — send a new invite instead.")
+            }
+            guard !Task.isCancelled else { return .ignored }
+            guard let deleteRequest = APIClient.shared.getRequest(
+                api: .delete(name: .userInvitations, path: pendingId),
+                apiVersion: .v1) else {
+                return .failure("Couldn't build the resend request.")
+            }
+            _ = try await APIClient.shared.callAPI(with: deleteRequest)
+            guard !Task.isCancelled else { return .ignored }
+            var inviteRevoked = true
+            defer {
+                // The delete already happened — the list must reflect
+                // reality no matter how the re-create goes.
+                if inviteRevoked { loadInvitations() }
+            }
+            guard let createRequest = invitationCreateRequest(
+                email: trimmedEmail,
+                firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines),
+                lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines),
+                roles: roles,
+                allAppsVisible: allAppsVisible,
+                provisioningAllowed: provisioningAllowed,
+                visibleAppIds: []) else {
+                return .failure("The old invite was revoked, but the new one couldn't be built — send a fresh invite.")
+            }
+            do {
+                _ = try await APIClient.shared.callAPI(with: createRequest)
+            } catch {
+                guard !Task.isCancelled else { return .ignored }
+                resourcesLogger.error("Failed to re-create invitation: \(error.localizedDescription)")
+                return .failure("\(writeErrorMessage(for: error)) The previous invite was revoked — send a fresh invite.")
+            }
+            guard !Task.isCancelled else { return .ignored }
+            inviteRevoked = false
+            loadInvitations()
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to resend invitation: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/userInvitations?filter[email]=… — the pending invite id for
+    /// an email, or nil when none is pending. Ephemeral lookup: no list
+    /// state, the caller owns what happens next.
+    func loadInvitations() {
+        invitationsFetchTask?.cancel()
+        invitationsFetchTask = Task { await fetchInvitations() }
+    }
+
+    private func fetchInvitations() async {
+        guard !Task.isCancelled else { return }
+        invitationsState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .userInvitations,
+                      queryParams: ["sort": "email", "limit": "200"]),
+            apiVersion: .v1) else {
+            invitationsState = .error("No team selected. Add a team to load invitations.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
+            invitationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            // Loaded rows changed — invalidate the shared users filter cache.
+            dataVersion += 1
+        } catch {
+            guard !Task.isCancelled else { return }
+            resourcesLogger.error("Failed to load invitations: \(error.localizedDescription)")
+            invitationsState = .error(friendlyMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/userInvitations/{id} — revoke a pending invite. The row
+    /// is dropped locally on 204; callers must confirm first.
+    func revokeInvitation(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .userInvitations, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the revoke request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            guard case .loaded(var invitations) = invitationsState,
+                  let index = invitations.firstIndex(where: { $0.id == id }) else { return .ignored }
+            invitations.remove(at: index)
+            invitationsState = invitations.isEmpty ? .empty : .loaded(invitations)
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to revoke invitation: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    private func pendingInvitationId(forEmail email: String) async throws -> String? {
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .userInvitations,
+                      queryParams: ["filter[email]": email, "limit": "1"]),
+            apiVersion: .v1) else {
+            throw APIError.requestFailed
+        }
+        let data = try await APIClient.shared.callAPI(with: request)
+        guard !Task.isCancelled else { return nil }
+        let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
+        return model.data.first?.id
+    }
+
+    private func invitationCreateRequest(email: String,
+                                         firstName: String,
+                                         lastName: String,
+                                         roles: [String],
+                                         allAppsVisible: Bool,
+                                         provisioningAllowed: Bool,
+                                         visibleAppIds: [String]) -> URLRequest? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        // Roles pass through as raw strings (deduped, sorted) so callers
+        // can preserve role values this client doesn't recognize.
+        guard !firstName.isEmpty, !lastName.isEmpty, !roles.isEmpty,
+              let data = try? encoder.encode(UserInvitationCreateRequest(
+                data: UserInvitationCreateData(
+                    attributes: UserInvitationCreateAttributes(
+                        email: email,
+                        firstName: firstName,
+                        lastName: lastName,
+                        roles: Array(Set(roles)).sorted(),
+                        allAppsVisible: allAppsVisible,
+                        provisioningAllowed: provisioningAllowed
+                    ),
+                    relationships: visibleAppIds.isEmpty ? nil : UserInvitationCreateRelationships(
+                        visibleApps: UserInvitationVisibleAppsRelationship(
+                            data: visibleAppIds.map { UserInvitationAppRef(id: $0) }
+                        )
+                    )
+                )
+              )) else {
+            return nil
+        }
+        return APIClient.shared.getRequest(
+            api: .post(name: .userInvitations, body: data),
+            apiVersion: .v1)
+    }
+
+    /// PATCH /v1/users/{id} — replace the user's roles. Roles the client
+    /// can't parse (a future Apple role) are preserved verbatim and
+    /// unioned into the outgoing array — editing one role must never
+    /// silently strip another.
+    func updateUserRoles(_ user: UserModel, roles: Set<UserRoleOption>) async -> WriteResult {
+        guard !roles.isEmpty else { return .failure("Pick at least one role.") }
+        guard !isWriteInFlight(user.id) else { return .ignored }
+        writeInFlight.insert(user.id)
+        defer { writeInFlight.remove(user.id) }
+
+        let knownRoles = Set(roles.map(\.rawValue))
+        // Unrecognized raw roles ride along untouched.
+        let outgoingRoles = Array(knownRoles.union((user.roles ?? []).filter { !knownRoles.contains($0) })).sorted()
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(UserUpdateRequest(
+            data: UserUpdateData(
+                id: user.id,
+                attributes: UserUpdateAttributes(roles: outgoingRoles)
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .getUsers, body: data, path: user.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the role update request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(UserModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, pagination) since the edit started.
+            guard case .loaded(var users) = usersState,
+                  let index = users.firstIndex(where: { $0.id == user.id }) else { return .ignored }
+            users[index] = model
+            usersState = .loaded(users)
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to update user roles: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/users/{id} — remove a team member. The row is dropped
+    /// locally on 204; callers must confirm first (destructive). May 403
+    /// on a non-Admin key — the permissions hint surfaces, not a raw error.
+    func removeUser(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getUsers, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the remove request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var users) = usersState,
+                  let index = users.firstIndex(where: { $0.id == id }) else { return .ignored }
+            users.remove(at: index)
+            usersState = users.isEmpty ? .empty : .loaded(users)
+            if let total = totals[.users] {
+                totals[.users] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to remove user: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    // MARK: - Provisioning profile writes (Batch I, I4)
+    //
+    // POST /v1/profiles (name + profileType + bundleId/certificates/devices
+    // relationships), DELETE /v1/profiles/{id}. Same WriteResult contract
+    // as above. Pickers read the already-loaded devices/certificates/
+    // bundleIds lists — no new fetch paths.
+
+    /// POST /v1/profiles — create a provisioning profile. Certificates are
+    /// required server-side; devices are required server-side only for
+    /// development/adhoc types (omitted from the body when empty).
+    func createProfile(name: String,
+                       profileType: ProfileTypeOption,
+                       bundleIdId: String?,
+                       certificateIds: Set<String>,
+                       deviceIds: Set<String>) async -> WriteResult {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the profile.") }
+        guard let bundleIdId, !bundleIdId.isEmpty else {
+            return .failure("Pick the bundle ID this profile is for.")
+        }
+        guard !certificateIds.isEmpty else { return .failure("Pick at least one certificate.") }
+        guard !isWriteInFlight(Self.createProfileKey) else { return .ignored }
+        writeInFlight.insert(Self.createProfileKey)
+        defer { writeInFlight.remove(Self.createProfileKey) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(ProfileCreateRequest(
+            data: ProfileCreateData(
+                attributes: ProfileCreateAttributes(
+                    name: trimmedName,
+                    profileType: profileType.rawValue
+                ),
+                relationships: ProfileCreateRelationships(
+                    bundleId: ProfileCreateSingleRelationship(
+                        data: ProfileCreateRef(type: "bundleIds", id: bundleIdId)
+                    ),
+                    certificates: ProfileCreateArrayRelationship(
+                        data: certificateIds.sorted().map { ProfileCreateRef(type: "certificates", id: $0) }
+                    ),
+                    devices: deviceIds.isEmpty ? nil : ProfileCreateArrayRelationship(
+                        data: deviceIds.sorted().map { ProfileCreateRef(type: "devices", id: $0) }
+                    )
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .getProfiles, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the profile request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(ProfileModel.self, from: responseData)
+            prependProfile(model)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to create profile: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/profiles/{id}. The row is dropped locally on 204;
+    /// callers must confirm first (destructive, cannot be undone).
+    func deleteProfile(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getProfiles, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the delete request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var profiles) = profilesState,
+                  let index = profiles.firstIndex(where: { $0.id == id }) else { return .ignored }
+            profiles.remove(at: index)
+            profilesState = profiles.isEmpty ? .empty : .loaded(profiles)
+            if let total = totals[.profiles] {
+                totals[.profiles] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to delete profile: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    private func prependProfile(_ model: ProfileModel) {
+        guard case .loaded(var profiles) = profilesState else {
+            retry(.profiles)
+            return
+        }
+        profiles.removeAll { $0.id == model.id }
+        profiles.insert(model, at: 0)
+        profilesState = .loaded(profiles)
+        if let total = totals[.profiles] {
+            totals[.profiles] = total + 1
+        }
+        searchTexts[.profiles] = nil
+        dataVersion += 1
+    }
+
+    private func prependBundleId(_ model: BundleIdModel) {
+        guard case .loaded(var bundleIds) = bundleIdsState else {
+            retry(.bundleIds)
+            return
+        }
+        bundleIds.removeAll { $0.id == model.id }
+        bundleIds.insert(model, at: 0)
+        bundleIdsState = .loaded(bundleIds)
+        if let total = totals[.bundleIds] {
+            totals[.bundleIds] = total + 1
+        }
+        searchTexts[.bundleIds] = nil
+        dataVersion += 1
     }
 
     /// Prepends only when the list is loaded — otherwise a failed/idle

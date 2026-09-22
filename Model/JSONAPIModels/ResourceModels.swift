@@ -226,3 +226,241 @@ struct CertificateCreateAttributes: Encodable {
     var csrContent: String
     var certificateType: String
 }
+
+// MARK: - Batch I (I2): bundle ID writes
+//
+// Bodies verified against Apple's OpenAPI spec (EvanBacon mirror of the
+// official spec):
+// - POST /v1/bundleIds: attributes identifier + name + platform (all
+//   required), seedId optional. Platform enum is BundleIdPlatform:
+//   IOS, MAC_OS (no UNIVERSAL — that's device-only in practice).
+// - PATCH /v1/bundleIds/{id}: attributes name only ("Modify a bundle id:
+//   Update a specific bundle ID's name" — Apple docs).
+// - DELETE /v1/bundleIds/{id}: delete (204, no body).
+// Writes need an API key with an elevated role (Admin/Account Holder for
+// provisioning); a TestFlight-only key 403s.
+
+/// Bundle ID platform values (spec enum BundleIdPlatform).
+enum BundleIdPlatformOption: String, CaseIterable {
+    case IOS
+    case MAC_OS
+
+    /// Explicit mapping: derived `.capitalized` would render "Ios" /
+    /// "Mac Os". Two stable cases, same precedent as DevicePlatform.
+    var displayName: String {
+        switch self {
+        case .IOS: return "iOS"
+        case .MAC_OS: return "macOS"
+        }
+    }
+}
+
+struct BundleIdCreateRequest: Encodable {
+    var data: BundleIdCreateData
+}
+
+struct BundleIdCreateData: Encodable {
+    var type = "bundleIds"
+    var attributes: BundleIdCreateAttributes
+}
+
+struct BundleIdCreateAttributes: Encodable {
+    var name: String
+    var identifier: String
+    var platform: String
+    /// Optional team seed id; nil is omitted from the body (encodeIfPresent).
+    var seedId: String?
+}
+
+struct BundleIdUpdateRequest: Encodable {
+    var data: BundleIdUpdateData
+}
+
+struct BundleIdUpdateData: Encodable {
+    var type = "bundleIds"
+    var id: String
+    var attributes: BundleIdUpdateAttributes
+}
+
+struct BundleIdUpdateAttributes: Encodable {
+    var name: String
+}
+
+// MARK: - Batch I (I3): user + invitation writes
+//
+// Shapes verified against Apple's OpenAPI spec (EvanBacon mirror):
+// - UserRole enum (11 values): ADMIN, FINANCE, TECHNICAL, ACCOUNT_HOLDER,
+//   READ_ONLY, SALES, MARKETING, APP_MANAGER, DEVELOPER, ACCESS_TO_REPORTS,
+//   CUSTOMER_SUPPORT.
+// - PATCH /v1/users/{id}: attributes roles/allAppsVisible/provisioningAllowed
+//   (all optional); DELETE /v1/users/{id} removes the user (204).
+// - POST /v1/userInvitations: attributes email + firstName + lastName +
+//   roles (all required), allAppsVisible/provisioningAllowed optional.
+// - GET /v1/userInvitations supports filter[email] (used by resend: find
+//   the pending invite, delete it, re-create). There is no dedicated
+//   resend endpoint.
+// Writes need an Admin/Account Holder key; a TestFlight-only key 403s.
+
+/// User roles (spec enum UserRole). Raw values are the wire form.
+enum UserRoleOption: String, CaseIterable {
+    case ADMIN
+    case FINANCE
+    case TECHNICAL
+    case ACCOUNT_HOLDER
+    case READ_ONLY
+    case SALES
+    case MARKETING
+    case APP_MANAGER
+    case DEVELOPER
+    case ACCESS_TO_REPORTS
+    case CUSTOMER_SUPPORT
+
+    /// SNAKE_CASE → title case ("APP_MANAGER" → "App Manager"). Derived so
+    /// new enum values render sanely; "To" is lowercased to read naturally.
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+            .replacingOccurrences(of: " To ", with: " to ")
+    }
+}
+
+@ResourceWrapper(type: "userInvitations")
+struct UserInvitationModel: Equatable {
+    static func == (lhs: UserInvitationModel, rhs: UserInvitationModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var email: String?
+    @ResourceAttribute var firstName: String?
+    @ResourceAttribute var lastName: String?
+    @ResourceAttribute var expirationDate: String?
+    @ResourceAttribute var roles: [String]?
+    @ResourceAttribute var allAppsVisible: Bool?
+    @ResourceAttribute var provisioningAllowed: Bool?
+}
+
+typealias UserInvitationsDocument = CompoundDocument<[UserInvitationModel], Meta>
+
+struct UserUpdateRequest: Encodable {
+    var data: UserUpdateData
+}
+
+struct UserUpdateData: Encodable {
+    var type = "users"
+    var id: String
+    var attributes: UserUpdateAttributes
+}
+
+struct UserUpdateAttributes: Encodable {
+    var roles: [String]
+}
+
+struct UserInvitationCreateRequest: Encodable {
+    var data: UserInvitationCreateData
+}
+
+struct UserInvitationCreateData: Encodable {
+    var type = "userInvitations"
+    var attributes: UserInvitationCreateAttributes
+    /// Present only for single-app invites (allAppsVisible == false).
+    var relationships: UserInvitationCreateRelationships?
+}
+
+struct UserInvitationCreateRelationships: Encodable {
+    var visibleApps: UserInvitationVisibleAppsRelationship
+}
+
+struct UserInvitationVisibleAppsRelationship: Encodable {
+    var data: [UserInvitationAppRef]
+}
+
+struct UserInvitationAppRef: Encodable {
+    var type = "apps"
+    var id: String
+}
+
+struct UserInvitationCreateAttributes: Encodable {
+    var email: String
+    var firstName: String
+    var lastName: String
+    var roles: [String]
+    var allAppsVisible: Bool
+    var provisioningAllowed: Bool
+}
+
+// MARK: - Batch I (I4): provisioning profile writes
+//
+// Body verified against Apple's OpenAPI spec (EvanBacon mirror):
+// - POST /v1/profiles: attributes name + profileType (both required);
+//   relationships bundleId (single, required) + certificates (array,
+//   required) + devices (array, optional — required server-side only for
+//   development/adhoc types).
+// - DELETE /v1/profiles/{id} (204, no body).
+// Writes need an Admin/Account Holder key; a TestFlight-only key 403s.
+
+/// Profile types (spec enum on ProfileCreateRequest attributes, 14 values).
+enum ProfileTypeOption: String, CaseIterable {
+    case IOS_APP_DEVELOPMENT
+    case IOS_APP_STORE
+    case IOS_APP_ADHOC
+    case IOS_APP_INHOUSE
+    case MAC_APP_DEVELOPMENT
+    case MAC_APP_STORE
+    case MAC_APP_DIRECT
+    case TVOS_APP_DEVELOPMENT
+    case TVOS_APP_STORE
+    case TVOS_APP_ADHOC
+    case TVOS_APP_INHOUSE
+    case MAC_CATALYST_APP_DEVELOPMENT
+    case MAC_CATALYST_APP_STORE
+    case MAC_CATALYST_APP_DIRECT
+
+    /// SNAKE_CASE → title case ("IOS_APP_ADHOC" → "iOS App Adhoc").
+    /// Derived so new enum values render sanely without touching this.
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+            .replacingOccurrences(of: "Ios", with: "iOS")
+            .replacingOccurrences(of: "Tvos", with: "tvOS")
+    }
+}
+
+struct ProfileCreateRequest: Encodable {
+    var data: ProfileCreateData
+}
+
+struct ProfileCreateData: Encodable {
+    var type = "profiles"
+    var attributes: ProfileCreateAttributes
+    var relationships: ProfileCreateRelationships
+}
+
+struct ProfileCreateAttributes: Encodable {
+    var name: String
+    var profileType: String
+}
+
+struct ProfileCreateRelationships: Encodable {
+    var bundleId: ProfileCreateSingleRelationship
+    var certificates: ProfileCreateArrayRelationship
+    /// Omitted when empty (encodeIfPresent) — optional server-side except
+    /// for development/adhoc types, where the server rejects the create.
+    var devices: ProfileCreateArrayRelationship?
+}
+
+struct ProfileCreateSingleRelationship: Encodable {
+    var data: ProfileCreateRef
+}
+
+struct ProfileCreateArrayRelationship: Encodable {
+    var data: [ProfileCreateRef]
+}
+
+struct ProfileCreateRef: Encodable {
+    var type: String
+    var id: String
+}

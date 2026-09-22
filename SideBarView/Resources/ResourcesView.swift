@@ -28,14 +28,47 @@ import AppKit
 /// Sidebar section listing the five team-scoped resource kinds.
 struct ResourcesSectionView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for the single-app invite picker — threaded from the
+    /// sidebar's already-loaded list, no extra fetch.
+    var apps: [AppsData] = []
     // Starts expanded — one less tap to reach the five resource rows
     // (intentional Batch F default, confirmed in review).
     @State private var isExpanded = true
     @State private var selectedKind: ResourcesViewModel.Kind?
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(spacing: 2) {
+        VStack(spacing: 2) {
+            // Button (not .onTapGesture) so the header is keyboard- and
+            // VoiceOver-actionable; full-width contentShape so gaps
+            // between subviews still hit. Standard macOS chevron: down
+            // when collapsed, up when expanded.
+            Button {
+                withAnimation {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Image(systemName: "shippingbox")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("Resources")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("Team-wide")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Resources")
+            .accessibilityHint(isExpanded ? "Collapses the resources section" : "Expands the resources section")
+            .accessibilityAddTraits(.isHeader)
+            if isExpanded {
                 ForEach(ResourcesViewModel.Kind.allCases) { kind in
                     Button {
                         selectedKind = kind
@@ -61,23 +94,11 @@ struct ResourcesSectionView: View {
                     .accessibilityLabel("Open \(kind.displayName)")
                 }
             }
-            .padding(.top, 2)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "shippingbox")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text("Resources")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text("Team-wide")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
         }
+        .padding(.top, 2)
+        
         .sheet(item: $selectedKind) { kind in
-            ResourceListContentView(kind: kind, viewModel: viewModel)
+            ResourceListContentView(kind: kind, viewModel: viewModel, apps: apps)
         }
     }
 }
@@ -86,10 +107,18 @@ struct ResourcesSectionView: View {
 struct ResourceListContentView: View {
     let kind: ResourcesViewModel.Kind
     @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for the single-app invite picker.
+    var apps: [AppsData] = []
     @Environment(\.dismiss) private var dismiss
     // Batch G (#10): write forms toggle from the header.
     @State private var showRegisterDeviceForm = false
     @State private var showCreateCertificateForm = false
+    // Batch I (I2): bundle ID create form toggles from the header.
+    @State private var showCreateBundleIdForm = false
+    // Batch I (I3): user invite form toggles from the header.
+    @State private var showInviteUserForm = false
+    // Batch I (I4): profile create form toggles from the header.
+    @State private var showCreateProfileForm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -107,6 +136,24 @@ struct ResourceListContentView: View {
                 }
                 Divider()
             }
+            if kind == .bundleIds, showCreateBundleIdForm {
+                CreateBundleIdForm(viewModel: viewModel) {
+                    showCreateBundleIdForm = false
+                }
+                Divider()
+            }
+            if kind == .users, showInviteUserForm {
+                InviteUserForm(viewModel: viewModel, apps: apps) {
+                    showInviteUserForm = false
+                }
+                Divider()
+            }
+            if kind == .profiles, showCreateProfileForm {
+                CreateProfileForm(viewModel: viewModel) {
+                    showCreateProfileForm = false
+                }
+                Divider()
+            }
             content
         }
         // min→max ranges make the sheet window resizable; the screen-
@@ -118,6 +165,9 @@ struct ResourceListContentView: View {
                minHeight: 420, idealHeight: 560, maxHeight: maxSheetHeight)
         .onAppear {
             viewModel.load(kind)
+            if kind == .users {
+                viewModel.loadInvitations()
+            }
         }
     }
 
@@ -179,6 +229,36 @@ struct ResourceListContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Create a certificate")
+            }
+            if kind == .bundleIds {
+                Button {
+                    showCreateBundleIdForm.toggle()
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Register a bundle ID")
+            }
+            if kind == .users {
+                Button {
+                    showInviteUserForm.toggle()
+                } label: {
+                    Label("Invite", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Invite a user")
+            }
+            if kind == .profiles {
+                Button {
+                    showCreateProfileForm.toggle()
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Create a provisioning profile")
             }
             Button {
                 dismiss()
@@ -253,8 +333,11 @@ struct ResourceListContentView: View {
                 // Pinned outside the ScrollView (same as the Builds tab's
                 // "Load More Builds"): an inline footer scrolls away with
                 // the rows, so Load-more seemed to disappear after
-                // scrolling.
-                paginationFooter
+                // scrolling. Hidden while the invite form is open — the
+                // footer belongs to the list, not the form.
+                if !(kind == .users && showInviteUserForm) {
+                    paginationFooter
+                }
             }
         }
     }
@@ -342,15 +425,34 @@ struct ResourceListContentView: View {
             }
         case .bundleIds:
             ForEach(viewModel.filteredBundleIds, id: \.id) { bundleId in
-                BundleIdRow(bundleId: bundleId)
+                BundleIdRow(bundleId: bundleId, viewModel: viewModel)
             }
         case .profiles:
             ForEach(viewModel.filteredProfiles, id: \.id) { profile in
-                ProfileRow(profile: profile)
+                ProfileRow(profile: profile, viewModel: viewModel)
             }
         case .users:
+            // Pending (unaccepted) invites render first, then accepted
+            // users — no separate section. A failed invites fetch
+            // surfaces as a retry row so it never blocks the users list.
+            ForEach(viewModel.filteredInvitations, id: \.id) { invitation in
+                InvitationRow(invitation: invitation, viewModel: viewModel)
+            }
             ForEach(viewModel.filteredUsers, id: \.id) { user in
-                UserRow(user: user)
+                UserRow(user: user, viewModel: viewModel)
+            }
+            if case .error(let message) = viewModel.invitationsState {
+                HStack {
+                    Text("Couldn't load pending invitations: \(message)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry") { viewModel.loadInvitations() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
             }
         }
     }
@@ -378,6 +480,14 @@ struct ResourceListContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                    } else if kind == .users && viewModel.isPaginatingKinds.contains(kind) {
+                        // Users auto-drain: show progress, not a dead button
+                        // (taps during the drain are ignored by the guard).
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Loading all users… (\(viewModel.loadedCount(for: kind)) so far)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     } else {
                         Button("Load more") {
                             viewModel.loadMore(kind, cursor: nextCursor)
@@ -583,6 +693,614 @@ private struct CreateCertificateForm: View {
     }
 }
 
+/// POST /v1/bundleIds — name, identifier and platform are required;
+/// seedId is optional. Needs an Admin key role; a TestFlight-only key 403s.
+private struct CreateBundleIdForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: () -> Void
+    @State private var name = ""
+    @State private var identifier = ""
+    @State private var platform: BundleIdPlatformOption = .IOS
+    @State private var seedId = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("New Bundle ID")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+                .disabled(isSaving)
+            TextField("Bundle identifier (e.g. com.example.app)", text: $identifier)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                .disabled(isSaving)
+            HStack {
+                Picker("Platform", selection: $platform) {
+                    ForEach(BundleIdPlatformOption.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 200)
+                .disabled(isSaving)
+                Spacer()
+            }
+            TextField("Seed ID (optional)", text: $seedId)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                .disabled(isSaving)
+            Text("Test on a throwaway identifier first. Needs an API key with the Admin role.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    .disabled(isSaving)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Create") {
+                        Task { @MainActor in
+                            isSaving = true
+                            defer { isSaving = false }
+                            let result = await viewModel.createBundleId(
+                                name: name,
+                                identifier: identifier,
+                                platform: platform,
+                                seedId: seedId)
+                            if case .success = result {
+                                onDone()
+                            } else if case .failure(let message) = result {
+                                // .ignored: duplicate in flight / cancelled —
+                                // keep the form open, nothing was created.
+                                errorMessage = message
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// Inline multi-select for user roles — used by the per-row role editor
+/// (tighter space than the dropdown, same UserRoleOption source so the
+/// two can't drift).
+private struct RoleMultiSelect: View {
+    @Binding var selection: Set<UserRoleOption>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(UserRoleOption.allCases, id: \.self) { role in
+                Toggle(role.displayName, isOn: Binding(
+                    get: { selection.contains(role) },
+                    set: { isOn in
+                        if isOn { selection.insert(role) } else { selection.remove(role) }
+                    }
+                ))
+                .toggleStyle(.checkbox)
+                .font(.subheadline)
+            }
+        }
+    }
+}
+
+/// Dropdown multi-select for user roles — a Menu of checkable items so
+/// eleven roles don't stretch the invite form.
+private struct RoleDropdownMenu: View {
+    @Binding var selection: Set<UserRoleOption>
+
+    private var label: String {
+        switch selection.count {
+        case 0: return "Select roles"
+        case 1: return selection.first?.displayName ?? "Select roles"
+        default: return "\(selection.count) roles selected"
+        }
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(UserRoleOption.allCases, id: \.self) { role in
+                Toggle(role.displayName, isOn: Binding(
+                    get: { selection.contains(role) },
+                    set: { isOn in
+                        if isOn { selection.insert(role) } else { selection.remove(role) }
+                    }
+                ))
+            }
+        } label: {
+            Text(label)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color(nsColor: .textBackgroundColor))
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+/// POST /v1/userInvitations — email, names and at least one role are
+/// required. Resend re-issues a pending invite with the form's details
+/// (find by email → delete → re-create; no dedicated resend endpoint).
+/// Needs an Admin key role; a TestFlight-only key 403s.
+private struct InviteUserForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for single-app invites (allAppsVisible == false).
+    var apps: [AppsData] = []
+    var onDone: () -> Void
+    @State private var email = ""
+    @State private var firstName = ""
+    @State private var lastName = ""
+    @State private var roles: Set<UserRoleOption> = [.DEVELOPER]
+    @State private var allAppsVisible = true
+    @State private var selectedAppIds: Set<String> = []
+    @State private var provisioningAllowed = false
+    @State private var isSaving = false
+    @State private var isResending = false
+    @State private var errorMessage: String?
+    @State private var noticeMessage: String?
+
+    private var isBusy: Bool { isSaving || isResending }
+
+    /// App ids for the invite body: empty = all apps.
+    private var visibleAppIds: [String] {
+        guard !allAppsVisible else { return [] }
+        return selectedAppIds.sorted()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Invite User")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            TextField("Email", text: $email)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+                .disabled(isBusy)
+            HStack(spacing: 8) {
+                TextField("First name", text: $firstName)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.subheadline)
+                    .disabled(isBusy)
+                TextField("Last name", text: $lastName)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.subheadline)
+                    .disabled(isBusy)
+            }
+            Text("Roles")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            RoleDropdownMenu(selection: $roles)
+                .disabled(isBusy)
+            Toggle("All apps visible", isOn: $allAppsVisible)
+                .font(.subheadline)
+                .disabled(isBusy)
+                .onChange(of: allAppsVisible) { _, newValue in
+                    // Turning all-apps back on drops the per-app picks so
+                    // stale ids can never leak into an all-apps invite.
+                    if newValue { selectedAppIds = [] }
+                }
+            if !allAppsVisible {
+                ChecklistDropdownMenu(
+                    title: "Apps",
+                    items: apps.map { app in
+                        let name = app.name ?? app.bundleId ?? app.id
+                        return ChecklistDropdownMenu.Item(
+                            id: app.id,
+                            title: name,
+                            subtitle: app.name == nil ? nil : app.bundleId
+                        )
+                    },
+                    selection: $selectedAppIds,
+                    emptyHint: "No apps loaded — open the sidebar app list first so the picker has something to offer.",
+                    allowsSelectAll: true
+                )
+                .disabled(isBusy)
+            }
+            Toggle("Provisioning allowed", isOn: $provisioningAllowed)
+                .font(.subheadline)
+                .disabled(isBusy)
+            Text("Needs an API key with the Admin role. Invites count against the team member limit.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if let noticeMessage {
+                Text(noticeMessage)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    .disabled(isBusy)
+                Spacer()
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Resend") {
+                        Task { @MainActor in
+                            await runInvite(mode: .resend)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!canSubmit)
+                    .help("Re-issue the pending invite for this email")
+                    Button("Send Invite") {
+                        Task { @MainActor in
+                            await runInvite(mode: .send)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(!canSubmit)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private enum InviteMode {
+        case send
+        case resend
+    }
+
+    private var canSubmit: Bool {
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !lastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !roles.isEmpty
+            && (allAppsVisible || !selectedAppIds.isEmpty)
+    }
+
+    private func runInvite(mode: InviteMode) async {
+        if mode == .send { isSaving = true } else { isResending = true }
+        defer {
+            isSaving = false
+            isResending = false
+        }
+        errorMessage = nil
+        noticeMessage = nil
+        let result: ResourcesViewModel.WriteResult
+        switch mode {
+        case .send:
+            result = await viewModel.inviteUser(
+                email: email, firstName: firstName, lastName: lastName,
+                roles: roles, allAppsVisible: allAppsVisible,
+                provisioningAllowed: provisioningAllowed,
+                visibleAppIds: visibleAppIds)
+        case .resend:
+            result = await viewModel.resendInvitation(
+                email: email, firstName: firstName, lastName: lastName,
+                roles: roles.map(\.rawValue), allAppsVisible: allAppsVisible,
+                provisioningAllowed: provisioningAllowed)
+        }
+        switch result {
+        case .success:
+            // .ignored: duplicate in flight / cancelled — keep the form
+            // open, nothing was sent.
+            noticeMessage = mode == .send ? "Invitation sent." : "Invitation re-sent."
+            onDone()
+        case .failure(let message):
+            errorMessage = message
+        case .ignored:
+            break
+        }
+    }
+}
+
+/// POST /v1/profiles — name, type, bundle ID and at least one
+/// certificate; devices optional (required server-side only for
+/// development/adhoc types). Pickers read the lists the view model
+/// already fetched — opening one kind never refetches another.
+/// Needs an Admin key role; a TestFlight-only key 403s.
+private struct CreateProfileForm: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: () -> Void
+    @State private var name = ""
+    @State private var profileType: ProfileTypeOption = .IOS_APP_DEVELOPMENT
+    @State private var bundleIdId: String?
+    @State private var certificateIds: Set<String> = []
+    @State private var deviceIds: Set<String> = []
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var bundleIds: [BundleIdModel] { viewModel.bundleIdsState.loadedValue ?? [] }
+    private var certificates: [CertificateModel] { viewModel.certificatesState.loadedValue ?? [] }
+    private var devices: [DeviceModel] { viewModel.devicesState.loadedValue ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("New Provisioning Profile")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            TextField("Profile name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+                .disabled(isSaving)
+            Picker("Type", selection: $profileType) {
+                ForEach(ProfileTypeOption.allCases, id: \.self) { option in
+                    Text(option.displayName).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(isSaving)
+            Picker("Bundle ID", selection: $bundleIdId) {
+                Text("Select a bundle ID").tag(nil as String?)
+                ForEach(bundleIds, id: \.id) { bundleId in
+                    Text("\(bundleId.name ?? bundleId.identifier ?? bundleId.id) (\(bundleId.identifier ?? ""))")
+                        .tag(bundleId.id as String?)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(isSaving || bundleIds.isEmpty)
+            if bundleIds.isEmpty {
+                Text("No bundle IDs loaded — open Resources → Bundle IDs first so the picker has something to offer.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Text("Certificates (\(certificateIds.count) selected)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ChecklistDropdownMenu(
+                title: "Certificates",
+                items: certificates.map {
+                    ChecklistDropdownMenu.Item(
+                        id: $0.id,
+                        title: certificatePickerLabel($0),
+                        subtitle: nil
+                    )
+                },
+                selection: $certificateIds,
+                emptyHint: "No certificates loaded — open Resources → Certificates first.",
+                allowsSelectAll: true
+            )
+            .disabled(isSaving)
+            Text("Devices (\(deviceIds.count) selected, optional)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ChecklistDropdownMenu(
+                title: "Devices",
+                items: devices.map {
+                    ChecklistDropdownMenu.Item(
+                        id: $0.id,
+                        title: "\($0.name ?? $0.id) (\($0.udid ?? ""))",
+                        subtitle: nil
+                    )
+                },
+                selection: $deviceIds,
+                emptyHint: "No devices loaded — open Resources → Devices first.",
+                allowsSelectAll: true
+            )
+            .disabled(isSaving)
+            Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    .disabled(isSaving)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Create") {
+                        Task { @MainActor in
+                            isSaving = true
+                            defer { isSaving = false }
+                            let result = await viewModel.createProfile(
+                                name: name,
+                                profileType: profileType,
+                                bundleIdId: bundleIdId,
+                                certificateIds: certificateIds,
+                                deviceIds: deviceIds)
+                            if case .success = result {
+                                onDone()
+                            } else if case .failure(let message) = result {
+                                // .ignored: duplicate in flight / cancelled —
+                                // keep the form open, nothing was created.
+                                errorMessage = message
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || bundleIdId == nil
+                              || certificateIds.isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            // Relationship pickers reuse the existing fetches — load() is a
+            // no-op for kinds already loaded, so this never refetches.
+            // Relationship pickers reuse the existing fetches — but a
+            // first page alone silently truncates the picker on teams
+            // with >200 items, so the profile form drains ALL pages
+            // (loadAllPages is a no-op refetch guard when already loaded).
+            viewModel.loadAllPages(.bundleIds)
+            viewModel.loadAllPages(.certificates)
+            viewModel.loadAllPages(.devices)
+        }
+    }
+}
+
+/// Dropdown multi-select of checkable rows — compacts long picker lists
+/// (certificates, devices) so the create form fits the sheet instead of
+/// pushing its buttons and the list off-screen. Same styling as
+/// RoleDropdownMenu. Rows support a subtitle line (e.g. certificate
+/// expiry) so same-named items stay distinguishable.
+private struct ChecklistDropdownMenu: View {
+    struct Item: Hashable {
+        let id: String
+        let title: String
+        let subtitle: String?
+    }
+
+    let title: String
+    let items: [Item]
+    @Binding var selection: Set<String>
+    var emptyHint: String? = nil
+    /// When true, the menu opens with Select All / Clear actions on top
+    /// (mirrors the Apple Developer site's picker).
+    var allowsSelectAll = false
+
+    private var label: String {
+        switch selection.count {
+        case 0: return "\(title): none selected"
+        case 1: return "\(title): 1 selected"
+        default: return "\(title): \(selection.count) selected"
+        }
+    }
+
+    var body: some View {
+        if items.isEmpty {
+            Text(emptyHint ?? "Nothing loaded yet.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        } else {
+            Menu {
+                if allowsSelectAll {
+                    Button("Select All") {
+                        selection = Set(items.map(\.id))
+                    }
+                    Button("Clear") {
+                        selection = []
+                    }
+                    Divider()
+                }
+                ForEach(items, id: \.id) { item in
+                    Toggle(isOn: Binding(
+                        get: { selection.contains(item.id) },
+                        set: { isOn in
+                            if isOn { selection.insert(item.id) } else { selection.remove(item.id) }
+                        }
+                    )) {
+                        if let subtitle = item.subtitle {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.title)
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
+                            Text(item.title)
+                        }
+                    }
+                }
+            } label: {
+                Text(label)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .menuStyle(.borderlessButton)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+    }
+}
+
+/// Shared certificate expiry parsing — the row and the profile picker
+/// both render it. App Store Connect returns fractional seconds on some
+/// endpoints; the plain parser silently fails on those, so try it as a
+/// fallback.
+private let certificateExpiryParser = ISO8601DateFormatter()
+private let certificateExpiryParserFractional: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private let certificateExpiryDisplayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "MMM d, yyyy"
+    return formatter
+}()
+
+private func certificateExpiryDate(_ raw: String?) -> Date? {
+    guard let raw, !raw.isEmpty else { return nil }
+    return certificateExpiryParserFractional.date(from: raw) ?? certificateExpiryParser.date(from: raw)
+}
+
+/// "expires Feb 9, 2027" / "expired Feb 9, 2027" / nil when unknown —
+/// mirrors the Apple Developer site's certificate picker rows.
+private func certificateExpiryLabel(_ raw: String?) -> String? {
+    guard let date = certificateExpiryDate(raw) else { return nil }
+    let formatted = certificateExpiryDisplayFormatter.string(from: date)
+    return date < Date() ? "expired \(formatted)" : "expires \(formatted)"
+}
+
+/// Compact Dev/Prod tag for picker rows ("IOS_DEVELOPMENT" → "Dev").
+/// Anything else falls back to the raw type string.
+private func certificateTypeShort(_ raw: String?) -> String {
+    guard let raw else { return "Cert" }
+    if raw.contains("DEVELOPMENT") { return "Dev" }
+    if raw.contains("DISTRIBUTION") { return "Prod" }
+    return raw
+}
+
+/// One-line picker label: name · Dev/Prod · expiry. Compact by design —
+/// the dropdown menu sizes to content, so every extra line costs space.
+private func certificatePickerLabel(_ certificate: CertificateModel) -> String {
+    let name = certificate.displayName ?? certificate.name ?? certificate.id
+    let type = certificateTypeShort(certificate.certificateType)
+    let expiry = certificateExpiryLabel(certificate.expirationDate) ?? "expiry unknown"
+    return "\(name) · \(type) · \(expiry)"
+}
+
 // MARK: - Rows
 
 private struct DeviceRow: View {
@@ -663,19 +1381,9 @@ private struct CertificateRow: View {
 
     private var isBusy: Bool { viewModel.isWriteInFlight(certificate.id) }
 
-    private static let expiryParser = ISO8601DateFormatter()
-    /// App Store Connect returns fractional seconds on some endpoints;
-    /// the plain parser silently fails on those, so try it as a fallback.
-    private static let expiryParserFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
     private var isExpired: Bool {
-        guard let date = certificate.expirationDate else { return false }
-        let parsed = Self.expiryParserFractional.date(from: date) ?? Self.expiryParser.date(from: date)
-        return parsed.map { $0 < Date() } ?? false
+        guard let date = certificateExpiryDate(certificate.expirationDate) else { return false }
+        return date < Date()
     }
 
     var body: some View {
@@ -745,6 +1453,13 @@ private struct CertificateRow: View {
 
 private struct BundleIdRow: View {
     let bundleId: BundleIdModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var isRenaming = false
+    @State private var draftName = ""
+    @State private var showDeleteConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(bundleId.id) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -752,27 +1467,110 @@ private struct BundleIdRow: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(bundleId.name ?? "Unknown identifier")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                if isRenaming {
+                    TextField("Bundle ID name", text: $draftName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                        .disabled(isBusy)
+                } else {
+                    Text(bundleId.name ?? "Unknown identifier")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
                 Text(bundleId.identifier ?? "")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
-            Text(bundleId.platform ?? "")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(bundleId.platform ?? "")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if isRenaming {
+                    HStack(spacing: 6) {
+                        Button("Cancel") {
+                            isRenaming = false
+                            errorMessage = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(isBusy)
+                        if isBusy {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            Button("Save") {
+                                Task { @MainActor in
+                                    if case .failure(let message) = await viewModel.renameBundleId(
+                                        bundleId, newName: draftName) {
+                                        errorMessage = message
+                                    } else {
+                                        isRenaming = false
+                                        errorMessage = nil
+                                    }
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                } else if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    HStack(spacing: 6) {
+                        Button("Rename") {
+                            draftName = bundleId.name ?? ""
+                            errorMessage = nil
+                            isRenaming = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Rename \(bundleId.name ?? "bundle ID")")
+                        // Deleting is destructive — confirm first (same alert
+                        // pattern as CertificateRow's revoke).
+                        Button("Delete") { showDeleteConfirm = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Delete \(bundleId.name ?? "bundle ID")")
+                    }
+                }
+            }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Delete this bundle ID?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.deleteBundleId(id: bundleId.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("Profiles and capabilities using this identifier will break. This cannot be undone.")
+        }
     }
 }
 
 private struct ProfileRow: View {
     let profile: ProfileModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var showDeleteConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(profile.id) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -795,25 +1593,189 @@ private struct ProfileRow: View {
                 Text("Expires: \(profile.expirationDate ?? "—")")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(profile.profileType ?? "")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Text(profile.platform ?? "")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                // Deleting is destructive — confirm first (same alert
+                // pattern as CertificateRow's revoke).
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Delete") { showDeleteConfirm = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .foregroundColor(.red)
+                        .accessibilityLabel("Delete \(profile.name ?? "profile")")
+                }
             }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Delete this profile?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.deleteProfile(id: profile.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("Builds signed with this profile will fail to install. This cannot be undone.")
+        }
+    }
+}
+
+/// Shared role chips — one rendering for user rows and invitation rows
+/// so the two can't drift.
+private struct RoleChips: View {
+    let roles: [String]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(roles, id: \.self) { role in
+                Text(role)
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12))
+                    .cornerRadius(4)
+            }
+        }
+    }
+}
+
+/// A pending (unaccepted) team invitation: Resend re-issues it with its
+/// stored details, Revoke deletes it (confirm first). Failures stay
+/// inline; the row never disappears on failure.
+private struct InvitationRow: View {
+    let invitation: UserInvitationModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var isResending = false
+    @State private var showRevokeConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(invitation.id) || isResending }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "envelope")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(invitation.email ?? "Unknown email")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .textSelection(.enabled)
+                    Text("Pending")
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.12))
+                        .cornerRadius(4)
+                }
+                Text("\(invitation.firstName ?? "") \(invitation.lastName ?? "")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                RoleChips(roles: invitation.roles ?? [])
+                if let expirationDate = invitation.expirationDate {
+                    Text("Expires: \(expirationDate)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    HStack(spacing: 6) {
+                        Button("Resend") {
+                            Task { @MainActor in
+                                await resend()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Resend invitation to \(invitation.email ?? "user")")
+                        Button("Revoke") { showRevokeConfirm = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Revoke invitation for \(invitation.email ?? "user")")
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Revoke this invitation?", isPresented: $showRevokeConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Revoke", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.revokeInvitation(id: invitation.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("They will need a new invite to join the team. This cannot be undone.")
+        }
+    }
+
+    private func resend() async {
+        isResending = true
+        defer { isResending = false }
+        errorMessage = nil
+        let result = await viewModel.resendInvitation(
+            email: invitation.email ?? "",
+            firstName: invitation.firstName ?? "",
+            lastName: invitation.lastName ?? "",
+            roles: invitation.roles ?? [],
+            allAppsVisible: invitation.allAppsVisible ?? true,
+            provisioningAllowed: invitation.provisioningAllowed ?? false)
+        if case .failure(let message) = result {
+            // .success refreshes the invitations list; .ignored (duplicate
+            // in flight / cancelled) leaves the row untouched.
+            errorMessage = message
+        }
     }
 }
 
 private struct UserRow: View {
     let user: UserModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    @State private var isEditingRoles = false
+    @State private var draftRoles: Set<UserRoleOption> = []
+    @State private var showRemoveConfirm = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { viewModel.isWriteInFlight(user.id) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -828,20 +1790,21 @@ private struct UserRow: View {
                 Text("\(user.firstName ?? "") \(user.lastName ?? "")")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                HStack(spacing: 4) {
-                    ForEach(user.roles ?? [], id: \.self) { role in
-                        Text(role)
-                            .font(.system(size: 9, design: .rounded))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.secondary.opacity(0.12))
-                            .cornerRadius(4)
-                    }
+                if isEditingRoles {
+                    RoleMultiSelect(selection: $draftRoles)
+                        .disabled(isBusy)
+                } else {
+                    RoleChips(roles: user.roles ?? [])
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 4) {
                 if user.allAppsVisible == true {
                     Text("All apps")
                         .font(.caption2)
@@ -852,11 +1815,74 @@ private struct UserRow: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
+                if isEditingRoles {
+                    HStack(spacing: 6) {
+                        Button("Cancel") {
+                            isEditingRoles = false
+                            errorMessage = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(isBusy)
+                        if isBusy {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            Button("Save") {
+                                Task { @MainActor in
+                                    if case .failure(let message) = await viewModel.updateUserRoles(
+                                        user, roles: draftRoles) {
+                                        errorMessage = message
+                                    } else {
+                                        isEditingRoles = false
+                                        errorMessage = nil
+                                    }
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(draftRoles.isEmpty)
+                        }
+                    }
+                } else if isBusy {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    HStack(spacing: 6) {
+                        Button("Edit roles") {
+                            draftRoles = Set((user.roles ?? []).compactMap(UserRoleOption.init(rawValue:)))
+                            errorMessage = nil
+                            isEditingRoles = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Edit roles for \(user.username ?? "user")")
+                        // Removing is destructive — confirm first (same alert
+                        // pattern as CertificateRow's revoke).
+                        Button("Remove") { showRemoveConfirm = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Remove \(user.username ?? "user")")
+                    }
+                }
             }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .alert("Remove this user?", isPresented: $showRemoveConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Remove", role: .destructive) {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.removeUser(id: user.id) {
+                        errorMessage = message
+                    }
+                }
+            }
+        } message: {
+            Text("They will immediately lose access to App Store Connect. This cannot be undone.")
+        }
     }
 }
 

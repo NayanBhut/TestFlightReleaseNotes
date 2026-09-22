@@ -90,9 +90,9 @@ final class APIClient {
 
             #if DEBUG
             apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
-            // Bodies and queries carry PII (tester emails/names): redact emails
-            // and cap size. Data is sliced *before* String conversion so multi-MB
-            // responses don't allocate a full string just to be truncated.
+            apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
+            // Bodies and queries carry PII (tester emails/names): emails
+            // stay redacted, but bodies log in full (see sanitizedBody).
             if let url = request.url, let query = url.query {
                 apiLogger.debug("[API] Query: \(Self.redactingPII(in: query))")
             }
@@ -143,8 +143,13 @@ final class APIClient {
         return task
     }
     
-    /// DEBUG logs may end up in bug reports or screen recordings: redact
-    /// emails (PII) and cap size before logging request/response bodies.
+    /// DEBUG-only API logging. Release builds emit nothing that can
+    /// carry credentials or payloads: every request/response/curl line
+    /// below is compiled out via #if DEBUG. In DEBUG, emails (PII) and
+    /// the Bearer token are always redacted, but bodies log in full (no
+    /// truncation) so failing writes can be debugged from the console.
+    /// Use the [API][CURL] line to reproduce any request (fill in a fresh
+    /// token — tokens are deliberately never printed).
     private static let piiRedactionRegex = try? NSRegularExpression(
         pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
 
@@ -155,22 +160,75 @@ final class APIClient {
             in: text, options: [], range: range, withTemplate: "[redacted]")
     }
 
-    private static func sanitizedBody(_ data: Data, maxLength: Int = 2000) -> String {
-        let isTruncated = data.count > maxLength
-        let slice = isTruncated ? data.prefix(maxLength) : data[...]
+    private static func sanitizedBody(_ data: Data) -> String {
+        // Slice BEFORE String conversion so multi-MB payloads never
+        // allocate a full string just to be truncated; PII regex then
+        // runs over at most maxLogBytes.
+        let isTruncated = data.count > maxLogBytes
+        let slice = isTruncated ? data.prefix(maxLogBytes) : data[...]
         guard let text = String(data: slice, encoding: .utf8) else {
             return "<\(data.count) bytes, non-UTF-8>"
         }
-        return redactingPII(in: text) + (isTruncated ? "…(truncated)" : "")
+        return redactingPII(in: text) + (isTruncated ? "…(truncated, \(data.count) bytes total)" : "")
+    }
+
+    /// Generous cap (512 KB) — every realistic request/response logs in
+    /// full for debugging; only genuinely huge payloads truncate.
+    private static let maxLogBytes = 512 * 1024
+
+    /// Copy-pasteable curl for the Xcode console (DEBUG only at call
+    /// sites). Single-quoted throughout; embedded quotes are escaped.
+    /// The Bearer token and emails in URLs/bodies are always redacted —
+    /// fill in a fresh token.
+    static func curlCommand(for request: URLRequest) -> String {
+        func shellQuoted(_ value: String) -> String {
+            "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        var parts = ["curl", "-X", request.httpMethod ?? "GET"]
+        if let url = request.url {
+            // Query strings carry emails (filter[email]=…) — redact each
+            // query item's decoded value (percent-encoded emails like
+            // private%40… would otherwise slip past the raw-text regex),
+            // then rebuild the URL.
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            if let items = components?.queryItems {
+                components?.queryItems = items.map { item in
+                    var redacted = item
+                    redacted.value = (item.value ?? "").removingPercentEncoding
+                        .map { redactingPII(in: $0) } ?? item.value
+                    return redacted
+                }
+            }
+            parts.append(shellQuoted(components?.url?.absoluteString ?? url.absoluteString))
+        }
+        for (field, value) in (request.allHTTPHeaderFields ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let logged = field.lowercased() == "authorization" ? "Bearer <TOKEN>" : value
+            parts.append("-H")
+            parts.append(shellQuoted("\(field): \(logged)"))
+        }
+        if let body = request.httpBody, !body.isEmpty {
+            parts.append("--data")
+            parts.append(shellQuoted(redactingPII(in: String(data: body, encoding: .utf8) ?? "<non-UTF-8 body>")))
+        }
+        return parts.joined(separator: " ")
     }
 
     func callAPI(with request: URLRequest) async throws -> Data {
+        #if DEBUG
         apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
+        apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
+        if let body = request.httpBody, !body.isEmpty {
+            apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body), privacy: .private)")
+        }
+        #endif
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.requestFailed
             }
+            #if DEBUG
+            apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data), privacy: .private)")
+            #endif
             guard (200..<300).contains(httpResponse.statusCode) else {
                 apiLogger.error("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
                 if httpResponse.statusCode == 401 {
@@ -424,6 +482,9 @@ enum APIName: String {
     case getBundleIds = "/bundleIds"
     case getProfiles = "/profiles"
     case getUsers = "/users"
+    // Batch I (I3): top-level collection for team invitations —
+    // GET/POST /v1/userInvitations, DELETE /v1/userInvitations/{id}.
+    case userInvitations = "/userInvitations"
 
     // Batch G (#10): top-level collection route for app info
     // localizations — PATCH /v1/appInfoLocalizations/{id} (verified in the
@@ -431,6 +492,12 @@ enum APIName: String {
     // Unlike appInfos (app-scoped subpath only), this one is top-level, so
     // it gets its own case. Reused for POST (create) if that's ever added.
     case appInfoLocalizations = "/appInfoLocalizations"
+    // Batch I (I6): top-level route for version localizations —
+    // PATCH /v1/appStoreVersionLocalizations/{id}. Not under
+    // /appStoreVersions/{id}/ (that subpath is read-only list); reusing
+    // .getAppStoreVersions would build /v1/appStoreVersions/{id}, which is
+    // the wrong resource entirely.
+    case appStoreVersionLocalizations = "/appStoreVersionLocalizations"
 }
 
 enum APIVersion: String {

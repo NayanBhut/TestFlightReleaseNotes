@@ -15,6 +15,12 @@ private let betaLogger = Logger(subsystem: "com.appstore.release-notes", categor
 
 @MainActor
 final class BetaViewModel: ObservableObject {
+    deinit {
+        // A stuck multi-page team roster drain must not keep the VM alive
+        // (same rule as ResourcesViewModel's fetchTasks deinit).
+        teamUsersTask?.cancel()
+    }
+
     // MARK: - ViewState
     @Published var viewState: CurrentAppState = ._none
 
@@ -34,6 +40,14 @@ final class BetaViewModel: ObservableObject {
     @Published var isTestersLoaded = false
     @Published var updatingTesterId: String?
     @Published var updatingBuildId: String?
+    /// Group id with a create/rename/delete in flight — one group write
+    /// at a time (single optional; the view disables every row's write
+    /// buttons while any one is busy, which is the intended UX for a
+    /// short-lived group mutation). "create" is the create-form key
+    /// (never collides with a resource id).
+    @Published var updatingGroupId: String?
+
+    static let createGroupKey = "create-group"
 
     // MARK: - Build TestFlight State
     @Published var betaDetails: [String: BuildBetaDetailModel] = [:]
@@ -411,7 +425,280 @@ final class BetaViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Group CRUD (Batch I, I5)
+    //
+    // POST /v1/betaGroups (name + optional public-link options, with the
+    // app relationship), PATCH /v1/betaGroups/{id} (rename),
+    // DELETE /v1/betaGroups/{id}, DELETE /v1/betaTesters/{id} (removes the
+    // tester from the team entirely — unlike removeTesterFromGroup, which
+    // only unlinks from the selected group). Follows this file's existing
+    // viewState/presentError pattern; forms stay open on failure (the
+    // caller only dismisses when no error was presented).
+
+    /// POST /v1/betaGroups. Returns true when the group was created (the
+    /// caller can dismiss); false leaves the form open with the error shown.
+    func createGroup(name: String, publicLinkEnabled: Bool, publicLinkLimit: Int?) async -> Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            presentMessage("Enter a name for the group.")
+            return false
+        }
+        if let limit = publicLinkLimit, limit <= 0 {
+            presentMessage("The public link limit must be a positive number.")
+            return false
+        }
+        guard let appId = currentAppId else {
+            presentMessage("Select an app first.")
+            return false
+        }
+        guard updatingGroupId == nil else { return false }
+        updatingGroupId = Self.createGroupKey
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let body = try? encoder.encode(BetaGroupCreateRequest(
+            data: BetaGroupCreateData(
+                attributes: BetaGroupCreateAttributes(
+                    name: trimmedName,
+                    publicLinkEnabled: publicLinkEnabled,
+                    publicLinkLimitEnabled: publicLinkLimit != nil,
+                    publicLinkLimit: publicLinkLimit
+                ),
+                relationships: BetaGroupCreateRelationships(
+                    app: BetaGroupAppRelationship(data: BetaGroupAppRef(id: appId))
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .getBetaGroups, body: body), apiVersion: .v1) else {
+            updatingGroupId = nil
+            presentMessage(APIError.jsonConversionFailure.details)
+            return false
+        }
+
+        viewState = .betaAssignmentUpdating
+        let stateToken = viewState
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            updatingGroupId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return false }
+            do {
+                let group = try getDecoder().decode(BetaGroupModel.self, from: data)
+                // The list fetch sorts by name server-side — insert sorted
+                // so the new row lands where a refresh would put it.
+                groups.append(group)
+                groups.sort { ($0.name ?? "") < ($1.name ?? "") }
+                return true
+            } catch {
+                presentMessage(serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                return false
+            }
+        } catch {
+            updatingGroupId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return false }
+            presentWriteError(error)
+            return false
+        }
+    }
+
+    /// PATCH /v1/betaGroups/{id} — rename only.
+    func renameGroup(_ group: BetaGroupModel, newName: String) async -> Bool {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            presentMessage("Enter a name for the group.")
+            return false
+        }
+        guard updatingGroupId == nil else { return false }
+        updatingGroupId = group.id
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let body = try? encoder.encode(BetaGroupUpdateRequest(
+            data: BetaGroupUpdateData(
+                id: group.id,
+                attributes: BetaGroupUpdateAttributes(name: trimmedName)
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .getBetaGroups, body: body, path: group.id),
+            apiVersion: .v1) else {
+            updatingGroupId = nil
+            presentMessage(APIError.jsonConversionFailure.details)
+            return false
+        }
+
+        viewState = .betaAssignmentUpdating
+        let stateToken = viewState
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            updatingGroupId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return false }
+            do {
+                let updated = try getDecoder().decode(BetaGroupModel.self, from: data)
+                if let index = groups.firstIndex(where: { $0.id == group.id }) {
+                    groups[index] = updated
+                    groups.sort { ($0.name ?? "") < ($1.name ?? "") }
+                }
+                if selectedGroup?.id == group.id { selectedGroup = updated }
+                return true
+            } catch {
+                presentMessage(serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                return false
+            }
+        } catch {
+            updatingGroupId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return false }
+            presentWriteError(error)
+            return false
+        }
+    }
+
+    /// DELETE /v1/betaGroups/{id}. Callers must confirm first
+    /// (destructive, cannot be undone).
+    func deleteGroup(_ group: BetaGroupModel) async {
+        guard updatingGroupId == nil else { return }
+        updatingGroupId = group.id
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getBetaGroups, path: group.id),
+            apiVersion: .v1) else {
+            updatingGroupId = nil
+            presentMessage(APIError.jsonConversionFailure.details)
+            return
+        }
+
+        viewState = .betaAssignmentUpdating
+        let stateToken = viewState
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            updatingGroupId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return }
+            groups.removeAll { $0.id == group.id }
+            if selectedGroup?.id == group.id {
+                selectedGroup = nil
+                testers = []
+                isTestersLoaded = false
+            }
+        } catch {
+            updatingGroupId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return }
+            presentWriteError(error)
+        }
+    }
+
+    /// DELETE /v1/betaTesters/{id} — deletes the tester from the team
+    /// (stronger than removeTesterFromGroup). Callers must confirm first.
+    func deleteTester(_ tester: BetaTesterModel) async {
+        guard updatingTesterId == nil else { return }
+        updatingTesterId = tester.id
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getBetaTesters, path: tester.id),
+            apiVersion: .v1) else {
+            updatingTesterId = nil
+            presentMessage(APIError.jsonConversionFailure.details)
+            return
+        }
+
+        viewState = .betaAssignmentUpdating
+        let stateToken = viewState
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            updatingTesterId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return }
+            testers.removeAll { $0.id == tester.id }
+            for index in groups.indices {
+                groups[index].betaTesters.removeAll { $0.id == tester.id }
+            }
+        } catch {
+            updatingTesterId = nil
+            if viewState == stateToken { viewState = ._none }
+            guard !Task.isCancelled else { return }
+            presentWriteError(error)
+        }
+    }
+
+    /// Group/tester writes need an Admin/Account Holder key — a
+    /// TestFlight-only key 403s. Surface the permissions hint, not a raw
+    /// error (same contract as the Resources writes).
+    private func presentWriteError(_ error: Error) {
+        if let apiError = error as? APIError, apiError.statusCode == 403 {
+            presentMessage("\(apiError.details) — this action needs an API key with the Admin role.")
+        } else {
+            presentError(error)
+        }
+    }
+
     // MARK: - Tester Email Search
+
+    /// Team roster for the invite sheet's user picker (search + tap
+    /// replaces manual email entry). Drained once per session; silent on
+    /// failure (manual entry still works, the sheet shows the error).
+    @Published var teamUsers: [UserModel] = []
+    @Published var isTeamUsersLoading = false
+    @Published var teamUsersError: String?
+
+    private var teamUsersTask: Task<Void, Never>?
+    private var teamUsersLoaded = false
+
+    func loadTeamUsers() {
+        guard !teamUsersLoaded else { return }
+        teamUsersTask?.cancel()
+        teamUsersTask = Task { await fetchTeamUsers() }
+    }
+
+    private func fetchTeamUsers() async {
+        guard !Task.isCancelled else { return }
+        isTeamUsersLoading = true
+        teamUsersError = nil
+        defer { isTeamUsersLoading = false }
+
+        var accumulated: [UserModel] = []
+        var cursor: String? = nil
+        repeat {
+            guard !Task.isCancelled else { return }
+            var queryParams = ["sort": "username", "limit": "200"]
+            if let cursor {
+                queryParams["cursor"] = cursor
+            }
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: .getUsers, queryParams: queryParams), apiVersion: .v1) else {
+                teamUsersError = "No team selected."
+                return
+            }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled else { return }
+                let model = try getDecoder().decode(UsersDocument.self, from: data)
+                let knownIDs = Set(accumulated.map(\.id))
+                accumulated.append(contentsOf: model.data.filter { !knownIDs.contains($0.id) })
+                cursor = model.meta.paging.nextCursor
+            } catch {
+                guard !Task.isCancelled else { return }
+                betaLogger.error("Failed to load team users: \(error.localizedDescription, privacy: .public)")
+                teamUsersError = (error as? APIError)?.details ?? error.localizedDescription
+                return
+            }
+        } while cursor != nil
+        teamUsers = accumulated
+        teamUsersLoaded = true
+    }
+
+    /// Local match for the invite picker — username plus names, Finder-style.
+    func matchingTeamUsers(query: String) -> [UserModel] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Array(teamUsers.prefix(50)) }
+        return teamUsers.filter {
+            $0.username?.localizedStandardContains(trimmed) == true
+                || $0.firstName?.localizedStandardContains(trimmed) == true
+                || $0.lastName?.localizedStandardContains(trimmed) == true
+        }
+    }
 
     func clearSearch() {
         searchText = ""
