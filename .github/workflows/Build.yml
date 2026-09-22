@@ -48,6 +48,10 @@ jobs:
     # (as documented in the PR template)
     if: github.event_name == 'pull_request' && !contains(github.event.pull_request.title, '[skip-review]')
     runs-on: ubuntu-latest
+    # Hard ceiling for the whole review job (chunks x retry can otherwise
+    # exceed the GitHub-hosted runner limit on a pathological PR; a runner-
+    # level kill would lose everything, this fails cleanly instead)
+    timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: write
@@ -63,6 +67,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Run the ollama-review.py regression tests before the review itself:
+      # the review pipeline now aborts runs on VerifyError, so parsing/
+      # splitting regressions must fail fast here (no secrets needed).
+      - name: Test ollama-review.py
+        run: python3 .github/scripts/test_ollama_review.py
 
       # ── TEST SCENARIO 1: Ollama Cloud Auth ──
       # Purpose: Verify the API key is valid WITHOUT consuming paid tokens.
