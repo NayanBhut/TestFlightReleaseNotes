@@ -8,6 +8,7 @@
 //
 
 import XCTest
+import Foundation
 @testable import App_Store
 
 final class APIMethodTests: XCTestCase {
@@ -77,5 +78,22 @@ final class APIMethodTests: XCTestCase {
         XCTAssertEqual(APIName.getBetaTesters.rawValue, "/betaTesters")
         XCTAssertEqual(APIName.getProfiles.rawValue, "/profiles")
         XCTAssertEqual(APIName.getUsers.rawValue, "/users")
+    }
+
+    func testCurlCommandRedactsSecrets() {
+        var request = URLRequest(url: URL(string: "https://api.appstoreconnect.apple.com/v1/users")!)
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "Content-Type": "application/json",
+            "Authorization": "Bearer live-token-value",
+        ]
+        request.httpBody = Data(#"{"email":"tester@example.com"}"#.utf8)
+        let curl = APIClient.curlCommand(for: request)
+        XCTAssertTrue(curl.hasPrefix("curl -X POST"))
+        XCTAssertTrue(curl.contains("https://api.appstoreconnect.apple.com/v1/users"))
+        XCTAssertTrue(curl.contains("Bearer <TOKEN>"))
+        XCTAssertFalse(curl.contains("live-token-value"))
+        XCTAssertTrue(curl.contains("[redacted]"))
+        XCTAssertFalse(curl.contains("tester@example.com"))
     }
 }

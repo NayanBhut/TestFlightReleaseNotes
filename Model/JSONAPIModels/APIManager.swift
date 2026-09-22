@@ -90,9 +90,9 @@ final class APIClient {
 
             #if DEBUG
             apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
-            // Bodies and queries carry PII (tester emails/names): redact emails
-            // and cap size. Data is sliced *before* String conversion so multi-MB
-            // responses don't allocate a full string just to be truncated.
+            apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
+            // Bodies and queries carry PII (tester emails/names): emails
+            // stay redacted, but bodies log in full (see sanitizedBody).
             if let url = request.url, let query = url.query {
                 apiLogger.debug("[API] Query: \(Self.redactingPII(in: query))")
             }
@@ -143,8 +143,11 @@ final class APIClient {
         return task
     }
     
-    /// DEBUG logs may end up in bug reports or screen recordings: redact
-    /// emails (PII) and cap size before logging request/response bodies.
+    /// DEBUG logs may end up in bug reports or screen recordings: emails
+    /// (PII) and the Bearer token are always redacted, but bodies are
+    /// logged in full (no truncation) so failing writes can be debugged
+    /// from the console. Use the [API][CURL] line to reproduce any request
+    /// (fill in <TOKEN> — tokens are deliberately never printed).
     private static let piiRedactionRegex = try? NSRegularExpression(
         pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
 
@@ -155,19 +158,51 @@ final class APIClient {
             in: text, options: [], range: range, withTemplate: "[redacted]")
     }
 
-    private static func sanitizedBody(_ data: Data, maxLength: Int = 2000) -> String {
-        let isTruncated = data.count > maxLength
-        let slice = isTruncated ? data.prefix(maxLength) : data[...]
-        guard let text = String(data: slice, encoding: .utf8) else {
+    private static func sanitizedBody(_ data: Data) -> String {
+        guard let text = String(data: data, encoding: .utf8) else {
             return "<\(data.count) bytes, non-UTF-8>"
         }
-        return redactingPII(in: text) + (isTruncated ? "…(truncated)" : "")
+        return redactingPII(in: text)
+    }
+
+    /// Copy-pasteable curl for the Xcode console (DEBUG only at call
+    /// sites). Single-quoted throughout; embedded quotes are escaped.
+    static func curlCommand(for request: URLRequest) -> String {
+        func shellQuoted(_ value: String) -> String {
+            "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        var parts = ["curl", "-X", request.httpMethod ?? "GET"]
+        if let url = request.url {
+            parts.append(shellQuoted(url.absoluteString))
+        }
+        for (field, value) in (request.allHTTPHeaderFields ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let logged = field.lowercased() == "authorization" ? "Bearer <TOKEN>" : value
+            parts.append("-H")
+            parts.append(shellQuoted("\(field): \(logged)"))
+        }
+        if let body = request.httpBody, !body.isEmpty {
+            parts.append("--data")
+            parts.append(shellQuoted(redactingPII(in: String(data: body, encoding: .utf8) ?? "<non-UTF-8 body>")))
+        }
+        return parts.joined(separator: " ")
     }
 
     func callAPI(with request: URLRequest) async throws -> Data {
         apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
+        #if DEBUG
+        apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
+        if let body = request.httpBody, !body.isEmpty {
+            apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body), privacy: .private)")
+        }
+        #endif
         do {
             let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.requestFailed
+            }
+            #if DEBUG
+            apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data), privacy: .private)")
+            #endif
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.requestFailed
             }
