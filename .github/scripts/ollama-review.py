@@ -3,7 +3,9 @@ r"""Call Ollama Cloud API to review a PR diff (chunked for full coverage).
 
 Reads the PR diff from a file, filters out noise file sections (docs,
 markdown, Xcode project files), splits the remainder into chunks on file
-boundaries (never mid-file), and reviews each chunk with a separate
+boundaries (a single file larger than the cap is split on hunk
+boundaries with the diff header re-prepended to each piece), and
+reviews each chunk with a separate
 Ollama Cloud API call.  Each chunk after the first receives the findings
 reported so far as carry-over context so the model only adds NEW findings.
 The per-chunk reviews are combined under "### Review part N/M (files: ...)"
@@ -27,19 +29,26 @@ Environment variables:
   MAX_CHARS_PER_CHUNK   Max characters per chunk (default: 150000).  A
                         single file section larger than this becomes its
                         own oversized chunk; files are never split mid-file.
-  SKIP_PATH_PATTERNS    Comma-separated regexes matched against the a/ and
-                        b/ paths of each "diff --git" section.  A section is
+  SKIP_PATH_PATTERNS    Regexes matched against the a/ and
+                        b/ paths of each "diff --git" section, separated
+                        by ";;" (preferred - commas inside regexes stay
+                        usable) or "," (legacy).  A section is
                         skipped only when EVERY path it touches matches
                         (so renames in or out of a noise dir are kept).
                         Patterns are unanchored regexes - the default
                         "docs/" is anchored as "(^|/)docs/" so only real
                         docs directories match, not e.g. "apidocs/".
-                        Default: "(^|/)docs/,(?i)\.md$,\.xcodeproj/"
+                        Default: "(^|/)docs/;;(?i)\.md$;;\.xcodeproj/"
+  MAX_CHARS_PER_CHUNK   Max characters per chunk (default: 150000).  A
+                        single file section larger than this is split on
+                        hunk boundaries with the diff header re-prepended
+                        to each piece; a single hunk larger than the cap
+                        is kept whole as a last resort.
   MAX_CHUNKS           Safety cap on the number of review API calls
-                        (default: 0 = unlimited).  Exceeding it fails the
-                        run loudly rather than reviewing an incomplete
-                        diff - the coverage guarantee is never silently
-                        reduced.
+                        (default: 40).  Exceeding it fails the run
+                        loudly rather than reviewing an incomplete diff -
+                        the coverage guarantee is never silently reduced.
+                        Set 0 for unlimited.
 """
 
 import argparse
@@ -54,16 +63,25 @@ API_URL = "https://ollama.com/v1/chat/completions"
 
 DEFAULT_MAX_CHARS_PER_CHUNK = 150000
 # "docs/" is anchored as (^|/)docs/ so paths like Sources/apidocs/ do NOT
-# match; (?i)\.md$ also skips CHANGELOG.MD etc.
-DEFAULT_SKIP_PATH_PATTERNS = r"(^|/)docs/,(?i)\.md$,\.xcodeproj/"
-DEFAULT_MAX_CHUNKS = 0  # 0 = unlimited review calls
+# match; (?i)\.md$ also skips CHANGELOG.MD etc.  ";;" separator so regexes
+# may contain commas.
+DEFAULT_SKIP_PATH_PATTERNS = r"(^|/)docs/;;(?i)\.md$;;\.xcodeproj/"
+# Finite by default: an oversized PR fails loudly instead of fanning out
+# unbounded paid API calls (0 = unlimited, explicit opt-in).
+DEFAULT_MAX_CHUNKS = 40
 
 # A review finding bullet, e.g. "- **[BUG]** Description ..."
 FINDING_LINE_RE = re.compile(r"(?m)^\s*-\s*\*\*\[")
 # The numbered bold format the model often emits, e.g. "**1. [BUG] ...**"
 BOLD_FINDING_RE = re.compile(r"(?m)^\s*\*\*\d+\.\s*\[")
 SECTION_HEADER_RE = re.compile(r"(?m)^diff --git ")
-GIT_HEADER_LINE_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+# Handles both plain (a/foo b/foo) and git-quoted headers ("a/\303\251.swift"
+# "b/\303\251.swift", emitted when core.quotePath=true and paths contain
+# non-ASCII).  Quoted/escaped paths never match the noise patterns, so
+# such sections fail safe (reviewed, not skipped).
+GIT_HEADER_LINE_RE = re.compile(
+    r'^diff --git (?:"a/(.*?)"|a/(.*?)) (?:"b/(.*?)"|b/(.*?))$'
+)
 
 
 def log(msg):
@@ -72,6 +90,10 @@ def log(msg):
 
 class ReviewError(Exception):
     """A review API call failed; the error has already been printed to stderr."""
+
+
+class VerifyError(Exception):
+    """A diff-coverage consistency check failed; details already logged."""
 
 
 def split_sections(diff):
@@ -85,10 +107,17 @@ def split_sections(diff):
 
 
 def section_paths(section):
-    """Extract the a/ and b/ paths from a section's "diff --git" header."""
+    """Extract the a/ and b/ paths from a section's "diff --git" header.
+
+    Handles plain and git-quoted headers (see GIT_HEADER_LINE_RE).
+    """
     first_line = section.split("\n", 1)[0]
     m = GIT_HEADER_LINE_RE.match(first_line)
-    return [m.group(1), m.group(2)] if m else []
+    if not m:
+        return []
+    a = m.group(1) if m.group(1) is not None else m.group(2)
+    b = m.group(3) if m.group(3) is not None else m.group(4)
+    return [a, b]
 
 
 def is_noise(paths, patterns):
@@ -108,19 +137,55 @@ def filter_sections(sections, patterns):
 def chunk_sections(sections, max_chars):
     """Greedily pack whole file sections into chunks of <= max_chars.
 
-    A single section larger than max_chars becomes its own oversized chunk;
-    files are never split mid-file.
+    A single section larger than max_chars is split on hunk (@@)
+    boundaries with the diff header re-prepended to each piece so the
+    model keeps file context; a single hunk larger than max_chars is
+    kept whole as a last resort (never split mid-hunk).
     """
     chunks, current, size = [], [], 0
     for sec in sections:
-        if current and size + len(sec) > max_chars:
-            chunks.append(current)
-            current, size = [], 0
-        current.append(sec)
-        size += len(sec)
+        for piece in split_oversized_section(sec, max_chars):
+            if current and size + len(piece) > max_chars:
+                chunks.append(current)
+                current, size = [], 0
+            current.append(piece)
+            size += len(piece)
     if current:
         chunks.append(current)
     return chunks
+
+
+def split_oversized_section(section, max_chars):
+    """Split one section on hunk boundaries if it exceeds max_chars.
+
+    Returns [section] unchanged when it fits (or has no splittable
+    hunks).  Each piece keeps the "diff --git" header and the lines
+    before the first @@ (index/---/+++ lines) so the model sees which
+    file it belongs to.
+    """
+    if len(section) <= max_chars:
+        return [section]
+    # Identify header lines: everything up to the first @@ hunk line.
+    m = re.search(r"(?m)^@@", section)
+    if not m:
+        # No hunks (e.g. binary or mode-change sections) - keep whole.
+        return [section]
+    header = section[: m.start()]
+    body = section[m.start() :]
+    pieces, buf, buf_size = [], [], len(header)
+    # re.split on a body that starts with "@@" yields an empty leading
+    # element - drop it or we would emit a header-only piece with no hunk.
+    for hunk in (h for h in re.split(r"(?m)^(?=@)", body) if h):
+        if buf and buf_size + len(hunk) > max_chars - len(header):
+            pieces.append(header + "".join(buf))
+            buf, buf_size = [], 0
+        buf.append(hunk)
+        buf_size += len(hunk)
+    if buf:
+        pieces.append(header + "".join(buf))
+    # A single hunk larger than the cap ends up as one oversized piece -
+    # the documented last resort; better than splitting mid-hunk.
+    return pieces or [section]
 
 
 def count_headers(text):
@@ -143,7 +208,7 @@ def verify_no_loss(kept, skipped, raw_diff):
             f"the raw diff but only {total_out} after filtering. Aborting "
             f"rather than reviewing an incomplete diff."
         )
-        sys.exit(1)
+        raise VerifyError()
 
 
 def verify_chunks(chunks, kept):
@@ -158,7 +223,7 @@ def verify_chunks(chunks, kept):
             "diff (a file section was lost, duplicated, or reordered). "
             "Aborting rather than reviewing an incomplete diff."
         )
-        sys.exit(1)
+        raise VerifyError()
 
 
 def display_files(files, limit=8):
@@ -215,6 +280,23 @@ def build_carryover(findings_so_far, max_chars=8000):
             unique.append(key)
     text, total = [], 0
     for block in unique:
+        if len(block) > max_chars:
+            # Cap a single oversized block - never let one multi-KB block
+            # ride along in every subsequent prompt.  Truncate at a line
+            # boundary when possible; a single over-long line is hard-cut.
+            lines, acc = [], 0
+            for line in block.splitlines():
+                budget = max_chars - acc
+                if not lines or budget <= 0:
+                    break
+                if len(line) + 1 > budget:
+                    lines.append(line[: max(0, budget - 1)])
+                    break
+                lines.append(line)
+                acc += len(line) + 1
+            text.append("\n".join(lines) + "\n... (oversized finding truncated)")
+            total = max_chars
+            continue
         if text and total + len(block) > max_chars:
             text.append("... (earlier findings list truncated at a block boundary)")
             break
@@ -392,9 +474,12 @@ def main():
         log(f"WARN: MAX_CHUNKS negative, using default {DEFAULT_MAX_CHUNKS}")
         max_chunks = DEFAULT_MAX_CHUNKS
 
+    # ";;" separator preferred so regexes may contain commas; legacy
+    # comma-separated values still work.
     skip_env = os.environ.get("SKIP_PATH_PATTERNS", DEFAULT_SKIP_PATH_PATTERNS)
+    sep = ";;" if ";;" in skip_env else ","
     try:
-        patterns = [re.compile(p.strip()) for p in skip_env.split(",") if p.strip()]
+        patterns = [re.compile(p.strip()) for p in skip_env.split(sep) if p.strip()]
     except re.error as e:
         print(f"ERROR: Invalid SKIP_PATH_PATTERNS regex: {e}", file=sys.stderr)
         sys.exit(1)
@@ -416,10 +501,16 @@ def main():
 
     sections = split_sections(diff)
     kept, skipped = filter_sections(sections, patterns)
-    verify_no_loss(kept, skipped, diff)
+    try:
+        verify_no_loss(kept, skipped, diff)
+    except VerifyError:
+        sys.exit(1)
 
     chunks = chunk_sections(kept, max_chunk)
-    verify_chunks(chunks, kept)
+    try:
+        verify_chunks(chunks, kept)
+    except VerifyError:
+        sys.exit(1)
 
     if args.dry_run:
         print_dry_run_plan(chunks, skipped, diff, max_chunk)
@@ -466,7 +557,8 @@ def main():
 
     for i, chunk in enumerate(chunks, 1):
         chunk_text = "".join(chunk)
-        files = [section_paths(s)[1] for s in chunk if section_paths(s)]
+        path_pairs = [section_paths(s) for s in chunk]
+        files = [p[1] for p in path_pairs if p]
         log(
             f"Reviewing chunk {i}/{total_chunks} "
             f"({len(chunk_text):,} chars, {len(chunk)} file"
@@ -490,7 +582,10 @@ def main():
                 # run, but keep the earlier findings visible in the log.
                 log("--- REVIEW OUTPUT (partial; would have been posted) ---")
                 print("\n\n".join(combined_parts), file=sys.stderr)
-            print("ERROR: Chunk review failed; aborting", file=sys.stderr)
+            print(
+                f"ERROR: Review of chunk {i}/{total_chunks} failed; aborting",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         findings_so_far.extend(extract_findings(content))

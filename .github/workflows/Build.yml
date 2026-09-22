@@ -230,8 +230,9 @@ jobs:
 
           # Diff size is handled entirely by ollama-review.py: it filters
           # noise file sections (docs/markdown/xcodeproj) and splits the
-          # rest into per-file chunks of at most MAX_CHARS_PER_CHUNK chars,
-          # so the full diff is reviewed regardless of PR size.
+          # rest into chunks of roughly MAX_CHARS_PER_CHUNK chars (a
+          # single larger file is split on hunk boundaries), so the full
+          # diff is reviewed regardless of PR size.
 
           # Call Ollama Cloud for review
           # The script saves the raw API response to /tmp/review_raw.json (for
