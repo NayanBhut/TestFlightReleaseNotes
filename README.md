@@ -42,7 +42,7 @@ Releasing a TestFlight build normally means: upload from Xcode → wait for proc
 2. Go to **Integrations → App Store Connect API** (older UI: **Users and Access → Integrations → Team Keys**).
 3. Click **+ / Generate API Key** (or "Request Access" first if your team never enabled API access).
 4. Enter a name you'll recognize (e.g. `release-notes-mac`), and choose the access/role:
-   - Start with **Admin** if you want every feature in this app; otherwise match the table above.
+   - Start with the **narrowest role** that covers your workflow (see the table above); pick Admin only if you need beta-group/user/resource management.
 5. Click **Generate**. Copy and store three things immediately:
    - **Issuer ID** — shown at the top of the page (same for all keys on the team).
    - **Key ID** — shown next to your new key.
@@ -116,10 +116,9 @@ Not supported (Apple has no public API or it's web-only): sales/finance reports,
 
 ## Setup
 
-1. Go to https://appstoreconnect.apple.com/access/api and create an API key. Note the **Issuer ID**, **Key ID**, and download the `.p8` private key (one-time download).
-2. Run the app and choose **Add Team** (or `+`).
-3. Enter a unique team name plus the Issuer ID, Key ID, and private key (paste the key with or without the `-----BEGIN/END PRIVATE KEY-----` header/footer, or use **Select File**).
-4. Choose **Continue** — the app signs a JWT, test-fetches your apps to validate, then saves the credential to Keychain.
+1. Create an App Store Connect API key (Issuer ID, Key ID, `.p8`) — see [How to Create an API Key](#how-to-create-an-api-key-step-by-step) above.
+2. Run the app → **Add Team** (or `+`) → enter a unique Team Name + Issuer ID + Key ID + private key (via **Select File** or paste — see step 6 above for the exact paste rules).
+3. **Continue** signs a test JWT, fetches your apps, and saves the credential to Keychain.
 
 > **Key roles matter:** a TestFlight-only key covers builds/notes; App Info writes need **App Manager+**; Resources / beta-group writes and user management need **Admin**. Permission errors surface a "broader permissions" hint instead of a raw 403.
 
@@ -149,7 +148,6 @@ Helper/                   Keychain storage, ExportManager, BuildProcessingMonito
 JWT/                      ES256 signing (EC key, ASN.1, JWT encode/decode)
 View/OnBoarding/          Add-Team flow + view model
 App Store Tests/          XCTest: API methods, JSON decoding, view state, display helpers, validation
-docs/BATCH_I_PLAN.md      write-features plan, API gotchas and limits
 scripts/                  pre-commit / pre-push guards (e.g. block temp logging)
 ```
 
