@@ -188,6 +188,7 @@ final class ResourcesViewModel: ObservableObject {
     private var bundleIdsFilterCache = FilterCache<BundleIdModel>()
     private var profilesFilterCache = FilterCache<ProfileModel>()
     private var usersFilterCache = FilterCache<UserModel>()
+    private var invitationsFilterCache = FilterCache<UserInvitationModel>()
 
     func searchText(for kind: Kind) -> String { searchTexts[kind] ?? "" }
 
@@ -263,15 +264,24 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
+    /// Pending invites share the users search box (same kind query) so a
+    /// typed email matches members and invitees together.
+    var filteredInvitations: [UserInvitationModel] {
+        cachedFilter(&invitationsFilterCache, kind: .users, source: invitationsState.loadedValue ?? []) {
+            [$0.email, $0.firstName, $0.lastName, ($0.roles ?? []).joined(separator: " ")]
+        }
+    }
+
     /// Row count after filtering, without the view needing to know which
     /// array backs the current kind (drives the header's "N of M").
+    /// Users includes pending invitations (same list, same search box).
     func filteredCount(for kind: Kind) -> Int {
         switch kind {
         case .devices: return filteredDevices.count
         case .certificates: return filteredCertificates.count
         case .bundleIds: return filteredBundleIds.count
         case .profiles: return filteredProfiles.count
-        case .users: return filteredUsers.count
+        case .users: return filteredUsers.count + filteredInvitations.count
         }
     }
 
@@ -283,7 +293,7 @@ final class ResourcesViewModel: ObservableObject {
         case .certificates: return certificatesState.loadedValue?.count ?? 0
         case .bundleIds: return bundleIdsState.loadedValue?.count ?? 0
         case .profiles: return profilesState.loadedValue?.count ?? 0
-        case .users: return usersState.loadedValue?.count ?? 0
+        case .users: return (usersState.loadedValue?.count ?? 0) + (invitationsState.loadedValue?.count ?? 0)
         }
     }
 
@@ -958,6 +968,8 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
             invitationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            // Loaded rows changed — invalidate the shared users filter cache.
+            dataVersion += 1
         } catch {
             guard !Task.isCancelled else { return }
             resourcesLogger.error("Failed to load invitations: \(error.localizedDescription)")
@@ -985,6 +997,7 @@ final class ResourcesViewModel: ObservableObject {
                   let index = invitations.firstIndex(where: { $0.id == id }) else { return .ignored }
             invitations.remove(at: index)
             invitationsState = invitations.isEmpty ? .empty : .loaded(invitations)
+            dataVersion += 1
             return .success
         } catch {
             resourcesLogger.error("Failed to revoke invitation: \(error.localizedDescription)")
