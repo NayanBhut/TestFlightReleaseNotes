@@ -37,8 +37,28 @@ struct ResourcesSectionView: View {
     @State private var selectedKind: ResourcesViewModel.Kind?
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(spacing: 2) {
+        VStack(spacing: 2) {
+            HStack(spacing: 8) {
+                Image(systemName: isExpanded ? "chevron.top" : "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Image(systemName: "shippingbox")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("Resources")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text("Team-wide")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .onTapGesture {
+                withAnimation {
+                    isExpanded.toggle()
+                }
+            }
+            if isExpanded {
                 ForEach(ResourcesViewModel.Kind.allCases) { kind in
                     Button {
                         selectedKind = kind
@@ -64,21 +84,9 @@ struct ResourcesSectionView: View {
                     .accessibilityLabel("Open \(kind.displayName)")
                 }
             }
-            .padding(.top, 2)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "shippingbox")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text("Resources")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text("Team-wide")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
         }
+        .padding(.top, 2)
+        
         .sheet(item: $selectedKind) { kind in
             ResourceListContentView(kind: kind, viewModel: viewModel, apps: apps)
         }
