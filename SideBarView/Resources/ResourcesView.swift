@@ -28,6 +28,9 @@ import AppKit
 /// Sidebar section listing the five team-scoped resource kinds.
 struct ResourcesSectionView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for the single-app invite picker — threaded from the
+    /// sidebar's already-loaded list, no extra fetch.
+    var apps: [AppsData] = []
     // Starts expanded — one less tap to reach the five resource rows
     // (intentional Batch F default, confirmed in review).
     @State private var isExpanded = true
@@ -77,7 +80,7 @@ struct ResourcesSectionView: View {
             }
         }
         .sheet(item: $selectedKind) { kind in
-            ResourceListContentView(kind: kind, viewModel: viewModel)
+            ResourceListContentView(kind: kind, viewModel: viewModel, apps: apps)
         }
     }
 }
@@ -86,6 +89,8 @@ struct ResourcesSectionView: View {
 struct ResourceListContentView: View {
     let kind: ResourcesViewModel.Kind
     @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for the single-app invite picker.
+    var apps: [AppsData] = []
     @Environment(\.dismiss) private var dismiss
     // Batch G (#10): write forms toggle from the header.
     @State private var showRegisterDeviceForm = false
@@ -120,7 +125,7 @@ struct ResourceListContentView: View {
                 Divider()
             }
             if kind == .users, showInviteUserForm {
-                InviteUserForm(viewModel: viewModel) {
+                InviteUserForm(viewModel: viewModel, apps: apps) {
                     showInviteUserForm = false
                 }
                 Divider()
@@ -307,8 +312,11 @@ struct ResourceListContentView: View {
                 // Pinned outside the ScrollView (same as the Builds tab's
                 // "Load More Builds"): an inline footer scrolls away with
                 // the rows, so Load-more seemed to disappear after
-                // scrolling.
-                paginationFooter
+                // scrolling. Hidden while the invite form is open — the
+                // footer belongs to the list, not the form.
+                if !(kind == .users && showInviteUserForm) {
+                    paginationFooter
+                }
             }
         }
     }
@@ -752,14 +760,58 @@ private struct RoleMultiSelect: View {
 /// required. Resend re-issues a pending invite with the form's details
 /// (find by email → delete → re-create; no dedicated resend endpoint).
 /// Needs an Admin key role; a TestFlight-only key 403s.
+/// Dropdown multi-select for user roles — a Menu of checkable items so
+/// eleven roles don't stretch the invite form. The row editor keeps the
+/// inline RoleMultiSelect (tighter space, same UserRoleOption source).
+private struct RoleDropdownMenu: View {
+    @Binding var selection: Set<UserRoleOption>
+
+    private var label: String {
+        switch selection.count {
+        case 0: return "Select roles"
+        case 1: return selection.first?.displayName ?? "Select roles"
+        default: return "\(selection.count) roles selected"
+        }
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(UserRoleOption.allCases, id: \.self) { role in
+                Toggle(role.displayName, isOn: Binding(
+                    get: { selection.contains(role) },
+                    set: { isOn in
+                        if isOn { selection.insert(role) } else { selection.remove(role) }
+                    }
+                ))
+            }
+        } label: {
+            Text(label)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color(nsColor: .textBackgroundColor))
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
 private struct InviteUserForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for single-app invites (allAppsVisible == false).
+    var apps: [AppsData] = []
     var onDone: () -> Void
     @State private var email = ""
     @State private var firstName = ""
     @State private var lastName = ""
     @State private var roles: Set<UserRoleOption> = [.DEVELOPER]
     @State private var allAppsVisible = true
+    @State private var selectedAppId: String?
     @State private var provisioningAllowed = false
     @State private var isSaving = false
     @State private var isResending = false
@@ -767,6 +819,12 @@ private struct InviteUserForm: View {
     @State private var noticeMessage: String?
 
     private var isBusy: Bool { isSaving || isResending }
+
+    /// App ids for the invite body: empty = all apps.
+    private var visibleAppIds: [String] {
+        guard !allAppsVisible, let selectedAppId else { return [] }
+        return [selectedAppId]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -790,11 +848,31 @@ private struct InviteUserForm: View {
             Text("Roles")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            RoleMultiSelect(selection: $roles)
+            RoleDropdownMenu(selection: $roles)
                 .disabled(isBusy)
             Toggle("All apps visible", isOn: $allAppsVisible)
                 .font(.subheadline)
                 .disabled(isBusy)
+                .onChange(of: allAppsVisible) { _, newValue in
+                    // Turning all-apps back on drops the single-app pick so
+                    // a stale id can never leak into an all-apps invite.
+                    if newValue { selectedAppId = nil }
+                }
+            if !allAppsVisible {
+                Picker("App", selection: $selectedAppId) {
+                    Text("Select an app").tag(nil as String?)
+                    ForEach(apps, id: \.id) { app in
+                        Text(app.name ?? app.bundleId ?? app.id).tag(app.id as String?)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(isBusy || apps.isEmpty)
+                if apps.isEmpty {
+                    Text("No apps loaded — open the sidebar app list first so the picker has something to offer.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
             Toggle("Provisioning allowed", isOn: $provisioningAllowed)
                 .font(.subheadline)
                 .disabled(isBusy)
@@ -857,6 +935,7 @@ private struct InviteUserForm: View {
             && !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !lastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !roles.isEmpty
+            && (allAppsVisible || selectedAppId != nil)
     }
 
     private func runInvite(mode: InviteMode) async {
@@ -873,12 +952,14 @@ private struct InviteUserForm: View {
             result = await viewModel.inviteUser(
                 email: email, firstName: firstName, lastName: lastName,
                 roles: roles, allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed)
+                provisioningAllowed: provisioningAllowed,
+                visibleAppIds: visibleAppIds)
         case .resend:
             result = await viewModel.resendInvitation(
                 email: email, firstName: firstName, lastName: lastName,
                 roles: roles, allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed)
+                provisioningAllowed: provisioningAllowed,
+                visibleAppIds: visibleAppIds)
         }
         switch result {
         case .success:
@@ -913,6 +994,13 @@ private struct CreateProfileForm: View {
     private var bundleIds: [BundleIdModel] { viewModel.bundleIdsState.loadedValue ?? [] }
     private var certificates: [CertificateModel] { viewModel.certificatesState.loadedValue ?? [] }
     private var devices: [DeviceModel] { viewModel.devicesState.loadedValue ?? [] }
+
+    /// Picker list height sized to its rows (one checkbox ≈ 30pt) between
+    /// a floor that fits the empty hint and a cap that scrolls — a fixed
+    /// maxHeight clips the last visible row mid-height.
+    private func pickerListHeight(count: Int) -> CGFloat {
+        min(max(CGFloat(count) * 30 + 8, 56), 170)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -971,7 +1059,7 @@ private struct CreateProfileForm: View {
                     }
                 }
             }
-            .frame(maxHeight: 110)
+            .frame(height: pickerListHeight(count: certificates.count))
             Text("Devices (\(deviceIds.count) selected, optional)")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -999,7 +1087,7 @@ private struct CreateProfileForm: View {
                     }
                 }
             }
-            .frame(maxHeight: 110)
+            .frame(height: pickerListHeight(count: devices.count))
             Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
                 .font(.caption2)
                 .foregroundColor(.secondary)

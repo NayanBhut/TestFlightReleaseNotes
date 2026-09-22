@@ -135,7 +135,10 @@ struct SideBarView: View {
             // Resources group), gated by the extended-info flag.
             if showExtendedInfo {
                 Divider()
-                ResourcesSectionView(viewModel: resourcesViewModel)
+                ResourcesSectionView(
+                    viewModel: resourcesViewModel,
+                    apps: viewModel.appsState.loadedValue ?? []
+                )
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
