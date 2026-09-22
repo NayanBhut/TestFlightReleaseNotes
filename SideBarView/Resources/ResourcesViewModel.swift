@@ -147,6 +147,7 @@ final class ResourcesViewModel: ObservableObject {
     /// Create-form write keys (never collide with resource ids).
     static let registerDeviceKey = "register-device"
     static let createCertificateKey = "create-certificate"
+    static let createBundleIdKey = "create-bundle-id"
 
     func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
@@ -631,6 +632,146 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
+    }
+
+    // MARK: - Bundle ID writes (Batch I, I2)
+    //
+    // POST /v1/bundleIds (identifier + name + platform required, seedId
+    // optional), PATCH /v1/bundleIds/{id} (name only), DELETE
+    // /v1/bundleIds/{id}. Same WriteResult contract as the Batch G writes.
+
+    /// POST /v1/bundleIds — register a bundle ID. On success the search
+    /// filter is cleared and the row is prepended (same as devices).
+    func createBundleId(name: String,
+                        identifier: String,
+                        platform: BundleIdPlatformOption,
+                        seedId: String?) async -> WriteResult {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSeedId = (seedId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the bundle ID.") }
+        guard !trimmedIdentifier.isEmpty else { return .failure("Enter the bundle identifier (e.g. com.example.app).") }
+        guard !isWriteInFlight(Self.createBundleIdKey) else { return .ignored }
+        writeInFlight.insert(Self.createBundleIdKey)
+        defer { writeInFlight.remove(Self.createBundleIdKey) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(BundleIdCreateRequest(
+            data: BundleIdCreateData(
+                attributes: BundleIdCreateAttributes(
+                    name: trimmedName,
+                    identifier: trimmedIdentifier,
+                    platform: platform.rawValue,
+                    seedId: trimmedSeedId.isEmpty ? nil : trimmedSeedId
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .getBundleIds, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the bundle ID request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(BundleIdModel.self, from: responseData)
+            prependBundleId(model)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to create bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// PATCH /v1/bundleIds/{id} — rename only (the server exposes no other
+    /// updatable attribute).
+    func renameBundleId(_ bundleId: BundleIdModel, newName: String) async -> WriteResult {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the bundle ID.") }
+        guard !isWriteInFlight(bundleId.id) else { return .ignored }
+        writeInFlight.insert(bundleId.id)
+        defer { writeInFlight.remove(bundleId.id) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(BundleIdUpdateRequest(
+            data: BundleIdUpdateData(
+                id: bundleId.id,
+                attributes: BundleIdUpdateAttributes(name: trimmedName)
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .getBundleIds, body: data, path: bundleId.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the rename request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(BundleIdModel.self, from: responseData)
+            // Re-locate after the await: the list may have changed
+            // (refresh, pagination) since the rename started.
+            guard case .loaded(var bundleIds) = bundleIdsState,
+                  let index = bundleIds.firstIndex(where: { $0.id == bundleId.id }) else { return .ignored }
+            bundleIds[index] = model
+            bundleIdsState = .loaded(bundleIds)
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to rename bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/bundleIds/{id}. The row is dropped locally on 204;
+    /// callers must confirm first (destructive, cannot be undone).
+    func deleteBundleId(id: String) async -> WriteResult {
+        guard !isWriteInFlight(id) else { return .ignored }
+        writeInFlight.insert(id)
+        defer { writeInFlight.remove(id) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getBundleIds, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the delete request.")
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Re-locate after the await: the list may have changed.
+            guard case .loaded(var bundleIds) = bundleIdsState,
+                  let index = bundleIds.firstIndex(where: { $0.id == id }) else { return .ignored }
+            bundleIds.remove(at: index)
+            bundleIdsState = bundleIds.isEmpty ? .empty : .loaded(bundleIds)
+            if let total = totals[.bundleIds] {
+                totals[.bundleIds] = max(0, total - 1)
+            }
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to delete bundle ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    private func prependBundleId(_ model: BundleIdModel) {
+        guard case .loaded(var bundleIds) = bundleIdsState else {
+            retry(.bundleIds)
+            return
+        }
+        bundleIds.removeAll { $0.id == model.id }
+        bundleIds.insert(model, at: 0)
+        bundleIdsState = .loaded(bundleIds)
+        if let total = totals[.bundleIds] {
+            totals[.bundleIds] = total + 1
+        }
+        searchTexts[.bundleIds] = nil
+        dataVersion += 1
     }
 
     /// Prepends only when the list is loaded — otherwise a failed/idle
