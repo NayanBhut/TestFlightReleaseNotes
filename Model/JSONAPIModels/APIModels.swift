@@ -436,3 +436,192 @@ enum VersionLocalizationLimits {
     static let descriptionMaxLength = 4000
     static let whatsNewMaxLength = 4000
 }
+
+// MARK: - Screenshots (Batch J F4)
+
+// Display types verified against spec v4.3.1 (subset covering the current
+// device lineup; the picker offers these — the server validates the rest).
+enum ScreenshotDisplayType: String, CaseIterable {
+    case iPhone67 = "APP_IPHONE_67"
+    case iPhone61 = "APP_IPHONE_61"
+    case iPhone65 = "APP_IPHONE_65"
+    case iPhone58 = "APP_IPHONE_58"
+    case iPad129 = "APP_IPAD_PRO_3GEN_129"
+    case iPad11 = "APP_IPAD_PRO_3GEN_11"
+    case desktop = "APP_DESKTOP"
+    case watchUltra = "APP_WATCH_ULTRA"
+    case appleTV = "APP_APPLE_TV"
+    case visionPro = "APP_APPLE_VISION_PRO"
+
+    var displayName: String {
+        switch self {
+        case .iPhone67: return "iPhone 6.7\""
+        case .iPhone61: return "iPhone 6.1\""
+        case .iPhone65: return "iPhone 6.5\""
+        case .iPhone58: return "iPhone 5.8\""
+        case .iPad129: return "iPad 12.9\""
+        case .iPad11: return "iPad 11\""
+        case .desktop: return "Desktop"
+        case .watchUltra: return "Watch Ultra"
+        case .appleTV: return "Apple TV"
+        case .visionPro: return "Vision Pro"
+        }
+    }
+}
+
+@ResourceWrapper(type: "appScreenshotSets")
+struct AppScreenshotSetModel: Equatable {
+    static func == (lhs: AppScreenshotSetModel, rhs: AppScreenshotSetModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var screenshotDisplayType: String?
+}
+
+struct HttpHeader: Equatable, Codable {
+    var name: String?
+    var value: String?
+}
+
+struct UploadOperation: Equatable, Codable {
+    var method: String?
+    var url: String?
+    var length: Int?
+    var offset: Int?
+    var requestHeaders: [HttpHeader]?
+}
+
+@ResourceWrapper(type: "appScreenshots")
+struct AppScreenshotModel: Equatable {
+    static func == (lhs: AppScreenshotModel, rhs: AppScreenshotModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var fileName: String?
+    @ResourceAttribute var fileSize: Int?
+    @ResourceAttribute var uploaded: Bool?
+    @ResourceAttribute var sourceFileChecksum: String?
+    @ResourceAttribute var imageAsset: IconAsset?
+    @ResourceAttribute var uploadOperations: [UploadOperation]?
+}
+
+typealias AppScreenshotSetsDocument = CompoundDocument<[AppScreenshotSetModel], Meta>
+typealias AppScreenshotsDocument = CompoundDocument<[AppScreenshotModel], Meta>
+
+/// POST /v1/appScreenshotSets — attributes.screenshotDisplayType required,
+/// relationships.appStoreVersionLocalization required.
+struct ScreenshotSetCreateRequest: Codable {
+    let data: ScreenshotSetCreateData
+}
+
+struct ScreenshotSetCreateData: Codable {
+    let type: String = "appScreenshotSets"
+    let attributes: ScreenshotSetCreateAttributes
+    let relationships: ScreenshotSetLocalizationLinkage
+}
+
+struct ScreenshotSetCreateAttributes: Codable {
+    let screenshotDisplayType: String
+}
+
+struct ScreenshotSetLocalizationLinkage: Codable {
+    let appStoreVersionLocalization: ScreenshotSetLocalizationRef
+}
+
+struct ScreenshotSetLocalizationRef: Codable {
+    let data: ScreenshotSetLocalizationRefData
+}
+
+struct ScreenshotSetLocalizationRefData: Codable {
+    let type: String = "appStoreVersionLocalizations"
+    let id: String
+}
+
+/// POST /v1/appScreenshots — fileName + fileSize required, linked to a set.
+/// The response carries uploadOperations used for the PUT phase.
+struct ScreenshotCreateRequest: Codable {
+    let data: ScreenshotCreateData
+}
+
+struct ScreenshotCreateData: Codable {
+    let type: String = "appScreenshots"
+    let attributes: ScreenshotCreateAttributes
+    let relationships: ScreenshotSetLinkage
+}
+
+struct ScreenshotCreateAttributes: Codable {
+    let fileName: String
+    let fileSize: Int
+}
+
+struct ScreenshotSetLinkage: Codable {
+    let appScreenshotSet: ScreenshotSetRef
+}
+
+struct ScreenshotSetRef: Codable {
+    let data: ScreenshotSetRefData
+}
+
+struct ScreenshotSetRefData: Codable {
+    let type: String = "appScreenshotSets"
+    let id: String
+}
+
+/// PATCH /v1/appScreenshots/{id} — marks the asset uploaded after the
+/// PUT phase completes. sourceFileChecksum is optional; omitted here.
+struct ScreenshotUpdateRequest: Codable {
+    let data: ScreenshotUpdateData
+}
+
+struct ScreenshotUpdateData: Codable {
+    let type: String = "appScreenshots"
+    let id: String
+    let attributes: ScreenshotUpdateAttributes
+}
+
+struct ScreenshotUpdateAttributes: Codable {
+    let uploaded: Bool
+}
+
+// MARK: - In-app events + webhooks (Batch J F5, read-only)
+
+// GET /v1/apps/{id}/appEvents — composed with the /apps prefix + path,
+// like appInfos. Attributes verified against spec v4.3.1 (badge enum:
+// LIVE_EVENT, PREMIERE, CHALLENGE, COMPETITION, NEW_SEASON,
+// MAJOR_UPDATE, SPECIAL_EVENT).
+@ResourceWrapper(type: "appEvents")
+struct AppEventModel: Equatable {
+    static func == (lhs: AppEventModel, rhs: AppEventModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var referenceName: String?
+    @ResourceAttribute var badge: String?
+    /// DRAFT, READY_FOR_REVIEW, WAITING_FOR_REVIEW, IN_REVIEW, ACCEPTED, …
+    @ResourceAttribute var eventState: String?
+}
+
+// GET /v1/apps/{id}/webhooks — same composition. Attributes verified
+// against spec v4.3.1 (enabled: boolean, eventTypes: array, name, url).
+@ResourceWrapper(type: "webhooks")
+struct WebhookModel: Equatable {
+    static func == (lhs: WebhookModel, rhs: WebhookModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var name: String?
+    @ResourceAttribute var url: String?
+    @ResourceAttribute var enabled: Bool?
+    @ResourceAttribute var eventTypes: [String]?
+}
+
+typealias AppEventsDocument = CompoundDocument<[AppEventModel], Meta>
+typealias WebhooksDocument = CompoundDocument<[WebhookModel], Meta>

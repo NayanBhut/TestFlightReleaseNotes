@@ -10,6 +10,10 @@ import SwiftUI
 struct VersionChip: View {
     let version: PreReleaseVersionsModel
     let isSelected: Bool
+    /// When provided, the selected background slides between chips via
+    /// matchedGeometryEffect instead of cross-fading in place. Nil keeps
+    /// the legacy static background (previews, other callers).
+    var selectionNamespace: Namespace.ID?
     
     var body: some View {
         Text(version.version ?? "Unknown")
@@ -17,10 +21,16 @@ struct VersionChip: View {
             .fontWeight(isSelected ? .semibold : .regular)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? AppTheme.accent : AppTheme.secondaryBackground)
-            )
+            .background {
+                if isSelected, let namespace = selectionNamespace {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(AppTheme.accent)
+                        .matchedGeometryEffect(id: "versionSelection", in: namespace)
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? AppTheme.accent : AppTheme.secondaryBackground)
+                }
+            }
             .foregroundColor(isSelected ? .white : .primary)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)

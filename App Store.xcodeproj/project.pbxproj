@@ -27,6 +27,9 @@
 		B47A0015B47A0015001A9E15 /* AppInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0014B47A0014001A9E14 /* AppInfoView.swift */; };
 		B47A0017B47A0017001A9E17 /* ReviewsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0016B47A0016001A9E16 /* ReviewsViewModel.swift */; };
 		B47A0019B47A0019001A9E19 /* ReviewsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0018B47A0018001A9E18 /* ReviewsView.swift */; };
+		B47A0023B47A0023001A9E23 /* ReportsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */; };
+		B47A0025B47A0025001A9E25 /* ReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0024B47A0024001A9E24 /* ReportsView.swift */; };
+		B47A0029B47A0029001A9E29 /* ScreenshotsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */; };
 		B47A001BB47A001B001A9E1B /* ResourcesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */; };
 		B47A001DB47A001D001A9E1D /* ResourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A001CB47A001C001A9E1C /* ResourcesView.swift */; };
 		CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */; };
@@ -92,6 +95,9 @@
 		B47A0014B47A0014001A9E14 /* AppInfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoView.swift; sourceTree = "<group>"; };
 		B47A0016B47A0016001A9E16 /* ReviewsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsViewModel.swift; sourceTree = "<group>"; };
 		B47A0018B47A0018001A9E18 /* ReviewsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsView.swift; sourceTree = "<group>"; };
+		B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsViewModel.swift; sourceTree = "<group>"; };
+		B47A0024B47A0024001A9E24 /* ReportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsView.swift; sourceTree = "<group>"; };
+		B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotsSheet.swift; sourceTree = "<group>"; };
 		B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourcesViewModel.swift; sourceTree = "<group>"; };
 		B47A001CB47A001C001A9E1C /* ResourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourcesView.swift; sourceTree = "<group>"; };
 		CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigs.swift; sourceTree = "<group>"; };
@@ -186,6 +192,7 @@
 			isa = PBXGroup;
 			children = (
 				B47A0014B47A0014001A9E14 /* AppInfoView.swift */,
+				B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */,
 			);
 			path = AppInfo;
 			sourceTree = "<group>";
@@ -197,6 +204,15 @@
 				B47A0018B47A0018001A9E18 /* ReviewsView.swift */,
 			);
 			path = Reviews;
+			sourceTree = "<group>";
+		};
+		B47A0027B47A0027001A9E27 /* Reports */ = {
+			isa = PBXGroup;
+			children = (
+				B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */,
+				B47A0024B47A0024001A9E24 /* ReportsView.swift */,
+			);
+			path = Reports;
 			sourceTree = "<group>";
 		};
 		B47A0020B47A0020001A9E20 /* Resources */ = {
@@ -313,6 +329,7 @@
 				B47A0007B47A0007001A9E07 /* Beta */,
 				B47A001EB47A001E001A9E1E /* AppInfo */,
 				B47A001FB47A001F001A9E1F /* Reviews */,
+				B47A0027B47A0027001A9E27 /* Reports */,
 			);
 			path = DetailView;
 			sourceTree = "<group>";
@@ -491,6 +508,9 @@
 				B47A0015B47A0015001A9E15 /* AppInfoView.swift in Sources */,
 				B47A0017B47A0017001A9E17 /* ReviewsViewModel.swift in Sources */,
 				B47A0019B47A0019001A9E19 /* ReviewsView.swift in Sources */,
+				B47A0023B47A0023001A9E23 /* ReportsViewModel.swift in Sources */,
+				B47A0025B47A0025001A9E25 /* ReportsView.swift in Sources */,
+				B47A0029B47A0029001A9E29 /* ScreenshotsSheet.swift in Sources */,
 				B47A001BB47A001B001A9E1B /* ResourcesViewModel.swift in Sources */,
 				8D00F6222DCB34BC004CCA36 /* StateView.swift in Sources */,
 				B47A001DB47A001D001A9E1D /* ResourcesView.swift in Sources */,
@@ -582,7 +602,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -642,7 +662,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -741,7 +761,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.demos.App-Store-Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -776,7 +796,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.demos.App-Store-Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
