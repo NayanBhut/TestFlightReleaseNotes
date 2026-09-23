@@ -19,13 +19,13 @@ struct VersionChip: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                    .fill(isSelected ? AppTheme.accent : AppTheme.secondaryBackground)
             )
             .foregroundColor(isSelected ? .white : .primary)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
+                    .stroke(isSelected ? Color.clear : AppTheme.border, lineWidth: 1)
             )
-            .shadow(color: isSelected ? Color.accentColor.opacity(0.3) : .clear, radius: 4, x: 0, y: 2)
+            .shadow(color: isSelected ? AppTheme.accent.opacity(0.3) : .clear, radius: 4, x: 0, y: 2)
     }
 }

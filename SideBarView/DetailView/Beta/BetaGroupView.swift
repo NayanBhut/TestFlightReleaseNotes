@@ -121,7 +121,7 @@ struct BetaGroupView: View {
     private var header: some View {
         HStack {
             Text("Beta Groups")
-                .font(.title2)
+                .font(.sectionHeader)
                 .fontWeight(.semibold)
             Spacer()
             if !betaViewModel.groups.isEmpty {
@@ -156,7 +156,7 @@ struct BetaGroupView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppTheme.secondaryBackground)
     }
 
     // MARK: - Groups List
@@ -168,18 +168,18 @@ struct BetaGroupView: View {
             let isSelected = betaViewModel.selectedGroup?.id == group.id
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(isSelected ? Color.accentColor : Color.clear)
+                    .fill(isSelected ? AppTheme.accent : Color.clear)
                     .frame(width: 3)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(group.name ?? "Unnamed group")
-                        .font(.headline)
+                        .font(.subheader)
                     HStack(spacing: 6) {
                         Text(group.isInternalGroup == true ? "Internal" : "External")
                             .font(.caption)
                             .fontWeight(.medium)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background((group.isInternalGroup == true ? Color.blue : Color.green).opacity(0.15))
+                            .background((group.isInternalGroup == true ? Color.blue : AppTheme.readyForSale).opacity(0.15))
                             .foregroundColor(group.isInternalGroup == true ? .blue : .green)
                             .cornerRadius(4)
                         if group.publicLinkEnabled == true {
@@ -201,7 +201,7 @@ struct BetaGroupView: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 6)
             .background(RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear))
+                .fill(isSelected ? AppTheme.accent.opacity(0.1) : Color.clear))
             .contentShape(Rectangle())
             .onTapGesture { betaViewModel.selectGroup(group) }
         }
@@ -220,7 +220,7 @@ struct BetaGroupView: View {
                         if isRenamingGroup {
                             TextField("Group name", text: $draftGroupName)
                                 .textFieldStyle(.roundedBorder)
-                                .font(.title3)
+                                .font(.subheader)
                                 .disabled(betaViewModel.updatingGroupId != nil)
                             Button("Cancel") {
                                 isRenamingGroup = false
@@ -244,7 +244,7 @@ struct BetaGroupView: View {
                             }
                         } else {
                             Text(group.name ?? "Unnamed group")
-                                .font(.title3)
+                                .font(.subheader)
                                 .fontWeight(.semibold)
                             Spacer()
                             if betaViewModel.updatingGroupId == group.id {
@@ -312,7 +312,7 @@ struct BetaGroupView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Testers")
-                    .font(.headline)
+                    .font(.subheader)
                 Spacer()
                 if betaViewModel.viewState == .betaTestersLoading {
                     ProgressView().scaleEffect(0.7)
@@ -347,14 +347,14 @@ struct BetaGroupView: View {
                 LoadingStateView(text: "Loading testers...")
             } else if betaViewModel.testers.isEmpty {
                 Text("No testers in this group yet. Invite one to get started.")
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
                 List(betaViewModel.testers, id: \.id) { tester in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(tester.displayName).font(.subheadline).fontWeight(.medium)
+                            Text(tester.displayName).font(.body).fontWeight(.medium)
                             Text(tester.email ?? "")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -365,7 +365,7 @@ struct BetaGroupView: View {
                                 .font(.caption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.15))
+                                .background(AppTheme.secondaryText.opacity(0.15))
                                 .cornerRadius(4)
                         }
                         if betaViewModel.updatingTesterId == tester.id {
@@ -442,7 +442,7 @@ struct BetaGroupView: View {
                         .foregroundColor(.green)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(result.displayName)
-                            .font(.subheadline)
+                            .font(.body)
                             .fontWeight(.medium)
                         Text("\(result.email ?? "") is already an invited tester of this app.")
                             .font(.caption)
@@ -456,7 +456,7 @@ struct BetaGroupView: View {
                             .fontWeight(.medium)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background((inGroup ? Color.green : Color.orange).opacity(0.15))
+                            .background((inGroup ? AppTheme.readyForSale : AppTheme.pending).opacity(0.15))
                             .foregroundColor(inGroup ? .green : .orange)
                             .cornerRadius(4)
                         if !inGroup {
@@ -469,19 +469,19 @@ struct BetaGroupView: View {
                     }
                 }
                 .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.06)))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.3), lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.readyForSale.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.readyForSale.opacity(0.3), lineWidth: 1))
             } else if !betaViewModel.isSearching {
                 HStack(spacing: 8) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.orange)
                     Text("\(betaViewModel.searchText) is not invited to this app.")
-                        .font(.subheadline)
+                        .font(.body)
                     Spacer()
                 }
                 .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.06)))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.3), lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.pending.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.pending.opacity(0.3), lineWidth: 1))
             }
         }
     }
@@ -494,7 +494,7 @@ struct BetaGroupView: View {
     private var createGroupSheet: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New Beta Group")
-                .font(.headline)
+                .font(.subheader)
             TextField("Group name (required)", text: $newGroupName)
                 .textFieldStyle(.roundedBorder)
                 .disabled(isCreatingGroup)
@@ -573,7 +573,7 @@ struct BetaGroupView: View {
     private var inviteSheet: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Invite Beta Tester")
-                .font(.headline)
+                .font(.subheader)
             // Team picker: search + tap fills the fields below (manual
             // entry still works for people outside the team).
             TextField("Search team members…", text: $inviteUserSearch)
@@ -605,7 +605,7 @@ struct BetaGroupView: View {
                                     HStack(spacing: 8) {
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text("\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces).isEmpty ? (user.username ?? "Unknown user") : "\(user.firstName ?? "") \(user.lastName ?? "")")
-                                                .font(.subheadline)
+                                                .font(.body)
                                                 .foregroundColor(.primary)
                                             Text(user.username ?? "")
                                                 .font(.caption)
@@ -620,7 +620,7 @@ struct BetaGroupView: View {
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 5)
                                     .background(RoundedRectangle(cornerRadius: 6)
-                                        .fill(pickedTeamUserId == user.id ? Color.accentColor.opacity(0.12) : Color.clear))
+                                        .fill(pickedTeamUserId == user.id ? AppTheme.accent.opacity(0.12) : Color.clear))
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
@@ -683,12 +683,12 @@ struct BetaGroupView: View {
     private func buildsSection(group: BetaGroupModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Builds & External Review")
-                .font(.headline)
+                .font(.subheader)
                 .padding(.top, 8)
 
             if builds.isEmpty {
                 Text("Select a version with builds to assign or submit for review.")
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundColor(.secondary)
             } else {
                 HStack {
@@ -753,7 +753,7 @@ struct BetaGroupView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Auto-notify testers")
-                    .font(.subheadline)
+                    .font(.body)
                 Spacer()
                 if isBusy {
                     ProgressView().scaleEffect(0.7)
@@ -775,7 +775,7 @@ struct BetaGroupView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("External review status")
-                        .font(.subheadline)
+                        .font(.body)
                     if let reviewState {
                         Text(reviewStatusLabel(reviewState))
                             .font(.caption)
@@ -810,7 +810,7 @@ struct BetaGroupView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
     }
 
     private func reviewStatusLabel(_ state: String) -> String {

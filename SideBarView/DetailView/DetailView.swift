@@ -63,7 +63,7 @@ struct DetailView: View {
                     ProgressView()
                         .scaleEffect(1.2)
                     Text("Loading versions...")
-                        .font(.subheadline)
+                        .font(.body)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -74,7 +74,7 @@ struct DetailView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Text("Versions")
-                                    .font(.title2)
+                                    .font(.sectionHeader)
                                     .fontWeight(.semibold)
 
                                 Spacer()
@@ -88,7 +88,7 @@ struct DetailView: View {
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(AppTheme.secondaryBackground)
 
                         Divider()
                     }
@@ -196,7 +196,7 @@ struct DetailView: View {
             Spacer()
             VStack(spacing: 4) {
                 Text(title)
-                    .font(.subheadline)
+                    .font(.body)
                     .fontWeight(.medium)
                 Text(message)
                     .font(.caption)
@@ -228,51 +228,59 @@ struct DetailView: View {
                 }
             }
 
-            switch effectiveTab {
-            case .builds:
-                BuildDetailsView(
-                    viewModel: viewModel,
-                    refreshBuildList: {
-                        guard let version = viewModel.selectedVersion else { return }
-                        viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
-                    },
-                    loadMoreBuild: {
-                        guard let nextPage = viewModel.nextPageCursor,
-                              let version = viewModel.selectedVersion else { return }
-                        viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
-                    }
-                )
-            case .betaGroups:
-                BetaGroupView(
-                    betaViewModel: betaViewModel,
-                    selectedApp: viewModel.selectedApp,
-                    builds: viewModel.arrBuilds,
-                    selectedVersionString: viewModel.selectedVersion?.version ?? ""
-                )
-            case .appInfo:
-                AppInfoView(
-                    viewModel: viewModel,
-                    selectedApp: viewModel.selectedApp
-                )
-            case .reviews:
-                ReviewsView(
-                    reviewsViewModel: reviewsViewModel,
-                    selectedApp: viewModel.selectedApp
-                )
+            Group {
+                switch effectiveTab {
+                case .builds:
+                    BuildDetailsView(
+                        viewModel: viewModel,
+                        refreshBuildList: {
+                            guard let version = viewModel.selectedVersion else { return }
+                            viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
+                        },
+                        loadMoreBuild: {
+                            guard let nextPage = viewModel.nextPageCursor,
+                                  let version = viewModel.selectedVersion else { return }
+                            viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextPage)
+                        }
+                    )
+                case .betaGroups:
+                    BetaGroupView(
+                        betaViewModel: betaViewModel,
+                        selectedApp: viewModel.selectedApp,
+                        builds: viewModel.arrBuilds,
+                        selectedVersionString: viewModel.selectedVersion?.version ?? ""
+                    )
+                case .appInfo:
+                    AppInfoView(
+                        viewModel: viewModel,
+                        selectedApp: viewModel.selectedApp
+                    )
+                case .reviews:
+                    ReviewsView(
+                        reviewsViewModel: reviewsViewModel,
+                        selectedApp: viewModel.selectedApp
+                    )
+                }
             }
+            // Crossfade + slight slide on tab switch. Keyed to the
+            // effective tab (not the picker selection) so hidden-tab
+            // clamps animate instead of popping.
+            .id(effectiveTab)
+            .transition(.opacity.combined(with: .move(edge: .trailing)))
+            .animation(.easeInOut(duration: 0.22), value: effectiveTab)
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "app.badge")
                     .font(.system(size: 48))
                     .foregroundColor(.secondary)
                 Text("No App Selected")
-                    .font(.title3)
+                    .font(.subheader)
                     .fontWeight(.medium)
                 if credentialStorage.teams.isEmpty {
                     // Instructional text alone strands the user — offer the
                     // same Add Team entry point the sidebar has.
                     Text("Add a team to get started")
-                        .font(.subheadline)
+                        .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                     if let onAddTeam {
@@ -281,7 +289,7 @@ struct DetailView: View {
                     }
                 } else {
                     Text("Select an app from the sidebar to view versions and builds")
-                        .font(.subheadline)
+                        .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }

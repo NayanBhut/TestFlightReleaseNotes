@@ -23,7 +23,6 @@
 //
 
 import SwiftUI
-import AppKit
 
 /// Sidebar section listing the five team-scoped resource kinds.
 struct ResourcesSectionView: View {
@@ -55,7 +54,7 @@ struct ResourcesSectionView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Text("Resources")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.semibold)
                     Spacer()
                     Text("Team-wide")
@@ -79,7 +78,7 @@ struct ResourcesSectionView: View {
                                 .foregroundColor(.secondary)
                                 .frame(width: 16)
                             Text(kind.displayName)
-                                .font(.subheadline)
+                                .font(.body)
                                 .foregroundColor(.primary)
                             Spacer()
                             Image(systemName: "chevron.right")
@@ -186,7 +185,7 @@ struct ResourceListContentView: View {
     private var header: some View {
         HStack {
             Label(kind.displayName, systemImage: kind.systemImage)
-                .font(.title3)
+                .font(.subheader)
                 .fontWeight(.semibold)
             Spacer()
             if let total = viewModel.totals[kind] {
@@ -276,7 +275,7 @@ struct ResourceListContentView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppTheme.secondaryBackground)
     }
 
     // MARK: - Content
@@ -289,7 +288,7 @@ struct ResourceListContentView: View {
                 ProgressView()
                     .scaleEffect(1.1)
                 Text("Loading \(kind.displayName.lowercased())...")
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -301,9 +300,9 @@ struct ResourceListContentView: View {
                     .font(.system(size: 40))
                     .foregroundColor(.secondary)
                 Text("No \(kind.displayName.lowercased()) found")
-                    .font(.headline)
+                    .font(.subheader)
                 Text(kind.subtitle)
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -354,7 +353,7 @@ struct ResourceListContentView: View {
 
             TextField("Search \(kind.displayName.lowercased())", text: viewModel.searchBinding(for: kind))
                 .textFieldStyle(.plain)
-                .font(.subheadline)
+                .font(.body)
 
             if !viewModel.searchText(for: kind).isEmpty {
                 Button {
@@ -371,11 +370,11 @@ struct ResourceListContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(AppTheme.textBackgroundColor)
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                .stroke(AppTheme.border, lineWidth: 1)
         )
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -389,10 +388,10 @@ struct ResourceListContentView: View {
                 .font(.system(size: 40))
                 .foregroundColor(.secondary)
             Text("No Matches")
-                .font(.title3)
+                .font(.subheader)
                 .fontWeight(.medium)
             Text("No \(kind.displayName.lowercased()) match \"\(viewModel.searchText(for: kind))\"")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
             if viewModel.nextCursors[kind] != nil {
@@ -500,7 +499,7 @@ struct ResourceListContentView: View {
                 .padding(.vertical, 8)
             }
             // Chrome background so rows never peek through behind the pinned bar.
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(AppTheme.secondaryBackground)
         }
     }
 }
@@ -550,11 +549,11 @@ private struct RegisterDeviceForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Register Device")
-                .font(.subheadline)
+                .font(.body)
                 .fontWeight(.medium)
             TextField("Device name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
+                .font(.body)
                 .disabled(isSaving)
             HStack {
                 Picker("Platform", selection: $platform) {
@@ -615,7 +614,7 @@ private struct RegisterDeviceForm: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppTheme.windowBackground)
     }
 }
 
@@ -632,7 +631,7 @@ private struct CreateCertificateForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Certificate")
-                .font(.subheadline)
+                .font(.body)
                 .fontWeight(.medium)
             Picker("Type", selection: $certificateType) {
                 ForEach(CertificateTypeOption.allCases, id: \.self) { option in
@@ -644,7 +643,7 @@ private struct CreateCertificateForm: View {
             TextEditor(text: $csrContent)
                 .font(.system(size: 11, design: .monospaced))
                 .frame(minHeight: 70, maxHeight: 120)
-                .border(Color.gray.opacity(0.3), width: 1)
+                .border(AppTheme.border, width: 1)
                 .accessibilityLabel("Certificate signing request content")
                 .disabled(isSaving)
             Text("Paste the CSR content. Needs an API key with the Admin role.")
@@ -689,7 +688,7 @@ private struct CreateCertificateForm: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppTheme.windowBackground)
     }
 }
 
@@ -708,11 +707,11 @@ private struct CreateBundleIdForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Bundle ID")
-                .font(.subheadline)
+                .font(.body)
                 .fontWeight(.medium)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
+                .font(.body)
                 .disabled(isSaving)
             TextField("Bundle identifier (e.g. com.example.app)", text: $identifier)
                 .textFieldStyle(.roundedBorder)
@@ -779,7 +778,7 @@ private struct CreateBundleIdForm: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppTheme.windowBackground)
     }
 }
 
@@ -799,7 +798,7 @@ private struct RoleMultiSelect: View {
                     }
                 ))
                 .toggleStyle(.checkbox)
-                .font(.subheadline)
+                .font(.body)
             }
         }
     }
@@ -830,17 +829,17 @@ private struct RoleDropdownMenu: View {
             }
         } label: {
             Text(label)
-                .font(.subheadline)
+                .font(.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(AppTheme.textBackgroundColor)
         .cornerRadius(6)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                .stroke(AppTheme.border, lineWidth: 1)
         )
     }
 }
@@ -877,20 +876,20 @@ private struct InviteUserForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Invite User")
-                .font(.subheadline)
+                .font(.body)
                 .fontWeight(.medium)
             TextField("Email", text: $email)
                 .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
+                .font(.body)
                 .disabled(isBusy)
             HStack(spacing: 8) {
                 TextField("First name", text: $firstName)
                     .textFieldStyle(.roundedBorder)
-                    .font(.subheadline)
+                    .font(.body)
                     .disabled(isBusy)
                 TextField("Last name", text: $lastName)
                     .textFieldStyle(.roundedBorder)
-                    .font(.subheadline)
+                    .font(.body)
                     .disabled(isBusy)
             }
             Text("Roles")
@@ -899,7 +898,7 @@ private struct InviteUserForm: View {
             RoleDropdownMenu(selection: $roles)
                 .disabled(isBusy)
             Toggle("All apps visible", isOn: $allAppsVisible)
-                .font(.subheadline)
+                .font(.body)
                 .disabled(isBusy)
                 .onChange(of: allAppsVisible) { _, newValue in
                     // Turning all-apps back on drops the per-app picks so
@@ -924,7 +923,7 @@ private struct InviteUserForm: View {
                 .disabled(isBusy)
             }
             Toggle("Provisioning allowed", isOn: $provisioningAllowed)
-                .font(.subheadline)
+                .font(.body)
                 .disabled(isBusy)
             Text("Needs an API key with the Admin role. Invites count against the team member limit.")
                 .font(.caption2)
@@ -972,7 +971,7 @@ private struct InviteUserForm: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppTheme.windowBackground)
     }
 
     private enum InviteMode {
@@ -1047,11 +1046,11 @@ private struct CreateProfileForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Provisioning Profile")
-                .font(.subheadline)
+                .font(.body)
                 .fontWeight(.medium)
             TextField("Profile name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
+                .font(.body)
                 .disabled(isSaving)
             Picker("Type", selection: $profileType) {
                 ForEach(ProfileTypeOption.allCases, id: \.self) { option in
@@ -1156,7 +1155,7 @@ private struct CreateProfileForm: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppTheme.windowBackground)
         .onAppear {
             // Relationship pickers reuse the existing fetches — load() is a
             // no-op for kinds already loaded, so this never refetches.
@@ -1236,17 +1235,17 @@ private struct ChecklistDropdownMenu: View {
                 }
             } label: {
                 Text(label)
-                    .font(.subheadline)
+                    .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .menuStyle(.borderlessButton)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(AppTheme.textBackgroundColor)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    .stroke(AppTheme.border, lineWidth: 1)
             )
         }
     }
@@ -1319,7 +1318,7 @@ private struct DeviceRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.name ?? "Unknown device")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
                     StateChip(text: device.status ?? "")
                 }
@@ -1369,7 +1368,7 @@ private struct DeviceRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
     }
 }
 
@@ -1394,7 +1393,7 @@ private struct CertificateRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(certificate.displayName ?? certificate.name ?? "Unknown certificate")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
                     if certificate.activated == true {
                         StateChip(text: "ACTIVE")
@@ -1435,7 +1434,7 @@ private struct CertificateRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
         .alert("Revoke this certificate?", isPresented: $showRevokeConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Revoke", role: .destructive) {
@@ -1470,11 +1469,11 @@ private struct BundleIdRow: View {
                 if isRenaming {
                     TextField("Bundle ID name", text: $draftName)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isBusy)
                 } else {
                     Text(bundleId.name ?? "Unknown identifier")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
                 }
                 Text(bundleId.identifier ?? "")
@@ -1548,7 +1547,7 @@ private struct BundleIdRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
         .alert("Delete this bundle ID?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
@@ -1580,7 +1579,7 @@ private struct ProfileRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(profile.name ?? "Unknown profile")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
                     StateChip(text: profile.profileState ?? "")
                 }
@@ -1624,7 +1623,7 @@ private struct ProfileRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
         .alert("Delete this profile?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
@@ -1653,7 +1652,7 @@ private struct RoleChips: View {
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
+                    .background(AppTheme.secondaryText.opacity(0.12))
                     .cornerRadius(4)
             }
         }
@@ -1680,7 +1679,7 @@ private struct InvitationRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(invitation.email ?? "Unknown email")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
                         .textSelection(.enabled)
                     Text("Pending")
@@ -1688,7 +1687,7 @@ private struct InvitationRow: View {
                         .foregroundColor(.orange)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.12))
+                        .background(AppTheme.pending.opacity(0.12))
                         .cornerRadius(4)
                 }
                 Text("\(invitation.firstName ?? "") \(invitation.lastName ?? "")")
@@ -1733,7 +1732,7 @@ private struct InvitationRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
         .alert("Revoke this invitation?", isPresented: $showRevokeConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Revoke", role: .destructive) {
@@ -1784,7 +1783,7 @@ private struct UserRow: View {
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(user.username ?? "Unknown user")
-                    .font(.subheadline)
+                    .font(.body)
                     .fontWeight(.medium)
                     .textSelection(.enabled)
                 Text("\(user.firstName ?? "") \(user.lastName ?? "")")
@@ -1870,7 +1869,7 @@ private struct UserRow: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.secondaryBackground))
         .alert("Remove this user?", isPresented: $showRemoveConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Remove", role: .destructive) {

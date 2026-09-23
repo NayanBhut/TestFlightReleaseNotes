@@ -32,7 +32,7 @@ struct ContentView: View {
             }
 
             if showAlertView {
-                Color.black.opacity(0.8)
+                AppTheme.overlay
                     .edgesIgnoringSafeArea(.all)
                     .onTapGesture {
                         showAlertView = false
@@ -65,6 +65,5 @@ private struct ContentViewPreview: View {
     var body: some View {
         ContentView(viewModel: viewModel)
             .environmentObject(NavigationManager())
-            .environmentObject(ExportManager())
     }
 }

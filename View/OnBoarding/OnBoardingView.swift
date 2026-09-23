@@ -23,11 +23,11 @@ struct OnBoardingView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Add Team Details")
-                        .font(.title2)
+                        .font(.sectionHeader)
                         .fontWeight(.semibold)
 
                     Text("Enter your App Store Connect API credentials")
-                        .font(.subheadline)
+                        .font(.body)
                         .foregroundColor(.secondary)
                 }
 
@@ -56,7 +56,7 @@ struct OnBoardingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Private Key (.p8) (Add key without space and remove top private key when copy paste)")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
 
                     Text("*")
@@ -81,11 +81,11 @@ struct OnBoardingView: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 100)
                     .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor))
+                    .background(AppTheme.textBackgroundColor)
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            .stroke(AppTheme.border, lineWidth: 1)
                     )
                     .scrollContentBackground(.hidden)
             }
@@ -142,7 +142,7 @@ struct OnBoardingView: View {
         .frame(width: 450)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(nsColor: .windowBackgroundColor))
+                .fill(AppTheme.windowBackground)
         )
         .shadow(color: .black.opacity(0.15), radius: 30, x: 0, y: 15)
         .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
@@ -171,7 +171,7 @@ struct OnBoardingField: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.subheadline)
+                    .font(.body)
                     .fontWeight(.medium)
 
                 if isRequired {
@@ -183,11 +183,11 @@ struct OnBoardingField: View {
             TextField(title, text: $text)
                 .textFieldStyle(.plain)
                 .padding(8)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(AppTheme.textBackgroundColor)
                 .cornerRadius(6)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        .stroke(AppTheme.border, lineWidth: 1)
                 )
         }
     }

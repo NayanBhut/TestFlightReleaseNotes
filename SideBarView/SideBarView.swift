@@ -10,29 +10,21 @@ import AppKit
 
 struct SideBarView: View {
     @StateObject var viewModel: SideBarViewModel
-    /// Batch C2: owned here (not inside ResourcesSectionView) so team
-    /// switches can reset it — a sheet-scoped VM would keep showing the
-    /// previous team's resources.
     @StateObject private var resourcesViewModel = ResourcesViewModel()
-    @Environment(\.colorScheme) var colorScheme
-    /// Observed (published) team list — a bare CredentialStorage.shared
-    /// read in body is an untracked dependency: the Add Team buttons and
-    /// empty-state copy would go stale after the first team is added.
     @ObservedObject private var credentialStorage = CredentialStorage.shared
     @Binding var isAddNewTeam: Bool
     @Binding var isNewAccountAdded: Bool
     @State var showTeams = false
-    /// Batch C flag: one switch that shows/hides the Resources section here
-    /// plus the App Info and Reviews tabs in DetailView (same UserDefaults
-    /// key, kept in sync by @AppStorage).
     @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
+    @EnvironmentObject var appCommands: AppCommandStore
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
                 HStack {
                     Text("Apps")
-                        .font(.title2)
+                        .font(.sectionHeader)
                         .fontWeight(.semibold)
 
                     Spacer()
@@ -59,18 +51,45 @@ struct SideBarView: View {
                     .buttonStyle(.plain)
                     .help("Add Team")
 
-                    Button(action: {
-                        viewModel.retryApps()
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 16))
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut("r", modifiers: .command)
-                    .disabled(viewModel.isAppsLoading)
-                    .help("Refresh (Cmd+R)")
-                    .accessibilityLabel("Refresh Apps")
-                }
+                      Button(action: {
+                          viewModel.retryApps()
+                      }) {
+                          Image(systemName: "arrow.clockwise")
+                              .font(.system(size: 16))
+                              // Spins while the apps fetch is in flight.
+                              .rotationEffect(.degrees(viewModel.isAppsLoading ? 360 : 0))
+                              .animation(
+                                  .linear(duration: 0.9).repeatForever(autoreverses: false),
+                                  value: viewModel.isAppsLoading
+                              )
+                      }
+                     .buttonStyle(.plain)
+                     .keyboardShortcut("r", modifiers: .command)
+                     .disabled(viewModel.isAppsLoading)
+                     .help("Refresh (Cmd+R)")
+                     .accessibilityLabel("Refresh Apps")
+
+                     Button(action: {
+                         AppAppearance.toggle()
+                     }) {
+                         Image(systemName: colorScheme == .dark ? "sun.max.fill" : "moon.fill")
+                             .font(.system(size: 16))
+                     }
+                     .buttonStyle(.plain)
+                     .help("Toggle Dark Mode (⌘D)")
+                     .accessibilityLabel("Toggle Dark Mode")
+
+                     Button(action: {
+                         appCommands.showPalette = true
+                     }) {
+                         Image(systemName: "magnifyingglass")
+                             .font(.system(size: 16))
+                     }
+                     .buttonStyle(.plain)
+                     .keyboardShortcut("k", modifiers: .command)
+                     .help("Command Palette (⌘K)")
+                     .accessibilityLabel("Command Palette")
+                 }
 
                 teamSelector()
 
@@ -83,7 +102,7 @@ struct SideBarView: View {
 
                     TextField("Search apps...", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
-                        .font(.subheadline)
+                        .font(.body)
 
                     if !viewModel.searchText.isEmpty {
                         Button {
@@ -100,11 +119,11 @@ struct SideBarView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(AppTheme.textBackgroundColor)
                 .cornerRadius(8)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        .stroke(AppTheme.border, lineWidth: 1)
                 )
 
                 // State filter and sort side by side
@@ -124,7 +143,7 @@ struct SideBarView: View {
                 }
             }
             .padding(16)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(AppTheme.secondaryBackground)
 
             Divider()
 
@@ -202,7 +221,7 @@ struct SideBarView: View {
                         .foregroundColor(.secondary)
 
                     Text(CredentialStorage.shared.selectedTeam?.key ?? "No Team")
-                        .font(.subheadline)
+                        .font(.body)
                         .foregroundColor(.primary)
 
                     Spacer()
@@ -213,11 +232,11 @@ struct SideBarView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(AppTheme.textBackgroundColor)
                 .cornerRadius(8)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        .stroke(AppTheme.border, lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -227,7 +246,7 @@ struct SideBarView: View {
                     ForEach(credentialStorage.teams, id: \.self) { team in
                         HStack {
                             Text(team)
-                                .font(.subheadline)
+                                .font(.body)
                                 .foregroundColor(.primary)
 
                             Spacer()
@@ -259,7 +278,7 @@ struct SideBarView: View {
                         .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(nsColor: .textBackgroundColor))
+                                .fill(AppTheme.textBackgroundColor)
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -274,7 +293,7 @@ struct SideBarView: View {
                 .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .fill(AppTheme.windowBackground)
                         .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
@@ -309,11 +328,11 @@ struct SideBarView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(AppTheme.textBackgroundColor)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    .stroke(AppTheme.border, lineWidth: 1)
             )
         }
         .menuStyle(.borderlessButton)
@@ -343,11 +362,11 @@ struct SideBarView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(AppTheme.textBackgroundColor)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    .stroke(AppTheme.border, lineWidth: 1)
             )
         }
         .menuStyle(.borderlessButton)
@@ -361,7 +380,7 @@ struct SideBarView: View {
                 ProgressView()
                     .scaleEffect(1.2)
                 Text("Loading apps...")
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -426,10 +445,10 @@ struct SideBarView: View {
                     // no team exists yet.
                     if credentialStorage.teams.isEmpty {
                         Text("No Teams Yet")
-                            .font(.title3)
+                            .font(.subheader)
                             .fontWeight(.medium)
                         Text("Add a team to load its apps")
-                            .font(.subheadline)
+                            .font(.body)
                             .foregroundColor(.secondary)
                         Button("Add Team") {
                             isAddNewTeam = true
@@ -438,10 +457,10 @@ struct SideBarView: View {
                         .padding(.vertical, 4)
                     } else {
                         Text("No Apps Found")
-                            .font(.title3)
+                            .font(.subheader)
                             .fontWeight(.medium)
                         Text("No iOS apps are available for this team")
-                            .font(.subheadline)
+                            .font(.body)
                             .foregroundColor(.secondary)
                     }
                     Button("Refresh") {
@@ -473,10 +492,10 @@ struct SideBarView: View {
                 .font(.system(size: 40))
                 .foregroundColor(.secondary)
             Text("No Matching Apps")
-                .font(.title3)
+                .font(.subheader)
                 .fontWeight(.medium)
             Text("No apps match the current search")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundColor(.secondary)
             Button("Clear Search") {
                 viewModel.clearSearch()
@@ -499,11 +518,11 @@ struct AppRowView: View {
 
             // Selection indicator
             RoundedRectangle(cornerRadius: 2)
-                .fill(isSelected ? Color.accentColor : Color.clear)
+                .fill(isSelected ? AppTheme.accent : Color.clear)
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.name ?? "Unknown App")
-                    .font(.headline)
+                    .font(.subheader)
                     .foregroundColor(.primary)
 
                 HStack(spacing: 8) {
@@ -542,11 +561,11 @@ struct AppRowView: View {
         .padding(.horizontal, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
+                .fill(isSelected ? AppTheme.accent.opacity(0.1) : Color.clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? AppTheme.accent.opacity(0.3) : Color.clear, lineWidth: 1)
         )
     }
 

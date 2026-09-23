@@ -53,7 +53,7 @@ struct AppInfoView: View {
     private func header(app: AppsData) -> some View {
         HStack {
             Text("App Info")
-                .font(.title2)
+                .font(.sectionHeader)
                 .fontWeight(.semibold)
             Spacer()
             Text(app.name ?? "")
@@ -71,7 +71,7 @@ struct AppInfoView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppTheme.secondaryBackground)
     }
 
     // MARK: - General
@@ -337,19 +337,19 @@ struct AppInfoLocalizationRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Name (2–30 characters)", text: $name)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     TextField("Subtitle (up to 30 characters)", text: $subtitle)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     TextField("Privacy Policy URL", text: $privacyPolicyUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     TextField("Privacy Choices URL", text: $privacyChoicesUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     // Blank draft over a saved value clears that field.
                     Text("Blank a field to clear it. Edits apply only while the app info is in an editable state.")
@@ -399,7 +399,7 @@ struct AppInfoLocalizationRow: View {
                     }
                 }
                 .padding(8)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(AppTheme.windowBackground)
                 .cornerRadius(6)
             }
         }
@@ -449,7 +449,7 @@ struct VersionLocalizationRow: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(localization.locale ?? "Locale")
-                        .font(.subheadline)
+                        .font(.body)
                         .fontWeight(.medium)
                     InfoRow(label: "Description", value: localization.descriptionData)
                     InfoRow(label: "Keywords", value: localization.keywords)
@@ -484,37 +484,37 @@ struct VersionLocalizationRow: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $descriptionText)
-                        .font(.subheadline)
+                        .font(.body)
                         .frame(minHeight: 80, maxHeight: 160)
-                        .border(Color.gray.opacity(0.3), width: 1)
+                        .border(AppTheme.border, width: 1)
                         .disabled(isSaving)
                     TextField("Keywords, comma-separated (up to \(VersionLocalizationLimits.keywordsMaxLength) characters)", text: $keywords)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     Text("Promotional Text (up to \(VersionLocalizationLimits.promotionalTextMaxLength) characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $promotionalText)
-                        .font(.subheadline)
+                        .font(.body)
                         .frame(minHeight: 44, maxHeight: 90)
-                        .border(Color.gray.opacity(0.3), width: 1)
+                        .border(AppTheme.border, width: 1)
                         .disabled(isSaving)
                     Text("What's New (up to \(VersionLocalizationLimits.whatsNewMaxLength) characters)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $whatsNew)
-                        .font(.subheadline)
+                        .font(.body)
                         .frame(minHeight: 60, maxHeight: 140)
-                        .border(Color.gray.opacity(0.3), width: 1)
+                        .border(AppTheme.border, width: 1)
                         .disabled(isSaving)
                     TextField("Marketing URL (http(s))", text: $marketingUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     TextField("Support URL (http(s))", text: $supportUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                        .font(.body)
                         .disabled(isSaving)
                     // Blank draft over a saved value clears that field.
                     Text("Blank a field to clear it. Saving needs an API key with the App Manager role or higher.")
@@ -566,7 +566,7 @@ struct VersionLocalizationRow: View {
                     }
                 }
                 .padding(8)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(AppTheme.windowBackground)
                 .cornerRadius(6)
             }
         }
@@ -586,16 +586,16 @@ struct InfoCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: systemImage)
-                .font(.headline)
+                .font(.subheader)
             content
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppTheme.secondaryBackground)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+                .stroke(AppTheme.border, lineWidth: 1)
         )
     }
 }
