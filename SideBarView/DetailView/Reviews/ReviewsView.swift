@@ -12,6 +12,9 @@ import SwiftUI
 struct ReviewsView: View {
     @ObservedObject var reviewsViewModel: ReviewsViewModel
     var selectedApp: AppsData?
+    @State private var confirmingSubmit = false
+    @State private var submissionToCancel: ReviewSubmissionModel?
+    @State private var confirmingCompletePhased = false
 
     var body: some View {
         Group {
@@ -27,8 +30,11 @@ struct ReviewsView: View {
                     // HStack spacing (16pt) instead of padding+spacing+padding.
                     HStack(alignment: .top, spacing: 16) {
                         ScrollView {
-                            submissionsSection
-                                .padding(.vertical, 20)
+                            VStack(alignment: .leading, spacing: 16) {
+                                submissionsSection(app: app)
+                                phasedReleaseSection(app: app)
+                            }
+                            .padding(.vertical, 20)
                         }
                         ScrollView {
                             reviewsSection
@@ -40,15 +46,37 @@ struct ReviewsView: View {
                 }
                 .onAppear {
                     reviewsViewModel.load(app: app)
+                    selectDefaultPhasedVersion(app: app)
                 }
                 .onChange(of: app.id) { _, _ in
                     reviewsViewModel.load(app: app)
+                    selectDefaultPhasedVersion(app: app)
+                }
+                .alert("Action Failed",
+                       isPresented: Binding(
+                        get: { reviewsViewModel.writeError != nil },
+                        set: { if !$0 { reviewsViewModel.writeError = nil } }
+                       ),
+                       presenting: reviewsViewModel.writeError
+                ) { _ in
+                    Button("OK", role: .cancel) {}
+                } message: { message in
+                    Text(message)
                 }
             } else {
                 EmptyStateView(icon: "star.bubble", title: "No App Selected",
                                subtitle: "Select an app from the sidebar to view its reviews")
             }
         }
+    }
+
+    /// Defaults the phased-release version picker to the first App Store
+    /// version and loads its phased-release state.
+    private func selectDefaultPhasedVersion(app: AppsData) {
+        guard reviewsViewModel.phasedVersionId == nil,
+              let first = app.appStoreVersions.first else { return }
+        reviewsViewModel.phasedVersionId = first.id
+        Task { await reviewsViewModel.loadPhasedRelease(versionId: first.id) }
     }
 
     // MARK: - Header
@@ -118,8 +146,10 @@ struct ReviewsView: View {
 
     // MARK: - Review submissions
 
-    @ViewBuilder private var submissionsSection: some View {
+    @ViewBuilder private func submissionsSection(app: AppsData) -> some View {
         InfoCard(title: "Review Submissions", systemImage: "doc.badge.gearshape") {
+            submitRow(app: app)
+            Divider()
             switch reviewsViewModel.submissionsState {
             case .idle, .loading:
                 LoadingStateView(text: "Loading...")
@@ -156,7 +186,38 @@ struct ReviewsView: View {
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
+                            if ReviewsViewModel.cancellableSubmissionStates
+                                .contains(submission.state ?? "") {
+                                if reviewsViewModel.cancellingSubmissionId == submission.id {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Button("Cancel") {
+                                        submissionToCancel = submission
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .foregroundColor(.red)
+                                }
+                            }
                         }
+                    }
+                    .confirmationDialog(
+                        "Cancel Review Submission?",
+                        isPresented: Binding(
+                            get: { submissionToCancel != nil },
+                            set: { if !$0 { submissionToCancel = nil } }
+                        ),
+                        titleVisibility: .visible,
+                        presenting: submissionToCancel
+                    ) { submission in
+                        Button("Cancel Submission", role: .destructive) {
+                            Task {
+                                await reviewsViewModel.cancelSubmission(submission)
+                            }
+                        }
+                    } message: { _ in
+                        Text("The submission will be withdrawn from review.")
                     }
                     paginationControls(
                         nextCursor: reviewsViewModel.submissionsNextCursor,
@@ -165,6 +226,136 @@ struct ReviewsView: View {
                     )
                 }
             }
+        }
+    }
+
+    /// Submit-for-review action row. Submitting is a server-side state
+    /// change, so it asks for confirmation first.
+    @ViewBuilder private func submitRow(app: AppsData) -> some View {
+        HStack {
+            Text("Send the app for App Store review")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+            Spacer()
+            if reviewsViewModel.submittingReview {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Button("Submit for Review") {
+                    confirmingSubmit = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .confirmationDialog(
+                    "Submit for App Review?",
+                    isPresented: $confirmingSubmit,
+                    titleVisibility: .visible
+                ) {
+                    Button("Submit") {
+                        Task {
+                            await reviewsViewModel.submitForReview(appId: app.id)
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This sends \(app.name ?? "the app") to App Store review.")
+                }
+            }
+        }
+    }
+
+    // MARK: - Phased release
+
+    /// Gradual rollout controls for one App Store version. State is read
+    /// from GET /v1/appStoreVersions/{id}/appStoreVersionPhasedRelease
+    /// (404 = none started); writes go through the top-level
+    /// /v1/appStoreVersionPhasedReleases collection.
+    @ViewBuilder private func phasedReleaseSection(app: AppsData) -> some View {
+        InfoCard(title: "Phased Release", systemImage: "tortoise") {
+            if app.appStoreVersions.isEmpty {
+                Text("No App Store versions for this app")
+                    .font(.appCaption)
+                    .foregroundColor(.secondary)
+            } else {
+                HStack {
+                    Menu {
+                        ForEach(app.appStoreVersions, id: \.id) { version in
+                            Button(version.versionString ?? version.id) {
+                                reviewsViewModel.phasedVersionId = version.id
+                                Task {
+                                    await reviewsViewModel.loadPhasedRelease(versionId: version.id)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(
+                            app.appStoreVersions.first(where: { $0.id == reviewsViewModel.phasedVersionId })?.versionString ?? "Select version",
+                            systemImage: "chevron.down"
+                        )
+                        .font(.appCaption)
+                    }
+                    .menuStyle(.borderlessButton)
+
+                    Spacer()
+
+                    phasedStateContent
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var phasedStateContent: some View {
+        if reviewsViewModel.phasedLoading {
+            ProgressView()
+                .controlSize(.small)
+        } else if reviewsViewModel.phasedActionInFlight {
+            ProgressView()
+                .controlSize(.small)
+        } else if let release = reviewsViewModel.phasedRelease {
+            let state = release.phasedReleaseState ?? "UNKNOWN"
+            StateChip(text: state)
+            switch state.uppercased() {
+            case "ACTIVE":
+                Button("Pause") {
+                    Task { await reviewsViewModel.setPhasedReleaseState("PAUSED") }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            case "PAUSED", "INACTIVE":
+                Button("Resume") {
+                    Task { await reviewsViewModel.setPhasedReleaseState("ACTIVE") }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button("Complete") {
+                    confirmingCompletePhased = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .confirmationDialog(
+                    "Complete Phased Release?",
+                    isPresented: $confirmingCompletePhased,
+                    titleVisibility: .visible
+                ) {
+                    Button("Complete Release", role: .destructive) {
+                        Task { await reviewsViewModel.setPhasedReleaseState("COMPLETE") }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("The version releases to all remaining users immediately. This cannot be undone.")
+                }
+            default:
+                EmptyView()
+            }
+        } else if let versionId = reviewsViewModel.phasedVersionId {
+            Text("Not started")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+            Button("Start") {
+                Task { await reviewsViewModel.startPhasedRelease(versionId: versionId) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
     }
 
@@ -196,6 +387,7 @@ struct ReviewsView: View {
                             Text("\(filtered.count) of \(total) total")
                                 .font(.appCaption2)
                                 .foregroundColor(.secondary)
+                                .contentTransition(.numericText())
                         }
                         ForEach(filtered, id: \.id) { review in
                             if review.id != filtered.first?.id { Divider() }

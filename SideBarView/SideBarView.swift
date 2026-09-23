@@ -566,6 +566,8 @@ struct AppRowView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isSelected ? AppTheme.accent.opacity(0.3) : Color.clear, lineWidth: 1)
         )
+        // Fade the selection highlight instead of blinking it in/out.
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 
     @ViewBuilder

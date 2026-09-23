@@ -53,6 +53,23 @@ final class ReviewsViewModel: ObservableObject {
     private var isPaginatingReviews = false
     private var isPaginatingSubmissions = false
 
+    // MARK: - Writes (submit / cancel / phased release)
+
+    /// Surfaced to the view as an alert. Fetch failures keep using the
+    /// inline section errors; writes are user-initiated so they interrupt.
+    @Published var writeError: String?
+    /// Guards one in-flight write per action so double-taps can't issue
+    /// duplicate submits/cancels.
+    @Published private(set) var submittingReview = false
+    @Published private(set) var cancellingSubmissionId: String?
+    /// Version picked for phased-release management (an appStoreVersion id).
+    @Published var phasedVersionId: String?
+    /// Current phased-release state for phasedVersionId: nil = none started
+    /// (the related link 404s), otherwise the server state string.
+    @Published private(set) var phasedRelease: PhasedReleaseModel?
+    @Published private(set) var phasedLoading = false
+    @Published private(set) var phasedActionInFlight = false
+
     // MARK: - Filters
 
     /// Rating filter for customer reviews: 0 = All, 1–5 = specific rating.
@@ -203,6 +220,197 @@ final class ReviewsViewModel: ObservableObject {
             reviewsLogger.error("Failed to reply to review: \(error.localizedDescription)")
             return false
         }
+    }
+
+    // MARK: - Submit for review / cancel
+
+    /// POST /v1/reviewSubmissions with the app linkage. On success the
+    /// submissions list is refetched so the new row appears; true = posted.
+    func submitForReview(appId: String) async -> Bool {
+        guard !submittingReview else { return false }
+        submittingReview = true
+        defer { submittingReview = false }
+
+        let body = ReviewSubmissionCreateRequest(
+            data: ReviewSubmissionCreateData(
+                attributes: ReviewSubmissionCreateAttributes(platform: "IOS"),
+                relationships: ReviewSubmissionAppLinkage(
+                    app: ReviewSubmissionAppRef(
+                        data: ReviewSubmissionAppRefData(id: appId)))
+            )
+        )
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .getReviewSubmissions, body: data),
+                apiVersion: .v1) else {
+            writeError = APIError.jsonConversionFailure.details
+            return false
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return false }
+            // Invalidate so the next load refetches with the new row.
+            submissionsLoadedAppId = nil
+            submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            reviewsLogger.error("Failed to submit for review: \(error.localizedDescription)")
+            writeError = writeMessage(for: error)
+            return false
+        }
+    }
+
+    /// States in which Apple accepts a cancel. IN_REVIEW intentionally
+    /// excluded — the server 422s cancels once review has started.
+    static let cancellableSubmissionStates: Set<String> = ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW"]
+
+    /// PATCH /v1/reviewSubmissions/{id} {canceled: true}. Refetches the
+    /// list on success so the row state updates; true = cancelled.
+    func cancelSubmission(_ submission: ReviewSubmissionModel) async -> Bool {
+        guard cancellingSubmissionId == nil else { return false }
+        guard let appId = currentAppId else { return false }
+        cancellingSubmissionId = submission.id
+        defer { cancellingSubmissionId = nil }
+
+        let body = ReviewSubmissionUpdateRequest(
+            data: ReviewSubmissionUpdateData(
+                id: submission.id,
+                attributes: ReviewSubmissionUpdateAttributes(submitted: nil, canceled: true)
+            )
+        )
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .getReviewSubmissions, body: data, path: submission.id),
+                apiVersion: .v1) else {
+            writeError = APIError.jsonConversionFailure.details
+            return false
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return false }
+            submissionsLoadedAppId = nil
+            submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            reviewsLogger.error("Failed to cancel submission: \(error.localizedDescription)")
+            writeError = writeMessage(for: error)
+            return false
+        }
+    }
+
+    // MARK: - Phased release
+
+    /// GET /v1/appStoreVersions/{id}/appStoreVersionPhasedRelease.
+    /// A 404 means no phased release was ever started — that is a valid
+    /// empty state (phasedRelease = nil), not an error.
+    func loadPhasedRelease(versionId: String) async {
+        phasedVersionId = versionId
+        phasedLoading = true
+        defer { phasedLoading = false }
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAppStoreVersions, path: "\(versionId)/appStoreVersionPhasedRelease"),
+            apiVersion: .v1) else {
+            writeError = APIError.jsonConversionFailure.details
+            return
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            if let apiError = error as? APIError, apiError.statusCode == 404 {
+                phasedRelease = nil
+            } else {
+                reviewsLogger.error("Failed to load phased release: \(error.localizedDescription)")
+                writeError = writeMessage(for: error)
+            }
+        }
+    }
+
+    /// POST /v1/appStoreVersionPhasedReleases — starts phased release for
+    /// a version that has none. Refetches state on success.
+    func startPhasedRelease(versionId: String) async -> Bool {
+        guard !phasedActionInFlight else { return false }
+        phasedActionInFlight = true
+        defer { phasedActionInFlight = false }
+
+        let body = PhasedReleaseCreateRequest(
+            data: PhasedReleaseCreateData(
+                relationships: PhasedReleaseVersionLinkage(
+                    appStoreVersion: PhasedReleaseVersionRef(
+                        data: PhasedReleaseVersionRefData(id: versionId)))
+            )
+        )
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .appStoreVersionPhasedReleases, body: data),
+                apiVersion: .v1) else {
+            writeError = APIError.jsonConversionFailure.details
+            return false
+        }
+
+        do {
+            let response = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return false }
+            phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: response)
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            reviewsLogger.error("Failed to start phased release: \(error.localizedDescription)")
+            writeError = writeMessage(for: error)
+            return false
+        }
+    }
+
+    /// PATCH state transitions: ACTIVE (start/resume), PAUSED (pause),
+    /// COMPLETE (finish). Updates local state on success, no refetch needed.
+    func setPhasedReleaseState(_ state: String) async -> Bool {
+        guard !phasedActionInFlight, let release = phasedRelease else { return false }
+        phasedActionInFlight = true
+        defer { phasedActionInFlight = false }
+
+        let body = PhasedReleaseUpdateRequest(
+            data: PhasedReleaseUpdateData(
+                id: release.id,
+                attributes: PhasedReleaseUpdateAttributes(phasedReleaseState: state)
+            )
+        )
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .appStoreVersionPhasedReleases, body: data, path: release.id),
+                apiVersion: .v1) else {
+            writeError = APIError.jsonConversionFailure.details
+            return false
+        }
+
+        do {
+            let response = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return false }
+            phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: response)
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            reviewsLogger.error("Failed to update phased release: \(error.localizedDescription)")
+            writeError = writeMessage(for: error)
+            return false
+        }
+    }
+
+    /// Writes need an App Manager key — a TestFlight-only key 403s.
+    /// Surface the permissions hint, not a raw error.
+    private func writeMessage(for error: Error) -> String {
+        if let apiError = error as? APIError, apiError.statusCode == 403 {
+            return "\(apiError.details) — submitting for review and phased releases need an API key with broader permissions (e.g. App Manager)."
+        }
+        if let apiError = error as? APIError {
+            return apiError.details
+        }
+        return error.localizedDescription
     }
 
     func loadMoreReviews(cursor: String) {

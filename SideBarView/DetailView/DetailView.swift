@@ -11,6 +11,7 @@ struct DetailView: View {
     @ObservedObject var viewModel: DetailViewModel
     @StateObject private var betaViewModel = BetaViewModel()
     @StateObject private var reviewsViewModel = ReviewsViewModel()
+    @StateObject private var reportsViewModel = ReportsViewModel()
     /// Observed (published) team list — the placeholder reads it, so it
     /// must update reactively when the first team is added.
     @ObservedObject private var credentialStorage = CredentialStorage.shared
@@ -18,6 +19,9 @@ struct DetailView: View {
     /// injects this; previews omit it and the button simply hides.
     var onAddTeam: (() -> Void)? = nil
     @State private var selectedTab: DetailTab = .builds
+    /// Namespace for the version-chip selection pill: the accent
+    /// background slides between chips instead of blinking in place.
+    @Namespace private var versionSelectionNamespace
     /// Batch C flag: one switch that shows/hides the App Info and Reviews
     /// tabs (and the sidebar's Resources section — same UserDefaults key).
     @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
@@ -27,11 +31,12 @@ struct DetailView: View {
         case betaGroups = "Beta Groups"
         case appInfo = "App Info"
         case reviews = "Reviews"
+        case reports = "Reports"
 
         /// Batch C tabs — hidden when the extended-info flag is off.
         var requiresExtendedInfo: Bool {
             switch self {
-            case .appInfo, .reviews: return true
+            case .appInfo, .reviews, .reports: return true
             case .builds, .betaGroups: return false
             }
         }
@@ -80,6 +85,7 @@ struct DetailView: View {
                                 Spacer()
 
                                 Text("\(viewModel.arrVersions.count) available")
+                                    .contentTransition(.numericText())
                                     .font(.appCaption)
                                     .foregroundColor(.secondary)
                             }
@@ -103,12 +109,14 @@ struct DetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        // Reviews VM reset lives here, not in ReviewsView: the tab view only
-        // exists while its tab is selected, but a team switch can happen on
-        // any tab — this handler is installed whenever DetailView is.
+        // Reviews + Reports VM resets live here, not in the tab views: a
+        // tab view only exists while its tab is selected, but a team switch
+        // can happen on any tab — this handler is installed whenever
+        // DetailView is.
         .onChange(of: viewModel.selectedApp?.id) { _, newId in
             if newId == nil {
                 reviewsViewModel.resetForTeamSwitch()
+                reportsViewModel.reset()
             }
         }
     }
@@ -153,14 +161,20 @@ struct DetailView: View {
     }
 
     private func versionView(versions: [PreReleaseVersionsModel]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(versions, id: \.id) { version in
-                    VersionChip(version: version, isSelected: version.isSelected)
-                        .onTapGesture {
-                            viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
-                        }
-                }
+        let selectedId = versions.first(where: \.isSelected)?.id
+        return ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(versions, id: \.id) { version in
+                        VersionChip(version: version, isSelected: version.isSelected,
+                                    selectionNamespace: versionSelectionNamespace)
+                            .id(version.id)
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
+                                }
+                            }
+                    }
                 // Cursor pagination, like apps/builds: offer the next page
                 // inline after the chips, with a retry on pagination failure.
                 if let nextCursor = viewModel.versionsNextCursor {
@@ -188,8 +202,18 @@ struct DetailView: View {
                     }
                 }
             }
+            // Keep the selected chip visible when selection changes
+            // (e.g. after pagination appends more versions).
+            .onChange(of: selectedId) { _, newId in
+                if let newId {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(newId, anchor: .center)
+                    }
+                }
+            }
         }
     }
+}
 
     private func versionEmptyMessage(title: String, message: String) -> some View {
         HStack {
@@ -258,6 +282,11 @@ struct DetailView: View {
                 case .reviews:
                     ReviewsView(
                         reviewsViewModel: reviewsViewModel,
+                        selectedApp: viewModel.selectedApp
+                    )
+                case .reports:
+                    ReportsView(
+                        reportsViewModel: reportsViewModel,
                         selectedApp: viewModel.selectedApp
                     )
                 }

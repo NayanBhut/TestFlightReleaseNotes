@@ -263,6 +263,32 @@ final class APIClient {
         }
     }
 
+    /// Raw-byte upload for asset operations (screenshot PUTs to Apple CDN
+    /// signed URLs). Auth comes from the operation's own headers, not the
+    /// JWT — no Authorization header is attached here.
+    func upload(to url: URL, method: String, headers: [String: String], body: Data) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        for (field, value) in headers {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        #if DEBUG
+        apiLogger.debug("[API] \(method) \(url.host ?? "") (\(body.count) bytes)")
+        #endif
+        do {
+            let (_, response) = try await session.upload(for: request, from: body)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                throw APIError.apiErrorWithCode(error: "Upload failed (HTTP \(code))", code)
+            }
+        } catch let apiError as APIError {
+            throw apiError
+        } catch {
+            throw APIError.apiError(error: error.localizedDescription)
+        }
+    }
+
     /// Legacy completion-handler shim. Kept until all callers migrate to async/await.
     func callAPI(with request: URLRequest, completion: @escaping (Result<Data, APIError>) -> Void) {
         let task = self.decodingTask(with: request) { data, error in
@@ -463,7 +489,22 @@ enum APIName: String {
     // GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations via `path`.
     case getAppStoreVersions = "/appStoreVersions"
     // GET /v1/reviewSubmissions?filter[app]=... (top-level collection).
+    // POST (submit for review) and PATCH (submitted/canceled flags) share
+    // this path — the verb comes from APIMethod, so reuse this case for
+    // writes (spec v4.3.1 has NO DELETE here; cancel is PATCH {canceled}).
     case getReviewSubmissions = "/reviewSubmissions"
+    // POST/PATCH/DELETE /v1/appStoreVersionPhasedReleases[/{id}] (spec
+    // v4.3.1). No GET collection — current state is read via the
+    // appStoreVersion related link:
+    // GET /v1/appStoreVersions/{id}/appStoreVersionPhasedRelease
+    // (composed with getAppStoreVersions + path; 404 = none started).
+    case appStoreVersionPhasedReleases = "/appStoreVersionPhasedReleases"
+    // Batch J (F3): sales + finance reports. GET-only collections that
+    // return application/a-gzip (raw download, NOT JSON:API) — the bytes
+    // go straight to disk, never through the JSONAPI decoder.
+    // filter[vendorNumber] is required in practice (Apple 400s without it).
+    case salesReports = "/salesReports"
+    case financeReports = "/financeReports"
     // GET /v1/appEncryptionDeclarations?filter[app]=... (top-level collection).
     // There is no /v1/apps/{id}/appEncryptionDeclarations subpath — the
     // relationship doesn't exist on apps (server 400s it).
@@ -498,6 +539,15 @@ enum APIName: String {
     // .getAppStoreVersions would build /v1/appStoreVersions/{id}, which is
     // the wrong resource entirely.
     case appStoreVersionLocalizations = "/appStoreVersionLocalizations"
+    // Batch J (F4): screenshot sets + screenshots (top-level collections).
+    // Sets are listed per localization via the related link
+    // GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets
+    // (composed with appStoreVersionLocalizations + path); screenshots per
+    // set via GET /v1/appScreenshotSets/{id}/appScreenshots. Upload flow:
+    // POST screenshot (fileName+fileSize) → uploadOperations PUTs →
+    // PATCH {uploaded: true}. Verified in spec v4.3.1.
+    case appScreenshotSets = "/appScreenshotSets"
+    case appScreenshots = "/appScreenshots"
 }
 
 enum APIVersion: String {

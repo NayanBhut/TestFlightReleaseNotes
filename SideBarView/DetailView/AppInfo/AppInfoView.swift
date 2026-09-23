@@ -31,6 +31,8 @@ struct AppInfoView: View {
                             appInfoLocalizationsSection
                             versionLocalizationsSection(app: app)
                             exportComplianceSection
+                            appEventsSection
+                            webhooksSection
                         }
                         .padding(20)
                     }
@@ -67,7 +69,9 @@ struct AppInfoView: View {
             .buttonStyle(.bordered)
             .disabled(viewModel.appInfoState.isLoading
                       || viewModel.versionLocalizationsState.isLoading
-                      || viewModel.exportComplianceState.isLoading)
+                      || viewModel.exportComplianceState.isLoading
+                      || viewModel.appEventsState.isLoading
+                      || viewModel.webhooksState.isLoading)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -222,6 +226,47 @@ struct AppInfoView: View {
                         InfoRow(label: "Third-Party Cryptography", value: boolLabel(declaration.containsThirdPartyCryptography))
                         InfoRow(label: "Available on French Store", value: boolLabel(declaration.availableOnFrenchStore))
                         InfoRow(label: "Created", value: declaration.createdDate)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - In-App Events
+
+    @ViewBuilder private var appEventsSection: some View {
+        section(state: viewModel.appEventsState,
+                title: "In-App Events",
+                systemImage: "calendar.badge.clock",
+                retry: { viewModel.retryAppEvents() }) { events in
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(events, id: \.id) { event in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if event.id != events.first?.id { Divider() }
+                        InfoRow(label: "Reference Name", value: event.referenceName)
+                        InfoRow(label: "Badge", value: event.badge?.replacingOccurrences(of: "_", with: " ").capitalized)
+                        InfoRow(label: "State", value: event.eventState)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Webhooks
+
+    @ViewBuilder private var webhooksSection: some View {
+        section(state: viewModel.webhooksState,
+                title: "Webhooks",
+                systemImage: "cable.connector",
+                retry: { viewModel.retryWebhooks() }) { webhooks in
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(webhooks, id: \.id) { webhook in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if webhook.id != webhooks.first?.id { Divider() }
+                        InfoRow(label: "Name", value: webhook.name)
+                        InfoRow(label: "URL", value: webhook.url)
+                        InfoRow(label: "Enabled", value: boolLabel(webhook.enabled))
+                        InfoRow(label: "Event Types", value: webhook.eventTypes?.joined(separator: ", "))
                     }
                 }
             }
@@ -417,6 +462,7 @@ struct VersionLocalizationRow: View {
     let localization: AppStoreVersionLocalizationsModel
     @ObservedObject var viewModel: DetailViewModel
     @State private var isEditing = false
+    @State private var showingScreenshots = false
     @State private var descriptionText = ""
     @State private var keywords = ""
     @State private var promotionalText = ""
@@ -463,6 +509,19 @@ struct VersionLocalizationRow: View {
                     ProgressView()
                         .scaleEffect(0.7)
                 } else if !isEditing {
+                    Button("Screenshots") {
+                        showingScreenshots = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityLabel("Manage screenshots for \(localization.locale ?? "locale")")
+                    .sheet(isPresented: $showingScreenshots) {
+                        ScreenshotsSheet(
+                            localizationId: localization.id,
+                            locale: localization.locale ?? "Locale",
+                            viewModel: viewModel
+                        )
+                    }
                     Button("Edit") {
                         descriptionText = localization.descriptionData ?? ""
                         keywords = localization.keywords ?? ""

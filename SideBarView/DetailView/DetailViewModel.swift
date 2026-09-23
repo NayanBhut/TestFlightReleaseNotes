@@ -25,6 +25,8 @@ class DetailViewModel: ObservableObject {
         appInfoFetchTask?.cancel()
         versionLocalizationsFetchTask?.cancel()
         exportComplianceFetchTask?.cancel()
+        appEventsFetchTask?.cancel()
+        webhooksFetchTask?.cancel()
         buildsFetchTask?.cancel()
     }
     @Published var versionsState: ViewState<[PreReleaseVersionsModel]> = .idle
@@ -37,6 +39,8 @@ class DetailViewModel: ObservableObject {
     @Published var appInfoState: ViewState<[AppInfoModel]> = .idle
     @Published var versionLocalizationsState: ViewState<[AppStoreVersionLocalizationsModel]> = .idle
     @Published var exportComplianceState: ViewState<[AppEncryptionDeclarationModel]> = .idle
+    @Published var appEventsState: ViewState<[AppEventModel]> = .idle
+    @Published var webhooksState: ViewState<[WebhookModel]> = .idle
 
     // MARK: Batch G (#10) — App Info writes
     /// Localization ids with a PATCH in flight — per-localization so saving
@@ -99,12 +103,28 @@ class DetailViewModel: ObservableObject {
     private var appInfoFetchTask: Task<Void, Never>?
     private var versionLocalizationsFetchTask: Task<Void, Never>?
     private var exportComplianceFetchTask: Task<Void, Never>?
+    private var appEventsFetchTask: Task<Void, Never>?
+    private var webhooksFetchTask: Task<Void, Never>?
     /// Staleness guards so switching tabs (which destroys tab @State) never
     /// refetches data already loaded for the current app — same idea as
     /// BetaViewModel.currentAppId.
     private(set) var appInfoLoadedAppId: String?
     private(set) var versionLocalizationsLoadedVersionId: String?
     private(set) var exportComplianceLoadedAppId: String?
+    private(set) var appEventsLoadedAppId: String?
+    private(set) var webhooksLoadedAppId: String?
+    /// Screenshot sheet state (Batch J F4). One sheet at a time, so flat
+    /// (non-keyed) state is enough; cleared on app switch. Must live in
+    /// the class body — extensions can't hold stored properties.
+    @Published var screenshotSets: [AppScreenshotSetModel] = []
+    @Published var screenshotSetsLoading = false
+    @Published var screenshots: [AppScreenshotModel] = []
+    @Published var screenshotsLoading = false
+    @Published var selectedScreenshotSetId: String?
+    @Published var uploadingFileName: String?
+    @Published var screenshotUploadProgress: Double?
+    @Published var screenshotError: String?
+    @Published var deletingScreenshotIds: Set<String> = []
 
     // MARK: - Convenience accessors for views
 
@@ -193,12 +213,19 @@ class DetailViewModel: ObservableObject {
                 self.appInfoFetchTask?.cancel()
                 self.versionLocalizationsFetchTask?.cancel()
                 self.exportComplianceFetchTask?.cancel()
+                self.appEventsFetchTask?.cancel()
+                self.webhooksFetchTask?.cancel()
                 self.appInfoState = .idle
                 self.versionLocalizationsState = .idle
                 self.exportComplianceState = .idle
+                self.appEventsState = .idle
+                self.webhooksState = .idle
                 self.appInfoLoadedAppId = nil
                 self.versionLocalizationsLoadedVersionId = nil
                 self.exportComplianceLoadedAppId = nil
+                self.appEventsLoadedAppId = nil
+                self.webhooksLoadedAppId = nil
+                self.resetScreenshotState()
             }
             .store(in: &cancellables)
     }
@@ -359,6 +386,14 @@ extension DetailViewModel {
             exportComplianceFetchTask?.cancel()
             exportComplianceFetchTask = Task { await fetchExportCompliance(appId: app.id) }
         }
+        if force || appEventsLoadedAppId != app.id {
+            appEventsFetchTask?.cancel()
+            appEventsFetchTask = Task { await fetchAppEvents(appId: app.id) }
+        }
+        if force || webhooksLoadedAppId != app.id {
+            webhooksFetchTask?.cancel()
+            webhooksFetchTask = Task { await fetchWebhooks(appId: app.id) }
+        }
     }
 
     /// Full refresh (App Info header button): refetches all three sections.
@@ -384,6 +419,18 @@ extension DetailViewModel {
         guard let app = selectedApp else { return }
         exportComplianceFetchTask?.cancel()
         exportComplianceFetchTask = Task { await fetchExportCompliance(appId: app.id) }
+    }
+
+    func retryAppEvents() {
+        guard let app = selectedApp else { return }
+        appEventsFetchTask?.cancel()
+        appEventsFetchTask = Task { await fetchAppEvents(appId: app.id) }
+    }
+
+    func retryWebhooks() {
+        guard let app = selectedApp else { return }
+        webhooksFetchTask?.cancel()
+        webhooksFetchTask = Task { await fetchWebhooks(appId: app.id) }
     }
 
     /// GET /v1/apps/{id}/appInfos — composed with the /apps prefix plus
@@ -487,6 +534,60 @@ extension DetailViewModel {
         }
     }
 
+    /// GET /v1/apps/{id}/appEvents — in-app events (App Store Connect >
+    /// Growth). Composed with the /apps prefix + path, like appInfos.
+    func fetchAppEvents(appId: String) async {
+        guard !Task.isCancelled else { return }
+        appEventsState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAllApps, queryParams: ["limit": "200"], path: "\(appId)/appEvents"),
+            apiVersion: .v1) else {
+            appEventsState = .error("No team selected. Add a team to load in-app events.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(AppEventsDocument.self, from: data)
+            // Staleness id only on success (see fetchAppInfos).
+            appEventsLoadedAppId = appId
+            appEventsState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load in-app events: \(error.localizedDescription)")
+            appEventsState = .error(appInfoErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/apps/{id}/webhooks — App Store Server notification
+    /// endpoints registered for the app. Same composition as appEvents.
+    func fetchWebhooks(appId: String) async {
+        guard !Task.isCancelled else { return }
+        webhooksState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAllApps, queryParams: ["limit": "200"], path: "\(appId)/webhooks"),
+            apiVersion: .v1) else {
+            webhooksState = .error("No team selected. Add a team to load webhooks.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(WebhooksDocument.self, from: data)
+            // Staleness id only on success (see fetchAppInfos).
+            webhooksLoadedAppId = appId
+            webhooksState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load webhooks: \(error.localizedDescription)")
+            webhooksState = .error(appInfoErrorMessage(for: error))
+        }
+    }
+
     /// Read-only App Info endpoints can 403 with a narrow (TestFlight-only)
     /// API key — surface a hint instead of a bare server message.
     private func appInfoErrorMessage(for error: Error) -> String {
@@ -497,6 +598,212 @@ extension DetailViewModel {
             return apiError.details
         }
         return error.localizedDescription
+    }
+
+    // MARK: - Screenshots (Batch J F4)
+    //
+    // State lives in the class body (extensions can't hold stored
+    // properties) — see the screenshot @Published block above.
+
+    enum ScreenshotUploadResult {
+        case success
+        case failure(String)
+        case ignored
+    }
+
+    /// GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets.
+    func loadScreenshotSets(localizationId: String) async {
+        screenshotSetsLoading = true
+        screenshotError = nil
+        defer { screenshotSetsLoading = false }
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .appStoreVersionLocalizations, path: "\(localizationId)/appScreenshotSets"),
+            apiVersion: .v1) else {
+            screenshotError = "No team selected."
+            return
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(AppScreenshotSetsDocument.self, from: data)
+            screenshotSets = model.data
+            if selectedScreenshotSetId == nil {
+                selectedScreenshotSetId = model.data.first?.id
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load screenshot sets: \(error.localizedDescription)")
+            screenshotError = appInfoErrorMessage(for: error)
+        }
+    }
+
+    /// POST /v1/appScreenshotSets. Selects the new set on success.
+    func createScreenshotSet(localizationId: String, displayType: ScreenshotDisplayType) async -> ScreenshotUploadResult {
+        let body = ScreenshotSetCreateRequest(
+            data: ScreenshotSetCreateData(
+                attributes: ScreenshotSetCreateAttributes(screenshotDisplayType: displayType.rawValue),
+                relationships: ScreenshotSetLocalizationLinkage(
+                    appStoreVersionLocalization: ScreenshotSetLocalizationRef(
+                        data: ScreenshotSetLocalizationRefData(id: localizationId)))
+            )
+        )
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .appScreenshotSets, body: data),
+                apiVersion: .v1) else {
+            return .failure(APIError.jsonConversionFailure.details)
+        }
+        do {
+            let response = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(AppScreenshotSetModel.self, from: response)
+            screenshotSets.append(model)
+            selectedScreenshotSetId = model.id
+            screenshots = []
+            return .success
+        } catch {
+            guard !Task.isCancelled else { return .ignored }
+            detailLogger.error("Failed to create screenshot set: \(error.localizedDescription)")
+            return .failure(appInfoErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/appScreenshotSets/{id}/appScreenshots.
+    func loadScreenshots(setId: String) async {
+        selectedScreenshotSetId = setId
+        screenshotsLoading = true
+        screenshotError = nil
+        defer { screenshotsLoading = false }
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .appScreenshotSets, path: "\(setId)/appScreenshots"),
+            apiVersion: .v1) else {
+            screenshotError = "No team selected."
+            return
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let model = try getDecoder().decode(AppScreenshotsDocument.self, from: data)
+            screenshots = model.data
+        } catch {
+            guard !Task.isCancelled else { return }
+            detailLogger.error("Failed to load screenshots: \(error.localizedDescription)")
+            screenshotError = appInfoErrorMessage(for: error)
+        }
+    }
+
+    /// Full upload pipeline: reserve (POST) → PUT each upload operation →
+    /// PATCH {uploaded: true} → reload the set. Serial (one file at a
+    /// time); progress tracks completed PUT operations.
+    func uploadScreenshot(setId: String, fileURL: URL) async -> ScreenshotUploadResult {
+        guard uploadingFileName == nil else { return .ignored }
+        guard let bytes = try? Data(contentsOf: fileURL), !bytes.isEmpty else {
+            return .failure("Couldn't read the image file.")
+        }
+        uploadingFileName = fileURL.lastPathComponent
+        screenshotUploadProgress = 0
+        screenshotError = nil
+        defer {
+            uploadingFileName = nil
+            screenshotUploadProgress = nil
+        }
+
+        let reserve = ScreenshotCreateRequest(
+            data: ScreenshotCreateData(
+                attributes: ScreenshotCreateAttributes(fileName: fileURL.lastPathComponent, fileSize: bytes.count),
+                relationships: ScreenshotSetLinkage(
+                    appScreenshotSet: ScreenshotSetRef(
+                        data: ScreenshotSetRefData(id: setId)))
+            )
+        )
+        guard let reserveData = try? JSONEncoder().encode(reserve),
+              let reserveRequest = APIClient.shared.getRequest(
+                api: .post(name: .appScreenshots, body: reserveData),
+                apiVersion: .v1) else {
+            return .failure(APIError.jsonConversionFailure.details)
+        }
+
+        do {
+            let response = try await APIClient.shared.callAPI(with: reserveRequest)
+            guard !Task.isCancelled else { return .ignored }
+            let reserved = try getDecoder().decode(AppScreenshotModel.self, from: response)
+
+            let operations = reserved.uploadOperations ?? []
+            for (index, operation) in operations.enumerated() {
+                guard let urlString = operation.url, let url = URL(string: urlString) else {
+                    return .failure("The server returned an unusable upload URL.")
+                }
+                let start = min(max(operation.offset ?? 0, 0), bytes.count)
+                let end = min(start + (operation.length ?? (bytes.count - start)), bytes.count)
+                var headers: [String: String] = [:]
+                for header in operation.requestHeaders ?? [] {
+                    if let name = header.name, let value = header.value {
+                        headers[name] = value
+                    }
+                }
+                try await APIClient.shared.upload(
+                    to: url, method: operation.method ?? "PUT",
+                    headers: headers, body: bytes[start..<end])
+                screenshotUploadProgress = Double(index + 1) / Double(max(operations.count, 1))
+                guard !Task.isCancelled else { return .ignored }
+            }
+
+            let complete = ScreenshotUpdateRequest(
+                data: ScreenshotUpdateData(
+                    id: reserved.id,
+                    attributes: ScreenshotUpdateAttributes(uploaded: true))
+            )
+            guard let completeData = try? JSONEncoder().encode(complete),
+                  let completeRequest = APIClient.shared.getRequest(
+                    api: .patch(name: .appScreenshots, body: completeData, path: reserved.id),
+                    apiVersion: .v1) else {
+                return .failure(APIError.jsonConversionFailure.details)
+            }
+            _ = try await APIClient.shared.callAPI(with: completeRequest)
+            guard !Task.isCancelled else { return .ignored }
+            await loadScreenshots(setId: setId)
+            return .success
+        } catch {
+            guard !Task.isCancelled else { return .ignored }
+            detailLogger.error("Screenshot upload failed: \(error.localizedDescription)")
+            return .failure(appInfoErrorMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/appScreenshots/{id}. Callers must confirm first.
+    func deleteScreenshot(_ screenshot: AppScreenshotModel) async -> Bool {
+        guard !deletingScreenshotIds.contains(screenshot.id) else { return false }
+        deletingScreenshotIds.insert(screenshot.id)
+        defer { deletingScreenshotIds.remove(screenshot.id) }
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .appScreenshots, path: screenshot.id),
+            apiVersion: .v1) else {
+            screenshotError = APIError.jsonConversionFailure.details
+            return false
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return false }
+            screenshots.removeAll { $0.id == screenshot.id }
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            detailLogger.error("Failed to delete screenshot: \(error.localizedDescription)")
+            screenshotError = appInfoErrorMessage(for: error)
+            return false
+        }
+    }
+
+    /// Clears sheet state on app switch (called from the selection sink
+    /// alongside the other App Info resets).
+    func resetScreenshotState() {
+        screenshotSets = []
+        screenshots = []
+        selectedScreenshotSetId = nil
+        uploadingFileName = nil
+        screenshotUploadProgress = nil
+        screenshotError = nil
+        deletingScreenshotIds = []
     }
 
     // MARK: - App Info writes (Batch G #10)
