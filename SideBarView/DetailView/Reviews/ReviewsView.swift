@@ -60,12 +60,12 @@ struct ReviewsView: View {
                 .fontWeight(.semibold)
             Spacer()
             Text(app.name ?? "")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             Button(action: { reviewsViewModel.retryAll() }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
+                    .font(.appCaption)
             }
             .buttonStyle(.bordered)
         }
@@ -96,7 +96,7 @@ struct ReviewsView: View {
 
             TextField("Search title / body / author", text: $reviewsViewModel.searchText)
                 .textFieldStyle(.roundedBorder)
-                .font(.caption)
+                .font(.appCaption)
                 .frame(maxWidth: 200)
 
             Spacer()
@@ -107,7 +107,7 @@ struct ReviewsView: View {
                     reviewsViewModel.stateFilter = .all
                     reviewsViewModel.searchText = ""
                 }
-                .font(.caption)
+                .font(.appCaption)
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
@@ -125,7 +125,7 @@ struct ReviewsView: View {
                 LoadingStateView(text: "Loading...")
             case .empty:
                 Text("No review submissions")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             case .error(let message):
                 sectionError(message: message) {
@@ -139,20 +139,20 @@ struct ReviewsView: View {
                             StateChip(text: submission.state ?? "UNKNOWN")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(submission.platform ?? "")
-                                    .font(.body)
+                                    .font(.appBody)
                                     .fontWeight(.medium)
                                 if let version = submission.appStoreVersion?.versionString, !version.isEmpty {
                                     Text("Version \(version)")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundColor(.secondary)
                                 }
                                 if let submitter = submission.submittedByActor {
                                     Text("Submitted by \(submitter.displayName)")
-                                        .font(.caption)
+                                        .font(.appCaption)
                                         .foregroundColor(.secondary)
                                 }
                                 Text(submission.submittedDate ?? "")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
@@ -177,7 +177,7 @@ struct ReviewsView: View {
                 LoadingStateView(text: "Loading...")
             case .empty:
                 Text("No customer reviews")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             case .error(let message):
                 sectionError(message: message) {
@@ -189,12 +189,12 @@ struct ReviewsView: View {
                     if filtered.isEmpty {
                         Text(reviewsViewModel.ratingFilter > 0 || reviewsViewModel.stateFilter != .all || !reviewsViewModel.searchText.isEmpty
                               ? "No reviews match your filters" : "No customer reviews")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     } else {
                         if let total = reviewsViewModel.reviewsMeta?.paging.total {
                             Text("\(filtered.count) of \(total) total")
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .foregroundColor(.secondary)
                         }
                         ForEach(filtered, id: \.id) { review in
@@ -217,37 +217,37 @@ struct ReviewsView: View {
             HStack(alignment: .center, spacing: 8) {
                 StarRating(rating: review.rating ?? 0)
                 Text(review.title ?? "")
-                    .font(.body)
+                    .font(.appBody)
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 Spacer()
                 Text(review.territory ?? "")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
             Text(review.reviewerNickname ?? "")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
             Text(review.body ?? "")
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Text(review.createdDate ?? "")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
             if let response = review.response {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "arrowshape.turn.up.left")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Developer reply (\(response.state ?? "PUBLISHED"))")
-                            .font(.caption2)
+                            .font(.appCaption2)
                             .fontWeight(.medium)
                             .foregroundColor(.secondary)
                         Text(response.responseBody ?? "")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
@@ -292,7 +292,7 @@ struct ReviewsView: View {
     private func sectionError(message: String, retry: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             Button("Retry", action: retry)
                 .buttonStyle(.bordered)
@@ -314,7 +314,7 @@ struct ReplySection: View {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("Write a reply...", text: $replyText)
                     .textFieldStyle(.roundedBorder)
-                    .font(.caption)
+                    .font(.appCaption)
                 HStack {
                     Button("Cancel") {
                         isReplying = false
@@ -350,7 +350,7 @@ struct ReplySection: View {
             Button("Reply") {
                 isReplying = true
             }
-            .font(.caption)
+            .font(.appCaption)
             .buttonStyle(.bordered)
             .controlSize(.small)
             .padding(.top, 4)
@@ -368,7 +368,7 @@ struct StarRating: View {
         HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { star in
                 Image(systemName: star <= rating ? "star.fill" : "star")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(star <= rating ? .yellow : .secondary)
             }
         }
@@ -407,7 +407,7 @@ struct StateChip: View {
 
     var body: some View {
         Text(text)
-            .font(.caption2)
+            .font(.appCaption2)
             .fontWeight(.medium)
             .foregroundColor(color)
             .padding(.horizontal, 6)

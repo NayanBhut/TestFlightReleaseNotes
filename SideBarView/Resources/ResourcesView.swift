@@ -48,17 +48,17 @@ struct ResourcesSectionView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Image(systemName: "shippingbox")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Text("Resources")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.semibold)
                     Spacer()
                     Text("Team-wide")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -74,15 +74,15 @@ struct ResourcesSectionView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: kind.systemImage)
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.secondary)
                                 .frame(width: 16)
                             Text(kind.displayName)
-                                .font(.body)
+                                .font(.appBody)
                                 .foregroundColor(.primary)
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .foregroundColor(.secondary)
                         }
                         .padding(.horizontal, 6)
@@ -193,17 +193,17 @@ struct ResourceListContentView: View {
                 // while filtering so the count can't read as a server total.
                 if viewModel.hasActiveSearch(for: kind) {
                     Text("\(viewModel.filteredCount(for: kind)) of \(viewModel.loadedCount(for: kind)) loaded")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 } else {
                     Text("\(total) total")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
             }
             Button(action: { viewModel.retry(kind) }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
+                    .font(.appCaption)
             }
             .buttonStyle(.bordered)
             .accessibilityLabel("Refresh \(kind.displayName)")
@@ -214,7 +214,7 @@ struct ResourceListContentView: View {
                     showRegisterDeviceForm.toggle()
                 } label: {
                     Label("Register", systemImage: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Register a device")
@@ -224,7 +224,7 @@ struct ResourceListContentView: View {
                     showCreateCertificateForm.toggle()
                 } label: {
                     Label("New", systemImage: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Create a certificate")
@@ -234,7 +234,7 @@ struct ResourceListContentView: View {
                     showCreateBundleIdForm.toggle()
                 } label: {
                     Label("New", systemImage: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Register a bundle ID")
@@ -244,7 +244,7 @@ struct ResourceListContentView: View {
                     showInviteUserForm.toggle()
                 } label: {
                     Label("Invite", systemImage: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Invite a user")
@@ -254,7 +254,7 @@ struct ResourceListContentView: View {
                     showCreateProfileForm.toggle()
                 } label: {
                     Label("New", systemImage: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Create a provisioning profile")
@@ -288,7 +288,7 @@ struct ResourceListContentView: View {
                 ProgressView()
                     .scaleEffect(1.1)
                 Text("Loading \(kind.displayName.lowercased())...")
-                    .font(.body)
+                    .font(.appBody)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -302,7 +302,7 @@ struct ResourceListContentView: View {
                 Text("No \(kind.displayName.lowercased()) found")
                     .font(.subheader)
                 Text(kind.subtitle)
-                    .font(.body)
+                    .font(.appBody)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -348,12 +348,12 @@ struct ResourceListContentView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
-                .font(.caption)
+                .font(.appCaption)
                 .accessibilityHidden(true)
 
             TextField("Search \(kind.displayName.lowercased())", text: viewModel.searchBinding(for: kind))
                 .textFieldStyle(.plain)
-                .font(.body)
+                .font(.appBody)
 
             if !viewModel.searchText(for: kind).isEmpty {
                 Button {
@@ -361,7 +361,7 @@ struct ResourceListContentView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear search")
@@ -391,14 +391,14 @@ struct ResourceListContentView: View {
                 .font(.subheader)
                 .fontWeight(.medium)
             Text("No \(kind.displayName.lowercased()) match \"\(viewModel.searchText(for: kind))\"")
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
             if viewModel.nextCursors[kind] != nil {
                 // Search is local — matches may still exist on pages that
                 // haven't been loaded yet (review finding).
                 Text("More results may exist on unloaded pages — try Load more below")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -443,7 +443,7 @@ struct ResourceListContentView: View {
             if case .error(let message) = viewModel.invitationsState {
                 HStack {
                     Text("Couldn't load pending invitations: \(message)")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Spacer()
                     Button("Retry") { viewModel.loadInvitations() }
@@ -485,7 +485,7 @@ struct ResourceListContentView: View {
                         ProgressView()
                             .scaleEffect(0.7)
                         Text("Loading all users… (\(viewModel.loadedCount(for: kind)) so far)")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     } else {
                         Button("Load more") {
@@ -549,11 +549,11 @@ private struct RegisterDeviceForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Register Device")
-                .font(.body)
+                .font(.appBody)
                 .fontWeight(.medium)
             TextField("Device name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.body)
+                .font(.appBody)
                 .disabled(isSaving)
             HStack {
                 Picker("Platform", selection: $platform) {
@@ -571,12 +571,12 @@ private struct RegisterDeviceForm: View {
                 .font(.system(size: 12, design: .monospaced))
                 .disabled(isSaving)
             Text("Needs an API key with the Admin role. Verify with a throwaway device first — registrations count against the yearly device limit.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -631,7 +631,7 @@ private struct CreateCertificateForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Certificate")
-                .font(.body)
+                .font(.appBody)
                 .fontWeight(.medium)
             Picker("Type", selection: $certificateType) {
                 ForEach(CertificateTypeOption.allCases, id: \.self) { option in
@@ -647,11 +647,11 @@ private struct CreateCertificateForm: View {
                 .accessibilityLabel("Certificate signing request content")
                 .disabled(isSaving)
             Text("Paste the CSR content. Needs an API key with the Admin role.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -707,11 +707,11 @@ private struct CreateBundleIdForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Bundle ID")
-                .font(.body)
+                .font(.appBody)
                 .fontWeight(.medium)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.body)
+                .font(.appBody)
                 .disabled(isSaving)
             TextField("Bundle identifier (e.g. com.example.app)", text: $identifier)
                 .textFieldStyle(.roundedBorder)
@@ -733,11 +733,11 @@ private struct CreateBundleIdForm: View {
                 .font(.system(size: 12, design: .monospaced))
                 .disabled(isSaving)
             Text("Test on a throwaway identifier first. Needs an API key with the Admin role.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -798,7 +798,7 @@ private struct RoleMultiSelect: View {
                     }
                 ))
                 .toggleStyle(.checkbox)
-                .font(.body)
+                .font(.appBody)
             }
         }
     }
@@ -829,7 +829,7 @@ private struct RoleDropdownMenu: View {
             }
         } label: {
             Text(label)
-                .font(.body)
+                .font(.appBody)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
@@ -876,29 +876,29 @@ private struct InviteUserForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Invite User")
-                .font(.body)
+                .font(.appBody)
                 .fontWeight(.medium)
             TextField("Email", text: $email)
                 .textFieldStyle(.roundedBorder)
-                .font(.body)
+                .font(.appBody)
                 .disabled(isBusy)
             HStack(spacing: 8) {
                 TextField("First name", text: $firstName)
                     .textFieldStyle(.roundedBorder)
-                    .font(.body)
+                    .font(.appBody)
                     .disabled(isBusy)
                 TextField("Last name", text: $lastName)
                     .textFieldStyle(.roundedBorder)
-                    .font(.body)
+                    .font(.appBody)
                     .disabled(isBusy)
             }
             Text("Roles")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             RoleDropdownMenu(selection: $roles)
                 .disabled(isBusy)
             Toggle("All apps visible", isOn: $allAppsVisible)
-                .font(.body)
+                .font(.appBody)
                 .disabled(isBusy)
                 .onChange(of: allAppsVisible) { _, newValue in
                     // Turning all-apps back on drops the per-app picks so
@@ -923,19 +923,19 @@ private struct InviteUserForm: View {
                 .disabled(isBusy)
             }
             Toggle("Provisioning allowed", isOn: $provisioningAllowed)
-                .font(.body)
+                .font(.appBody)
                 .disabled(isBusy)
             Text("Needs an API key with the Admin role. Invites count against the team member limit.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
             if let noticeMessage {
                 Text(noticeMessage)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1046,11 +1046,11 @@ private struct CreateProfileForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("New Provisioning Profile")
-                .font(.body)
+                .font(.appBody)
                 .fontWeight(.medium)
             TextField("Profile name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.body)
+                .font(.appBody)
                 .disabled(isSaving)
             Picker("Type", selection: $profileType) {
                 ForEach(ProfileTypeOption.allCases, id: \.self) { option in
@@ -1070,11 +1070,11 @@ private struct CreateProfileForm: View {
             .disabled(isSaving || bundleIds.isEmpty)
             if bundleIds.isEmpty {
                 Text("No bundle IDs loaded — open Resources → Bundle IDs first so the picker has something to offer.")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
             Text("Certificates (\(certificateIds.count) selected)")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             ChecklistDropdownMenu(
                 title: "Certificates",
@@ -1091,7 +1091,7 @@ private struct CreateProfileForm: View {
             )
             .disabled(isSaving)
             Text("Devices (\(deviceIds.count) selected, optional)")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             ChecklistDropdownMenu(
                 title: "Devices",
@@ -1108,11 +1108,11 @@ private struct CreateProfileForm: View {
             )
             .disabled(isSaving)
             Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1201,7 +1201,7 @@ private struct ChecklistDropdownMenu: View {
     var body: some View {
         if items.isEmpty {
             Text(emptyHint ?? "Nothing loaded yet.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.secondary)
         } else {
             Menu {
@@ -1225,7 +1225,7 @@ private struct ChecklistDropdownMenu: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(item.title)
                                 Text(subtitle)
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(.secondary)
                             }
                         } else {
@@ -1235,7 +1235,7 @@ private struct ChecklistDropdownMenu: View {
                 }
             } label: {
                 Text(label)
-                    .font(.body)
+                    .font(.appBody)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .menuStyle(.borderlessButton)
@@ -1313,17 +1313,17 @@ private struct DeviceRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "iphone")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.name ?? "Unknown device")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
                     StateChip(text: device.status ?? "")
                 }
                 Text(device.model ?? "")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 Text(device.udid ?? "")
                     .font(.system(size: 10, design: .monospaced))
@@ -1333,7 +1333,7 @@ private struct DeviceRow: View {
                     .truncationMode(.middle)
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1341,10 +1341,10 @@ private struct DeviceRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text(device.deviceClass ?? "")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 Text(device.platform ?? "")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
                 // Batch G (#10): disable is the API's "revoke" (no DELETE
                 // on devices); re-enabling reverses it, so no confirm.
@@ -1388,27 +1388,27 @@ private struct CertificateRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.seal")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(certificate.displayName ?? certificate.name ?? "Unknown certificate")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
                     if certificate.activated == true {
                         StateChip(text: "ACTIVE")
                     }
                 }
                 Text("Serial: \(certificate.serialNumber ?? "—")")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
                 Text("Expires: \(certificate.expirationDate ?? "—")")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(isExpired ? .red : .secondary)
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1416,7 +1416,7 @@ private struct CertificateRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text(certificate.certificateType ?? "")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 // Batch G (#10): revoking is destructive — confirm first
                 // (alert pattern mirrors BuildRowView's expire/remove).
@@ -1463,17 +1463,17 @@ private struct BundleIdRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "square.grid.2x2")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 if isRenaming {
                     TextField("Bundle ID name", text: $draftName)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isBusy)
                 } else {
                     Text(bundleId.name ?? "Unknown identifier")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
                 }
                 Text(bundleId.identifier ?? "")
@@ -1482,7 +1482,7 @@ private struct BundleIdRow: View {
                     .textSelection(.enabled)
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1490,7 +1490,7 @@ private struct BundleIdRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text(bundleId.platform ?? "")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 if isRenaming {
                     HStack(spacing: 6) {
@@ -1574,12 +1574,12 @@ private struct ProfileRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.text.rectangle")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(profile.name ?? "Unknown profile")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
                     StateChip(text: profile.profileState ?? "")
                 }
@@ -1590,11 +1590,11 @@ private struct ProfileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text("Expires: \(profile.expirationDate ?? "—")")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1602,10 +1602,10 @@ private struct ProfileRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text(profile.profileType ?? "")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 Text(profile.platform ?? "")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
                 // Deleting is destructive — confirm first (same alert
                 // pattern as CertificateRow's revoke).
@@ -1674,12 +1674,12 @@ private struct InvitationRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "envelope")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(invitation.email ?? "Unknown email")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
                         .textSelection(.enabled)
                     Text("Pending")
@@ -1691,17 +1691,17 @@ private struct InvitationRow: View {
                         .cornerRadius(4)
                 }
                 Text("\(invitation.firstName ?? "") \(invitation.lastName ?? "")")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 RoleChips(roles: invitation.roles ?? [])
                 if let expirationDate = invitation.expirationDate {
                     Text("Expires: \(expirationDate)")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1779,15 +1779,15 @@ private struct UserRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.circle")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(user.username ?? "Unknown user")
-                    .font(.body)
+                    .font(.appBody)
                     .fontWeight(.medium)
                     .textSelection(.enabled)
                 Text("\(user.firstName ?? "") \(user.lastName ?? "")")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                 if isEditingRoles {
                     RoleMultiSelect(selection: $draftRoles)
@@ -1797,7 +1797,7 @@ private struct UserRow: View {
                 }
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1806,12 +1806,12 @@ private struct UserRow: View {
             VStack(alignment: .trailing, spacing: 4) {
                 if user.allAppsVisible == true {
                     Text("All apps")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
                 if user.provisioningAllowed == true {
                     Text("Provisioning")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
                 if isEditingRoles {

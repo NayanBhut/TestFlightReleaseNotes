@@ -137,7 +137,7 @@ struct BuildDetailsView: View {
                 .font(.subheader)
                 .fontWeight(.medium)
             Text("Select a version above to view its builds")
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -154,7 +154,7 @@ struct BuildDetailsView: View {
                 .font(.subheader)
                 .fontWeight(.medium)
             Text("This version doesn't have any builds yet")
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -173,7 +173,7 @@ struct BuildDetailsView: View {
 
                 if let total = viewModel.meta?.paging.total {
                     Text("\(total) total")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                         .contentTransition(.numericText())
                 }
@@ -186,7 +186,7 @@ struct BuildDetailsView: View {
                 // (✓/empty) so missing locales are visible at a glance.
                 Button(action: { showLocalePopover = true }) {
                     Label("Locales", systemImage: "globe")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -204,11 +204,12 @@ struct BuildDetailsView: View {
                     refreshBuildList?()
                 }) {
                     Label("Refresh", systemImage: "arrow.clockwise")
-                        .font(.caption)
-                        // Spins while the builds fetch is in flight.
+                        .font(.appCaption)
                         .rotationEffect(.degrees(viewModel.buildsState.isLoading ? 360 : 0))
                         .animation(
-                            .linear(duration: 0.9).repeatForever(autoreverses: false),
+                            viewModel.buildsState.isLoading
+                                ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                                : .default,
                             value: viewModel.buildsState.isLoading
                         )
                 }
@@ -242,11 +243,11 @@ struct BuildDetailsView: View {
                 statPill(count: stats.failed, label: "failed", color: .red)
             }
             if stats.expired > 0 {
-                statPill(count: stats.expired, label: "expired", color: .red)
+                statPill(count: stats.expired, label: "expired", color: .orange)
             }
             if stats.total == 0 {
                 Text("No builds loaded")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
         }
@@ -259,7 +260,7 @@ struct BuildDetailsView: View {
                 .fill(color)
                 .frame(width: 7, height: 7)
             Text("\(count) \(label)")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
                 .contentTransition(.numericText())
         }
@@ -278,7 +279,7 @@ struct BuildDetailsView: View {
             }
         } label: {
             Label("Snippets", systemImage: "text.badge.plus")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
         }
         .menuStyle(.borderlessButton)
@@ -310,7 +311,7 @@ struct BuildDetailsView: View {
             }
         } label: {
             Label("Open in App Store Connect", systemImage: "safari")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
         }
         .menuStyle(.borderlessButton)
@@ -327,9 +328,8 @@ struct BuildDetailsView: View {
          if viewModel.arrBuilds.isEmpty {
              noBuildsView
          } else {
-             // Enumerated so each row gets a stagger delay for the
-             // entrance animation (capped so long lists don't cascade).
-             List(Array(viewModel.arrBuilds.enumerated()), id: \.element.id) { index, build in
+             // Staggered entrance: index-based delay, no array copy.
+             List(Array(zip(viewModel.arrBuilds.indices, viewModel.arrBuilds)), id: \.1.id) { index, build in
                  buildRow(for: build, entranceOffset: BuildListAnimation.staggerDelay(forRow: index))
                      .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
              }
@@ -418,7 +418,7 @@ struct ToastView: View {
 
     var body: some View {
         Text(message)
-            .font(.caption)
+            .font(.appCaption)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(AppTheme.secondaryBackground)
@@ -641,27 +641,27 @@ struct LocaleCompletenessPopover: View {
                         .font(.subheader)
                     Spacer()
                     Text("\(completeCount.complete)/\(completeCount.total) complete")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 if builds.isEmpty {
                     Text("No builds selected")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(completeness, id: \.locale) { locale, buildStatus in
                         HStack(spacing: 4) {
                             Text(locale)
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .frame(width: 52, alignment: .leading)
                             Text(BetaLocalizationLocales.displayName(for: locale))
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .foregroundColor(.secondary)
                                 .frame(width: 140, alignment: .leading)
                                 .lineLimit(1)
                             ForEach(buildStatus, id: \.buildId) { _, hasNotes in
                                 Image(systemName: hasNotes ? "checkmark.circle.fill" : "minus.circle.fill")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(hasNotes ? .green : .gray)
                             }
                         }
@@ -692,7 +692,7 @@ private struct BuildSkeletonList: View {
             .padding(.vertical, 12)
         }
         .scrollDisabled(true)
-        .accessibilityHidden(true)
+        .accessibilityLabel("Loading builds")
     }
 }
 
@@ -719,7 +719,7 @@ private struct BuildSkeletonRow: View {
             GeometryReader { geo in
                 let width = max(geo.size.width, 1)
                 LinearGradient(
-                    gradient: Gradient(colors: [.clear, .white.opacity(0.5), .clear]),
+                    gradient: Gradient(colors: [.clear, AppTheme.primaryText.opacity(0.08), .clear]),
                     startPoint: .leading,
                     endPoint: .trailing
                 )

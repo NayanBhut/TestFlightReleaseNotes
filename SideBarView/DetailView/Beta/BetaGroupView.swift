@@ -126,17 +126,17 @@ struct BetaGroupView: View {
             Spacer()
             if !betaViewModel.groups.isEmpty {
                 Text("\(betaViewModel.groups.count) groups")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             if let truncation = betaViewModel.groupsTruncationMessage {
                 Text(truncation)
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
             Button(action: { Task { await refreshGroupsIfStale(force: true) } }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
+                    .font(.appCaption)
             }
             .buttonStyle(.bordered)
             .disabled(selectedApp == nil || betaViewModel.viewState == .betaGroupsLoading)
@@ -149,7 +149,7 @@ struct BetaGroupView: View {
                 showCreateGroupSheet = true
             }) {
                 Label("New Group", systemImage: "plus")
-                    .font(.caption)
+                    .font(.appCaption)
             }
             .buttonStyle(.bordered)
             .disabled(selectedApp == nil || betaViewModel.viewState == .betaGroupsLoading)
@@ -175,7 +175,7 @@ struct BetaGroupView: View {
                         .font(.subheader)
                     HStack(spacing: 6) {
                         Text(group.isInternalGroup == true ? "Internal" : "External")
-                            .font(.caption)
+                            .font(.appCaption)
                             .fontWeight(.medium)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -184,12 +184,12 @@ struct BetaGroupView: View {
                             .cornerRadius(4)
                         if group.publicLinkEnabled == true {
                             Text("Public link")
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.secondary)
                         }
                     }
                     Text("\(group.betaTesters.count) testers • \(group.builds.count) builds")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -275,7 +275,7 @@ struct BetaGroupView: View {
                         }
                     }
                     Text(groupDetailSubtitle(group))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 20)
@@ -327,7 +327,7 @@ struct BetaGroupView: View {
                     showInviteSheet = true
                 }) {
                     Label("Invite tester", systemImage: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(betaViewModel.selectedGroup == nil)
@@ -339,7 +339,7 @@ struct BetaGroupView: View {
 
             if let truncation = betaViewModel.testersTruncationMessage {
                 Text(truncation)
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
 
@@ -347,22 +347,22 @@ struct BetaGroupView: View {
                 LoadingStateView(text: "Loading testers...")
             } else if betaViewModel.testers.isEmpty {
                 Text("No testers in this group yet. Invite one to get started.")
-                    .font(.body)
+                    .font(.appBody)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
                 List(betaViewModel.testers, id: \.id) { tester in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(tester.displayName).font(.body).fontWeight(.medium)
+                            Text(tester.displayName).font(.appBody).fontWeight(.medium)
                             Text(tester.email ?? "")
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
                         if let inviteType = tester.inviteType {
                             Text(inviteType)
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(AppTheme.secondaryText.opacity(0.15))
@@ -442,17 +442,17 @@ struct BetaGroupView: View {
                         .foregroundColor(.green)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(result.displayName)
-                            .font(.body)
+                            .font(.appBody)
                             .fontWeight(.medium)
                         Text("\(result.email ?? "") is already an invited tester of this app.")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
                     let inGroup = betaViewModel.testers.contains { $0.id == result.id }
                     VStack(alignment: .trailing, spacing: 4) {
                         Text(inGroup ? "In this group" : "Not in this group")
-                            .font(.caption)
+                            .font(.appCaption)
                             .fontWeight(.medium)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
@@ -476,7 +476,7 @@ struct BetaGroupView: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.orange)
                     Text("\(betaViewModel.searchText) is not invited to this app.")
-                        .font(.body)
+                        .font(.appBody)
                     Spacer()
                 }
                 .padding(10)
@@ -505,16 +505,16 @@ struct BetaGroupView: View {
                 .disabled(isCreatingGroup || !newGroupPublicLink)
             if newGroupPublicLink {
                 Text("Leave the limit empty for an unlimited public link.")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             if let limitError = groupLimitError {
                 Text(limitError)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
             Text("Test on a throwaway group first. Needs an API key with the Admin role.")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             HStack {
                 Spacer()
@@ -582,12 +582,12 @@ struct BetaGroupView: View {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.7)
                     Text("Loading team…")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
             } else if let teamError = betaViewModel.teamUsersError, betaViewModel.teamUsers.isEmpty {
                 Text(teamError)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             } else {
                 let matches = betaViewModel.matchingTeamUsers(query: inviteUserSearch)
@@ -605,10 +605,10 @@ struct BetaGroupView: View {
                                     HStack(spacing: 8) {
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text("\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces).isEmpty ? (user.username ?? "Unknown user") : "\(user.firstName ?? "") \(user.lastName ?? "")")
-                                                .font(.body)
+                                                .font(.appBody)
                                                 .foregroundColor(.primary)
                                             Text(user.username ?? "")
-                                                .font(.caption)
+                                                .font(.appCaption)
                                                 .foregroundColor(.secondary)
                                         }
                                         Spacer()
@@ -631,7 +631,7 @@ struct BetaGroupView: View {
                     .frame(maxHeight: 180)
                 } else if !inviteUserSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("No team member matches — type the email below to invite someone new.")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -652,7 +652,7 @@ struct BetaGroupView: View {
             }
             if let group = betaViewModel.selectedGroup {
                 Text("Will be invited to “\(group.name ?? "group")”.")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             HStack {
@@ -688,7 +688,7 @@ struct BetaGroupView: View {
 
             if builds.isEmpty {
                 Text("Select a version with builds to assign or submit for review.")
-                    .font(.body)
+                    .font(.appBody)
                     .foregroundColor(.secondary)
             } else {
                 HStack {
@@ -728,7 +728,7 @@ struct BetaGroupView: View {
 
                 if buildIdForActions.isEmpty {
                     Text("Select a build to view auto-notify and external review options.")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 } else {
                     buildReviewCard(buildId: buildIdForActions)
@@ -737,7 +737,7 @@ struct BetaGroupView: View {
 
             if !group.builds.isEmpty {
                 Text("Builds in group: \(group.builds.count)")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
         }
@@ -753,7 +753,7 @@ struct BetaGroupView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Auto-notify testers")
-                    .font(.body)
+                    .font(.appBody)
                 Spacer()
                 if isBusy {
                     ProgressView().scaleEffect(0.7)
@@ -767,7 +767,7 @@ struct BetaGroupView: View {
                 }
             }
             Text("When on, new builds are automatically sent to this group.")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
 
             Divider()
@@ -775,10 +775,10 @@ struct BetaGroupView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("External review status")
-                        .font(.body)
+                        .font(.appBody)
                     if let reviewState {
                         Text(reviewStatusLabel(reviewState))
-                            .font(.caption)
+                            .font(.appCaption)
                             .fontWeight(.medium)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
@@ -787,7 +787,7 @@ struct BetaGroupView: View {
                             .cornerRadius(4)
                     } else {
                         Text("Not checked yet")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -805,7 +805,7 @@ struct BetaGroupView: View {
             }
             if let internalState = detail?.internalBuildState {
                 Text("Internal: \(internalState)  •  External: \(detail?.externalBuildState ?? "-")")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
         }

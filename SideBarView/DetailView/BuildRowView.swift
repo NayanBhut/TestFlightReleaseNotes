@@ -108,12 +108,12 @@ struct BuildRowView: View {
                 .font(.subheader)
 
             Text(BuildDisplayHelper.formattedUploadedDate(uploadedDate))
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
 
             if let relative = BuildDisplayHelper.relativeUploadedTime(uploadedDate) {
                 Text("· \(relative)")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
 
@@ -123,7 +123,7 @@ struct BuildRowView: View {
             )
             if !status.0.isEmpty {
                 Text(status.0)
-                    .font(.caption)
+                    .font(.appCaption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(status.1.opacity(0.2))
@@ -148,7 +148,7 @@ struct BuildRowView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .font(.caption)
+                        .font(.appCaption)
                         .accessibilityLabel("Review release notes changes")
                         .accessibilityHint("Shows added and removed lines compared to the last saved version")
                     }
@@ -165,7 +165,7 @@ struct BuildRowView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .font(.caption)
+                        .font(.appCaption)
                         .accessibilityLabel("Update all locales with unsaved changes")
                     }
                     Button("Update") {
@@ -234,7 +234,7 @@ struct BuildRowView: View {
                             onLocaleChange(locale)
                         }) {
                             Text(locale)
-                                .font(.caption)
+                                .font(.appCaption)
                                 .fontWeight(selectedLocale == locale ? .semibold : .regular)
                                 .padding(.leading, 12)
                                 .padding(.trailing, 4)
@@ -246,7 +246,7 @@ struct BuildRowView: View {
                             localePendingRemoval = locale
                         }) {
                             Image(systemName: "xmark")
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .fontWeight(.bold)
                                 .foregroundColor(selectedLocale == locale ? .white.opacity(0.85) : .secondary)
                                 .padding(6)
@@ -271,7 +271,7 @@ struct BuildRowView: View {
                 // empty draft; the existing save path POSTs it.
                 Button(action: { showAddLocale = true }) {
                     Image(systemName: "plus")
-                        .font(.caption)
+                        .font(.appCaption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
                         .overlay(
@@ -311,7 +311,7 @@ struct BuildRowView: View {
 
     private var textEditorView: some View {
         TextEditor(text: $whatsNewText)
-            .font(.body)
+            .font(.appBody)
             .frame(minHeight: 100, maxHeight: 150)
             .padding(8)
             .background(AppTheme.textBackgroundColor)
@@ -422,7 +422,7 @@ struct DiffLinesView: View {
         VStack(alignment: .leading, spacing: 8) {
             if added.isEmpty && removed.isEmpty {
                 Label("No changes", systemImage: "checkmark.circle")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             } else {
                 if !removed.isEmpty {
@@ -430,7 +430,7 @@ struct DiffLinesView: View {
                         .font(.subheader)
                     ForEach(removed, id: \.self) { line in
                         Text("\u{2212} " + line)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.red)
                             .padding(.horizontal, 8)
                             .background(AppTheme.negative.opacity(0.1))
@@ -442,7 +442,7 @@ struct DiffLinesView: View {
                         .font(.subheader)
                     ForEach(added, id: \.self) { line in
                         Text("+ \(line)")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.green)
                             .padding(.horizontal, 8)
                             .background(AppTheme.positive.opacity(0.1))
@@ -473,13 +473,13 @@ struct LocaleDiffsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if diffs.isEmpty {
                         Label("No changes", systemImage: "checkmark.circle")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     } else {
                         ForEach(diffs, id: \.locale) { diff in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(Self.header(for: diff.locale))
-                                    .font(.body)
+                                    .font(.appBody)
                                     .fontWeight(.semibold)
                                 DiffLinesView(added: diff.added, removed: diff.removed)
                             }
@@ -527,12 +527,12 @@ struct AddLocaleView: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search languages\u{2026}", text: $searchText)
                 .textFieldStyle(.roundedBorder)
-                .font(.caption)
+                .font(.appCaption)
                 .focused($searchFocused)
                 .onAppear { searchFocused = true }
             if filtered.isEmpty {
                 Text("No languages match \"\(searchText)\".")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
@@ -546,10 +546,10 @@ struct AddLocaleView: View {
                             }) {
                                 HStack {
                                     Text(BetaLocalizationLocales.displayName(for: locale))
-                                        .font(.body)
+                                        .font(.appBody)
                                     Spacer()
                                     Text(locale)
-                                        .font(.caption2)
+                                        .font(.appCaption2)
                                         .foregroundColor(.secondary)
                                 }
                                 .padding(.horizontal, 8)

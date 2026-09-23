@@ -23,7 +23,7 @@ struct EmptyStateView: View {
                 .font(.subheader)
                 .fontWeight(.medium)
             Text(subtitle)
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
             Spacer()
@@ -44,7 +44,7 @@ struct LoadingStateView: View {
             Spacer()
             ProgressView().scaleEffect(1.1)
             Text(text)
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
             Spacer()
         }
@@ -62,7 +62,7 @@ struct StateErrorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             Button("Retry", action: onRetry)
                 .buttonStyle(.bordered)
