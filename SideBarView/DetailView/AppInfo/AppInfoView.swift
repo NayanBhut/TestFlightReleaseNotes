@@ -57,12 +57,12 @@ struct AppInfoView: View {
                 .fontWeight(.semibold)
             Spacer()
             Text(app.name ?? "")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             Button(action: { viewModel.retryAppInfo() }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
+                    .font(.appCaption)
             }
             .buttonStyle(.bordered)
             .disabled(viewModel.appInfoState.isLoading
@@ -175,7 +175,7 @@ struct AppInfoView: View {
                     }
                 }
                 Text("Editing needs an API key with the App Manager role or higher — a TestFlight-only key is rejected (403).")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
         }
@@ -191,7 +191,7 @@ struct AppInfoView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if !app.currentLiveVersion.1.isEmpty {
                     Text("Version \(app.currentLiveVersion.1)")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 ForEach(localizations, id: \.id) { loc in
@@ -244,14 +244,14 @@ struct AppInfoView: View {
         case .empty:
             InfoCard(title: title, systemImage: systemImage) {
                 Text("No data")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
         case .error(let message):
             InfoCard(title: title, systemImage: systemImage) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(message)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Button("Retry", action: retry)
                         .buttonStyle(.bordered)
@@ -337,27 +337,27 @@ struct AppInfoLocalizationRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Name (2–30 characters)", text: $name)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     TextField("Subtitle (up to 30 characters)", text: $subtitle)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     TextField("Privacy Policy URL", text: $privacyPolicyUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     TextField("Privacy Choices URL", text: $privacyChoicesUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     // Blank draft over a saved value clears that field.
                     Text("Blank a field to clear it. Edits apply only while the app info is in an editable state.")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                     if let errorMessage {
                         Text(errorMessage)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.red)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -449,7 +449,7 @@ struct VersionLocalizationRow: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(localization.locale ?? "Locale")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
                     InfoRow(label: "Description", value: localization.descriptionData)
                     InfoRow(label: "Keywords", value: localization.keywords)
@@ -481,48 +481,48 @@ struct VersionLocalizationRow: View {
             if isEditing {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Description (up to \(VersionLocalizationLimits.descriptionMaxLength) characters)")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $descriptionText)
-                        .font(.body)
+                        .font(.appBody)
                         .frame(minHeight: 80, maxHeight: 160)
                         .border(AppTheme.border, width: 1)
                         .disabled(isSaving)
                     TextField("Keywords, comma-separated (up to \(VersionLocalizationLimits.keywordsMaxLength) characters)", text: $keywords)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     Text("Promotional Text (up to \(VersionLocalizationLimits.promotionalTextMaxLength) characters)")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $promotionalText)
-                        .font(.body)
+                        .font(.appBody)
                         .frame(minHeight: 44, maxHeight: 90)
                         .border(AppTheme.border, width: 1)
                         .disabled(isSaving)
                     Text("What's New (up to \(VersionLocalizationLimits.whatsNewMaxLength) characters)")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $whatsNew)
-                        .font(.body)
+                        .font(.appBody)
                         .frame(minHeight: 60, maxHeight: 140)
                         .border(AppTheme.border, width: 1)
                         .disabled(isSaving)
                     TextField("Marketing URL (http(s))", text: $marketingUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     TextField("Support URL (http(s))", text: $supportUrl)
                         .textFieldStyle(.roundedBorder)
-                        .font(.body)
+                        .font(.appBody)
                         .disabled(isSaving)
                     // Blank draft over a saved value clears that field.
                     Text("Blank a field to clear it. Saving needs an API key with the App Manager role or higher.")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                     if let errorMessage {
                         Text(errorMessage)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.red)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -611,7 +611,7 @@ struct InfoRow: View {
         if let value, !value.isEmpty {
             HStack(alignment: .top) {
                 Text(label)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                     .frame(width: 160, alignment: .leading)
                 Text(value)

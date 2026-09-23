@@ -56,15 +56,15 @@ struct SideBarView: View {
                       }) {
                           Image(systemName: "arrow.clockwise")
                               .font(.system(size: 16))
-                              // Spins while the apps fetch is in flight.
                               .rotationEffect(.degrees(viewModel.isAppsLoading ? 360 : 0))
                               .animation(
-                                  .linear(duration: 0.9).repeatForever(autoreverses: false),
+                                  viewModel.isAppsLoading
+                                      ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                                      : .default,
                                   value: viewModel.isAppsLoading
                               )
                       }
                      .buttonStyle(.plain)
-                     .keyboardShortcut("r", modifiers: .command)
                      .disabled(viewModel.isAppsLoading)
                      .help("Refresh (Cmd+R)")
                      .accessibilityLabel("Refresh Apps")
@@ -80,13 +80,12 @@ struct SideBarView: View {
                      .accessibilityLabel("Toggle Dark Mode")
 
                      Button(action: {
-                         appCommands.showPalette = true
+                         appCommands.showPalette.toggle()
                      }) {
                          Image(systemName: "magnifyingglass")
                              .font(.system(size: 16))
                      }
                      .buttonStyle(.plain)
-                     .keyboardShortcut("k", modifiers: .command)
                      .help("Command Palette (⌘K)")
                      .accessibilityLabel("Command Palette")
                  }
@@ -97,12 +96,12 @@ struct SideBarView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .font(.appCaption)
                         .accessibilityHidden(true)
 
                     TextField("Search apps...", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
-                        .font(.body)
+                        .font(.appBody)
 
                     if !viewModel.searchText.isEmpty {
                         Button {
@@ -110,7 +109,7 @@ struct SideBarView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.secondary)
-                                .font(.caption)
+                                .font(.appCaption)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Clear search")
@@ -137,7 +136,7 @@ struct SideBarView: View {
 
                     if let total = viewModel.appMeta?.paging.total {
                         Text("\(total) apps")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -217,17 +216,17 @@ struct SideBarView: View {
             }) {
                 HStack {
                     Image(systemName: "person.2.fill")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
 
                     Text(CredentialStorage.shared.selectedTeam?.key ?? "No Team")
-                        .font(.body)
+                        .font(.appBody)
                         .foregroundColor(.primary)
 
                     Spacer()
 
                     Image(systemName: showTeams ? "chevron.up" : "chevron.down")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 12)
@@ -246,7 +245,7 @@ struct SideBarView: View {
                     ForEach(credentialStorage.teams, id: \.self) { team in
                         HStack {
                             Text(team)
-                                .font(.body)
+                                .font(.appBody)
                                 .foregroundColor(.primary)
 
                             Spacer()
@@ -257,7 +256,7 @@ struct SideBarView: View {
                             // The high-priority gesture wins over the row
                             // gesture, so delete never selects.
                             Image(systemName: "trash")
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.red)
                                 .padding(6)
                                 .contentShape(Rectangle())
@@ -318,12 +317,12 @@ struct SideBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.caption)
+                    .font(.appCaption)
                 Text("Filter: \(viewModel.selectedStateFilter.displayName)")
-                    .font(.caption)
+                    .font(.appCaption)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 10)
@@ -355,9 +354,9 @@ struct SideBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.arrow.down")
-                    .font(.caption)
+                    .font(.appCaption)
                 Text("Sort: \(viewModel.selectedSortOption.displayName)")
-                    .font(.caption)
+                    .font(.appCaption)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
@@ -380,7 +379,7 @@ struct SideBarView: View {
                 ProgressView()
                     .scaleEffect(1.2)
                 Text("Loading apps...")
-                    .font(.body)
+                    .font(.appBody)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -417,7 +416,7 @@ struct SideBarView: View {
                                     viewModel.loadMoreApps(cursor: nextCursor)
                                 }
                                 .buttonStyle(.plain)
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.red)
                                 .padding(.vertical, 4)
                             } else {
@@ -448,7 +447,7 @@ struct SideBarView: View {
                             .font(.subheader)
                             .fontWeight(.medium)
                         Text("Add a team to load its apps")
-                            .font(.body)
+                            .font(.appBody)
                             .foregroundColor(.secondary)
                         Button("Add Team") {
                             isAddNewTeam = true
@@ -460,7 +459,7 @@ struct SideBarView: View {
                             .font(.subheader)
                             .fontWeight(.medium)
                         Text("No iOS apps are available for this team")
-                            .font(.body)
+                            .font(.appBody)
                             .foregroundColor(.secondary)
                     }
                     Button("Refresh") {
@@ -495,7 +494,7 @@ struct SideBarView: View {
                 .font(.subheader)
                 .fontWeight(.medium)
             Text("No apps match the current search")
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
             Button("Clear Search") {
                 viewModel.clearSearch()
@@ -527,15 +526,15 @@ struct AppRowView: View {
 
                 HStack(spacing: 8) {
                     Text(app.currentLiveVersion.1)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
 
                     Text("•")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
 
                     Text(app.currentState)
-                        .font(.caption)
+                        .font(.appCaption)
                         .fontWeight(.medium)
                         .foregroundColor(getStateColor(app.currentState))
                         .padding(.horizontal, 6)
@@ -545,7 +544,7 @@ struct AppRowView: View {
                 }
 
                 Text(app.bundleId ?? "")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
             }
 

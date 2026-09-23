@@ -27,7 +27,7 @@ struct OnBoardingView: View {
                         .fontWeight(.semibold)
 
                     Text("Enter your App Store Connect API credentials")
-                        .font(.body)
+                        .font(.appBody)
                         .foregroundColor(.secondary)
                 }
 
@@ -56,7 +56,7 @@ struct OnBoardingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Private Key (.p8) (Add key without space and remove top private key when copy paste)")
-                        .font(.body)
+                        .font(.appBody)
                         .fontWeight(.medium)
 
                     Text("*")
@@ -68,13 +68,13 @@ struct OnBoardingView: View {
                         viewModel.getPrivateKey(filePath: viewModel.showOpenPanel())
                     }) {
                         Label("Select File", systemImage: "doc.badge.plus")
-                            .font(.caption)
+                            .font(.appCaption)
                     }
                     .buttonStyle(.bordered)
                 }
 
                 Text("Remove header/footer when pasting")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
 
                 TextEditor(text: $viewModel.privateKey)
@@ -97,7 +97,7 @@ struct OnBoardingView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
                     Text("A team with this name already exists")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.orange)
                 }
                 .padding(.vertical, 2)
@@ -109,7 +109,7 @@ struct OnBoardingView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
                     Text(errorMessage)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.orange)
                 }
                 .padding(.vertical, 4)
@@ -171,7 +171,7 @@ struct OnBoardingField: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.body)
+                    .font(.appBody)
                     .fontWeight(.medium)
 
                 if isRequired {

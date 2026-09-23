@@ -22,24 +22,28 @@ struct App_StoreApp: App {
                 .sheet(isPresented: $appCommands.showPalette) {
                     CommandPalette(commands: appCommands)
                 }
-                 .task {
-                     buildMonitor.start()
-                 }
-                 .onReceive(appCommands.$refreshRequested) { _ in
-                     viewModel.retryApps()
-                 }
-                 .onReceive(appCommands.$clearSearchRequested) { _ in
-                     viewModel.clearSearch()
-                 }
-         }
+                .task {
+                    buildMonitor.start()
+                    AppAppearance.applyStored()
+                }
+                .onReceive(appCommands.refreshRequested) { _ in
+                    viewModel.retryApps()
+                }
+                .onReceive(appCommands.clearSearchRequested) { _ in
+                    viewModel.clearSearch()
+                }
+                .onReceive(appCommands.toggleDarkModeRequested) { _ in
+                    AppAppearance.toggle()
+                }
+        }
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Command Palette") {
-                    appCommands.showPalette = true
+                    appCommands.showPalette.toggle()
                 }
                 .keyboardShortcut("k", modifiers: .command)
                 Button("Toggle Dark Mode") {
-                    AppAppearance.toggle()
+                    appCommands.requestToggleDarkMode()
                 }
                 .keyboardShortcut("d", modifiers: .command)
                 Button("Refresh") {

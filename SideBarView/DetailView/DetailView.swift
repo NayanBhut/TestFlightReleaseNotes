@@ -63,7 +63,7 @@ struct DetailView: View {
                     ProgressView()
                         .scaleEffect(1.2)
                     Text("Loading versions...")
-                        .font(.body)
+                        .font(.appBody)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,7 +80,7 @@ struct DetailView: View {
                                 Spacer()
 
                                 Text("\(viewModel.arrVersions.count) available")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(.secondary)
                             }
 
@@ -138,7 +138,7 @@ struct DetailView: View {
                 Image(systemName: "wifi.exclamationmark")
                     .foregroundColor(.secondary)
                 Text(message)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
                 Spacer()
@@ -176,7 +176,7 @@ struct DetailView: View {
                             viewModel.loadMoreVersions(cursor: nextCursor)
                         }
                         .buttonStyle(.plain)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.red)
                         .padding(.horizontal, 8)
                     } else {
@@ -196,10 +196,10 @@ struct DetailView: View {
             Spacer()
             VStack(spacing: 4) {
                 Text(title)
-                    .font(.body)
+                    .font(.appBody)
                     .fontWeight(.medium)
                 Text(message)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             Spacer()
@@ -280,7 +280,7 @@ struct DetailView: View {
                     // Instructional text alone strands the user — offer the
                     // same Add Team entry point the sidebar has.
                     Text("Add a team to get started")
-                        .font(.body)
+                        .font(.appBody)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                     if let onAddTeam {
@@ -289,7 +289,7 @@ struct DetailView: View {
                     }
                 } else {
                     Text("Select an app from the sidebar to view versions and builds")
-                        .font(.body)
+                        .font(.appBody)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }

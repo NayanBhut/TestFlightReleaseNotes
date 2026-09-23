@@ -377,7 +377,7 @@ struct MenuBarBuildsView: View {
     var body: some View {
         if monitor.processingBuilds.isEmpty {
             Text("No builds processing")
-                .font(.body)
+                .font(.appBody)
                 .foregroundStyle(.secondary)
         } else {
             ForEach(monitor.processingBuilds) { build in
@@ -387,12 +387,12 @@ struct MenuBarBuildsView: View {
         Divider()
         if let lastPoll = monitor.lastPollDate {
             Text("Last checked \(lastPoll, style: .time)")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
         }
         if let error = monitor.lastError {
             Text(error)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.red)
         }
         Button("Check now") {

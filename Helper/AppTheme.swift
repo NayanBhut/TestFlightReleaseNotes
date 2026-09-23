@@ -28,10 +28,7 @@ enum AppTheme {
     }
 
     // MARK: - Accent
-    /// Indigo. Brightened in dark mode to keep contrast on dark surfaces.
     static let accent = adaptive(light: rgb(0.392, 0.4, 0.941), dark: rgb(0.561, 0.569, 0.988))
-    static let accentLight = Color(red: 0.561, green: 0.569, blue: 0.988) // Indigo 8B8DFF
-    static let accentDark = Color(red: 0.298, green: 0.306, blue: 0.827) // Indigo 4C4D99
 
     // MARK: - Background
     static let primaryBackground = adaptive(light: rgb(0.949, 0.961, 0.992), dark: rgb(0.13, 0.14, 0.18))
@@ -68,7 +65,6 @@ enum AppTheme {
     static let selectedOverlay = Color(red: 0.392, green: 0.4, blue: 0.941).opacity(0.08)
     static let selectedBorder = Color(red: 0.392, green: 0.4, blue: 0.941).opacity(0.25)
     static let shadow = adaptive(light: rgb(0, 0, 0, 0.06), dark: rgb(0, 0, 0, 0.45))
-    static let shadowStrong = adaptive(light: rgb(0, 0, 0, 0.12), dark: rgb(0, 0, 0, 0.6))
     static let overlay = Color.black.opacity(0.5)
 
     // MARK: - Chart / Data
@@ -118,7 +114,7 @@ extension String {
         switch upper {
         case "READY_FOR_SALE", "ACCEPTED", "READY_FOR_REVIEW":
             return AppTheme.readyForSale
-        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "PENDING_DEVELOPER_RELEASE":
+        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE":
             return AppTheme.pending
         case "IN_REVIEW", "WAITING_FOR_REVIEW":
             return AppTheme.inReview
@@ -138,70 +134,12 @@ extension String {
 
 // MARK: - View Extensions
 extension View {
-    func appCardStyle() -> some View {
-        background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(AppTheme.cardBackground)
-                .shadow(color: AppTheme.shadow, radius: 8, x: 0, y: 4)
-        )
-    }
-
     func appShadow(radius: CGFloat = 8, x: CGFloat = 0, y: CGFloat = 4) -> some View {
         shadow(color: AppTheme.shadow, radius: radius, x: x, y: y)
     }
-
-    func appInteractive() -> some View {
-        onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                // Scale effect on hover is handled per-view
-            }
-        }
-    }
-
-    func appButtonStyle() -> some View {
-        buttonStyle(AppButtonStyle())
-    }
 }
 
-// MARK: - Custom Button Style
-struct AppButtonStyle: ButtonStyle {
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? AppTheme.hoverOverlay : Color.clear)
-                    .animation(.easeInOut(duration: 0.15), value: isHovered)
-            }
-            .onHover { hovering in
-                isHovered = hovering
-            }
-    }
-}
-
-// MARK: - Animated Loading Spinner
-struct AppSpinnerView: View {
-    @State private var isAnimating = false
-
-    var body: some View {
-        ProgressView()
-            .scaleEffect(isAnimating ? 1.0 : 0.8)
-            .opacity(isAnimating ? 1.0 : 0.5)
-            .onAppear {
-                withAnimation(
-                    Animation.easeInOut(duration: 1.0)
-                        .repeatForever(autoreverses: true)
-                ) {
-                    isAnimating = true
-                }
-            }
-    }
-}
-
-// MARK: - Preview (both appearances)
+// MARK: - State Color Mapping
 #Preview("AppTheme / Light") {
     VStack(spacing: 16) {
         Text("Accent").foregroundColor(AppTheme.accent)

@@ -108,7 +108,7 @@ struct ErrorRetryView: View {
             Text(title)
                 .font(.subheader)
             Text(message)
-                .font(.body)
+                .font(.appBody)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
