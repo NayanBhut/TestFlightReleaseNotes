@@ -44,6 +44,12 @@ struct BuildRowView: View {
     let onUpdateAll: () -> Void
     let isUpdating: Bool
     let isExpireToggling: Bool
+    /// Stagger delay (seconds) for the entrance animation, supplied by
+    /// the parent list based on row index. Defaults to 0 so previews
+    /// and other call sites don't need to pass it.
+    var entranceOffset: Double = 0
+
+    @State private var appeared = false
 
     /// Local editable draft, separate from the last committed (saved) text.
     @State private var whatsNewText: String = ""
@@ -73,6 +79,13 @@ struct BuildRowView: View {
             textEditorView
         }
         .padding(.vertical, 4)
+        .opacity(appeared ? 1.0 : 0.0)
+        .offset(y: appeared ? 0 : 20)
+        .onAppear {
+            withAnimation(.spring(duration: 0.4, bounce: 0.3).delay(entranceOffset)) {
+                appeared = true
+            }
+        }
         .alert("Remove \(localePendingRemoval.map { localeLabel($0) } ?? "this locale") notes?", isPresented: Binding(
             get: { localePendingRemoval != nil },
             set: { if !$0 { localePendingRemoval = nil } }
@@ -92,10 +105,10 @@ struct BuildRowView: View {
     private var headerView: some View {
         HStack {
             Text("\(selectedVersionString)(\(version))")
-                .font(.headline)
+                .font(.subheader)
 
             Text(BuildDisplayHelper.formattedUploadedDate(uploadedDate))
-                .font(.subheadline)
+                .font(.body)
                 .foregroundColor(.secondary)
 
             if let relative = BuildDisplayHelper.relativeUploadedTime(uploadedDate) {
@@ -245,11 +258,11 @@ struct BuildRowView: View {
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedLocale == locale ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                            .fill(selectedLocale == locale ? AppTheme.accent : AppTheme.secondaryBackground)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(selectedLocale == locale ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
+                            .stroke(selectedLocale == locale ? Color.clear : AppTheme.border, lineWidth: 1)
                     )
                 }
 
@@ -263,7 +276,7 @@ struct BuildRowView: View {
                         .padding(.vertical, 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                .stroke(AppTheme.border, lineWidth: 1)
                         )
                         .foregroundColor(.secondary)
                 }
@@ -301,11 +314,11 @@ struct BuildRowView: View {
             .font(.body)
             .frame(minHeight: 100, maxHeight: 150)
             .padding(8)
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(AppTheme.textBackgroundColor)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(hasChanges ? Color.blue.opacity(0.5) : Color.gray.opacity(0.3), lineWidth: hasChanges ? 2 : 1)
+                    .stroke(hasChanges ? AppTheme.inReview.opacity(0.5) : AppTheme.border, lineWidth: hasChanges ? 2 : 1)
             )
             .scrollContentBackground(.hidden)
             .onChange(of: whatsNewText) { _, newValue in
@@ -414,25 +427,25 @@ struct DiffLinesView: View {
             } else {
                 if !removed.isEmpty {
                     Text("Removed")
-                        .font(.headline)
+                        .font(.subheader)
                     ForEach(removed, id: \.self) { line in
                         Text("\u{2212} " + line)
                             .font(.caption)
                             .foregroundColor(.red)
                             .padding(.horizontal, 8)
-                            .background(Color.red.opacity(0.1))
+                            .background(AppTheme.negative.opacity(0.1))
                             .cornerRadius(4)
                     }
                 }
                 if !added.isEmpty {
                     Text("Added")
-                        .font(.headline)
+                        .font(.subheader)
                     ForEach(added, id: \.self) { line in
                         Text("+ \(line)")
                             .font(.caption)
                             .foregroundColor(.green)
                             .padding(.horizontal, 8)
-                            .background(Color.green.opacity(0.1))
+                            .background(AppTheme.positive.opacity(0.1))
                             .cornerRadius(4)
                     }
                 }
@@ -466,7 +479,7 @@ struct LocaleDiffsView: View {
                         ForEach(diffs, id: \.locale) { diff in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(Self.header(for: diff.locale))
-                                    .font(.subheadline)
+                                    .font(.body)
                                     .fontWeight(.semibold)
                                 DiffLinesView(added: diff.added, removed: diff.removed)
                             }
@@ -533,7 +546,7 @@ struct AddLocaleView: View {
                             }) {
                                 HStack {
                                     Text(BetaLocalizationLocales.displayName(for: locale))
-                                        .font(.subheadline)
+                                        .font(.body)
                                     Spacer()
                                     Text(locale)
                                         .font(.caption2)

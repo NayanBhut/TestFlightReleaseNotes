@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import AppKit
 import OSLog
 
 private let buildDetailsLogger = Logger(subsystem: "com.appstore.release-notes", category: "BuildDetails")
@@ -38,15 +37,11 @@ struct BuildDetailsView: View {
                         EmptyView()
                     }
                 case .loading:
-                    // Full screen loading when fetching builds.
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Loading builds...")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Skeleton placeholders keep the layout stable while
+                    // fetching, instead of a lone spinner.
+                    BuildSkeletonList()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .transition(.opacity)
                 case .error(let message):
                     ErrorRetryView(
                         title: "Couldn't Load Builds",
@@ -139,10 +134,10 @@ struct BuildDetailsView: View {
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
             Text("No Version Selected")
-                .font(.title3)
+                .font(.subheader)
                 .fontWeight(.medium)
             Text("Select a version above to view its builds")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -156,10 +151,10 @@ struct BuildDetailsView: View {
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
             Text("No Builds Available")
-                .font(.title3)
+                .font(.subheader)
                 .fontWeight(.medium)
             Text("This version doesn't have any builds yet")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -168,53 +163,107 @@ struct BuildDetailsView: View {
     }
 
     private func buildsHeader() -> some View {
-        HStack {
-            Text("Builds")
-                .font(.title2)
-                .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Builds")
+                    .font(.sectionHeader)
+                    .fontWeight(.semibold)
 
-            Spacer()
+                Spacer()
 
-            if let total = viewModel.meta?.paging.total {
-                Text("\(total) total")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                if let total = viewModel.meta?.paging.total {
+                    Text("\(total) total")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .contentTransition(.numericText())
+                }
+
+                snippetsMenu
+
+                openInASCMenu
+
+                // Locales completeness popover: matrix of locale × build
+                // (✓/empty) so missing locales are visible at a glance.
+                Button(action: { showLocalePopover = true }) {
+                    Label("Locales", systemImage: "globe")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showLocalePopover) {
+                    LocaleCompletenessPopover(
+                        completeness: viewModel.localeCompleteness(),
+                        builds: viewModel.arrBuilds,
+                        completeCount: viewModel.completeLocaleCount()
+                    )
+                    .frame(width: 500)
+                    .padding()
+                }
+
+                Button(action: {
+                    refreshBuildList?()
+                }) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                        // Spins while the builds fetch is in flight.
+                        .rotationEffect(.degrees(viewModel.buildsState.isLoading ? 360 : 0))
+                        .animation(
+                            .linear(duration: 0.9).repeatForever(autoreverses: false),
+                            value: viewModel.buildsState.isLoading
+                        )
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.buildsState.isLoading)
             }
 
-            snippetsMenu
-
-            openInASCMenu
-
-            // Locales completeness popover: matrix of locale × build
-            // (✓/empty) so missing locales are visible at a glance.
-            Button(action: { showLocalePopover = true }) {
-                Label("Locales", systemImage: "globe")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showLocalePopover) {
-                LocaleCompletenessPopover(
-                    completeness: viewModel.localeCompleteness(),
-                    builds: viewModel.arrBuilds,
-                    completeCount: viewModel.completeLocaleCount()
-                )
-                .frame(width: 500)
-                .padding()
-            }
-
-            Button(action: {
-                refreshBuildList?()
-            }) {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
-            }
-            .buttonStyle(.bordered)
-            .disabled(viewModel.buildsState.isLoading)
+            // Live status distribution for the loaded builds.
+            buildStatsStrip
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppTheme.secondaryBackground)
+    }
+
+    /// Live counts by build status. Pure derivation from `arrBuilds` —
+    /// no stored copies to keep in sync.
+    private var buildStatsStrip: some View {
+        let stats = BuildStats.compute(viewModel.arrBuilds.map {
+            BuildStatusInput(processingState: $0.processingState, expired: $0.expired ?? false)
+        })
+
+        return HStack(spacing: 12) {
+            if stats.valid > 0 {
+                statPill(count: stats.valid, label: "valid", color: .green)
+            }
+            if stats.processing > 0 {
+                statPill(count: stats.processing, label: "processing", color: .yellow)
+            }
+            if stats.failed > 0 {
+                statPill(count: stats.failed, label: "failed", color: .red)
+            }
+            if stats.expired > 0 {
+                statPill(count: stats.expired, label: "expired", color: .red)
+            }
+            if stats.total == 0 {
+                Text("No builds loaded")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: stats)
+    }
+
+    private func statPill(count: Int, label: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text("\(count) \(label)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .contentTransition(.numericText())
+        }
+        .transition(.scale.combined(with: .opacity))
     }
 
     /// Single snippets menu — copies selected text to clipboard
@@ -269,22 +318,24 @@ struct BuildDetailsView: View {
         // app there is nothing meaningful to open. Disabling the whole menu
         // communicates the state more clearly than three grayed items
         // behind an opening menu (review finding).
-        .disabled(viewModel.selectedApp == nil)
-        .help("Open this app in App Store Connect (browser)")
-        .accessibilityLabel("Open in App Store Connect")
-    }
+         .disabled(viewModel.selectedApp == nil)
+         .help("Open this app in App Store Connect (browser)")
+         .accessibilityLabel("Open in App Store Connect")
+     }
 
-    @ViewBuilder private func getBuildsList() -> some View {
-        if viewModel.arrBuilds.isEmpty {
-            noBuildsView
-        } else {
-            List(viewModel.arrBuilds, id: \.id) { build in
-                buildRow(for: build)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            }
-            .listStyle(.plain)
-        }
-    }
+     @ViewBuilder private func getBuildsList() -> some View {
+         if viewModel.arrBuilds.isEmpty {
+             noBuildsView
+         } else {
+             // Enumerated so each row gets a stagger delay for the
+             // entrance animation (capped so long lists don't cascade).
+             List(Array(viewModel.arrBuilds.enumerated()), id: \.element.id) { index, build in
+                 buildRow(for: build, entranceOffset: BuildListAnimation.staggerDelay(forRow: index))
+                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+             }
+             .listStyle(.plain)
+         }
+     }
 
     private func selectedLocale(for build: BuildsModel) -> String {
         let locales = viewModel.getAllLocales(for: build.id)
@@ -294,7 +345,7 @@ struct BuildDetailsView: View {
         return locales.first ?? BetaLocalizationLocales.defaultLocale
     }
 
-    private func buildRow(for build: BuildsModel) -> some View {
+    private func buildRow(for build: BuildsModel, entranceOffset: Double = 0) -> some View {
         let locale = selectedLocale(for: build)
 
         return BuildRowView(
@@ -342,7 +393,8 @@ struct BuildDetailsView: View {
             onFetchDiffs: { viewModel.dirtyDiffs(for: build.id) },
             onUpdateAll: { viewModel.saveAllLocales(buildId: build.id) },
             isUpdating: viewModel.isBuildUpdating(build.id),
-            isExpireToggling: viewModel.expireTogglingBuildId == build.id
+            isExpireToggling: viewModel.expireTogglingBuildId == build.id,
+            entranceOffset: entranceOffset
         )
         .padding(.vertical, 4)
     }
@@ -369,7 +421,7 @@ struct ToastView: View {
             .font(.caption)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(AppTheme.secondaryBackground)
             .cornerRadius(8)
             .shadow(radius: 4)
     }
@@ -431,6 +483,58 @@ enum BuildDisplayHelper {
         default:
             return ("", .clear)
         }
+    }
+}
+
+// MARK: - Build stats + list animation math
+//
+// Pure, UI-free helpers behind the builds header strip and the staggered
+// row entrance. Kept separate from the views so unit tests can cover them
+// without hosting SwiftUI.
+
+/// Minimal build status projection for counting. Decouples `BuildStats`
+/// from `BuildsModel` (whose macro-generated inits are awkward in tests).
+struct BuildStatusInput {
+    var processingState: String?
+    var expired: Bool
+}
+
+/// Status-bucket counts for the builds header strip. Expired wins over
+/// processingState, mirroring `BuildDisplayHelper.buildStatus` above.
+struct BuildStats: Equatable {
+    var valid = 0
+    var processing = 0
+    var failed = 0
+    var expired = 0
+
+    var total: Int { valid + processing + failed + expired }
+
+    static func compute(_ inputs: [BuildStatusInput]) -> BuildStats {
+        var stats = BuildStats()
+        for input in inputs {
+            if input.expired {
+                stats.expired += 1
+            } else {
+                switch input.processingState {
+                case "PROCESSING":
+                    stats.processing += 1
+                case "FAILED", "INVALID":
+                    stats.failed += 1
+                default:
+                    // VALID, unknown, or missing states all read as shippable.
+                    stats.valid += 1
+                }
+            }
+        }
+        return stats
+    }
+}
+
+/// Entrance-animation timing for the builds list.
+enum BuildListAnimation {
+    /// Stagger delay for a row index. Capped so long lists don't cascade.
+    static func staggerDelay(forRow index: Int, step: Double = 0.05, max maxDelay: Double = 0.5) -> Double {
+        min(Double(max(index, 0)) * step, maxDelay)
     }
 }
 
@@ -534,7 +638,7 @@ struct LocaleCompletenessPopover: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Locales × Builds")
-                        .font(.headline)
+                        .font(.subheader)
                     Spacer()
                     Text("\(completeCount.complete)/\(completeCount.total) complete")
                         .font(.caption)
@@ -572,4 +676,62 @@ struct LocaleCompletenessPopover: View {
 
 #Preview {
     BuildDetailsView(viewModel: DetailViewModel(sidebarViewModel: SideBarViewModel()))
+}
+
+/// Shimmer skeleton shown while builds load. Purely presentational:
+/// gray bars with a sweeping highlight, no data dependencies.
+private struct BuildSkeletonList: View {
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(0..<4, id: \.self) { _ in
+                    BuildSkeletonRow()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .scrollDisabled(true)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct BuildSkeletonRow: View {
+    @State private var sweep: CGFloat = -0.7
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(AppTheme.tertiaryBackground)
+                .frame(width: 200, height: 18)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(AppTheme.tertiaryBackground)
+                .frame(height: 60)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(AppTheme.tertiaryBackground)
+                .frame(width: 140, height: 12)
+                .opacity(0.7)
+        }
+        .padding(16)
+        .background(AppTheme.cardBackground)
+        .cornerRadius(12)
+        .overlay {
+            GeometryReader { geo in
+                let width = max(geo.size.width, 1)
+                LinearGradient(
+                    gradient: Gradient(colors: [.clear, .white.opacity(0.5), .clear]),
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: width * 0.55)
+                .offset(x: -width * 0.55 + sweep * width * 1.6)
+            }
+            .mask(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) {
+                sweep = 1
+            }
+        }
+    }
 }

@@ -11,27 +11,47 @@ import SwiftUI
 struct App_StoreApp: App {
     @StateObject private var navigationManager = NavigationManager()
     @StateObject private var viewModel = SideBarViewModel()
-    @StateObject private var exportManager = ExportManager()
-    /// Batch H: build-processing poller backing the menu bar extra. Started
-    /// idempotently from both scenes — whichever appears first wins.
     @StateObject private var buildMonitor = BuildProcessingMonitor()
+    @StateObject private var appCommands = AppCommandStore()
 
     var body: some Scene {
-        // id "main" is referenced by the menu bar extra's "Open App" item.
         WindowGroup(id: "main") {
-            RootView(viewModel: viewModel)
+            ContentView(viewModel: viewModel)
                 .environmentObject(navigationManager)
-                .environmentObject(exportManager)
-                .task {
-                    buildMonitor.start()
+                .environmentObject(appCommands)
+                .sheet(isPresented: $appCommands.showPalette) {
+                    CommandPalette(commands: appCommands)
                 }
+                 .task {
+                     buildMonitor.start()
+                 }
+                 .onReceive(appCommands.$refreshRequested) { _ in
+                     viewModel.retryApps()
+                 }
+                 .onReceive(appCommands.$clearSearchRequested) { _ in
+                     viewModel.clearSearch()
+                 }
+         }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Command Palette") {
+                    appCommands.showPalette = true
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                Button("Toggle Dark Mode") {
+                    AppAppearance.toggle()
+                }
+                .keyboardShortcut("d", modifiers: .command)
+                Button("Refresh") {
+                    appCommands.requestRefresh()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
         }
 
         MenuBarExtra {
             MenuBarBuildsView(monitor: buildMonitor)
         } label: {
-            // Icon-only while idle (menu bar space is precious); the count
-            // appears only when there's something processing.
             if buildMonitor.processingCount > 0 {
                 Label("\(buildMonitor.processingCount)", systemImage: "hourglass")
             } else {
@@ -39,19 +59,5 @@ struct App_StoreApp: App {
             }
         }
         .menuBarExtraStyle(.menu)
-    }
-}
-
-struct RootView: View {
-    @EnvironmentObject var navigationManager: NavigationManager
-    private let viewModel: SideBarViewModel
-
-    init(viewModel: SideBarViewModel) {
-        self.viewModel = viewModel
-    }
-
-    var body: some View {
-        ContentView(viewModel: viewModel)
-            .environmentObject(navigationManager)
     }
 }

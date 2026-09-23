@@ -377,7 +377,7 @@ struct MenuBarBuildsView: View {
     var body: some View {
         if monitor.processingBuilds.isEmpty {
             Text("No builds processing")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundStyle(.secondary)
         } else {
             ForEach(monitor.processingBuilds) { build in

@@ -56,7 +56,7 @@ struct ReviewsView: View {
     private func header(app: AppsData) -> some View {
         HStack {
             Text("Reviews")
-                .font(.title2)
+                .font(.sectionHeader)
                 .fontWeight(.semibold)
             Spacer()
             Text(app.name ?? "")
@@ -71,7 +71,7 @@ struct ReviewsView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppTheme.secondaryBackground)
     }
 
     // MARK: - Filter bar
@@ -139,7 +139,7 @@ struct ReviewsView: View {
                             StateChip(text: submission.state ?? "UNKNOWN")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(submission.platform ?? "")
-                                    .font(.subheadline)
+                                    .font(.body)
                                     .fontWeight(.medium)
                                 if let version = submission.appStoreVersion?.versionString, !version.isEmpty {
                                     Text("Version \(version)")
@@ -217,7 +217,7 @@ struct ReviewsView: View {
             HStack(alignment: .center, spacing: 8) {
                 StarRating(rating: review.rating ?? 0)
                 Text(review.title ?? "")
-                    .font(.subheadline)
+                    .font(.body)
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 Spacer()
@@ -229,7 +229,7 @@ struct ReviewsView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
             Text(review.body ?? "")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -254,7 +254,7 @@ struct ReviewsView: View {
                     }
                 }
                 .padding(8)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(AppTheme.windowBackground)
                 .cornerRadius(6)
             }
             if review.response == nil {
@@ -344,7 +344,7 @@ struct ReplySection: View {
                 }
             }
             .padding(8)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(AppTheme.windowBackground)
             .cornerRadius(6)
         } else {
             Button("Reply") {
