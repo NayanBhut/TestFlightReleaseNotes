@@ -210,9 +210,20 @@ struct ScreenshotsSheet: View {
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fit)
+                    case .failure:
+                        // A failed thumbnail must not sit on the spinner
+                        // forever looking like a slow load.
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(AppTheme.secondaryBackground)
+                            .frame(height: 120)
+                            .overlay {
+                                Image(systemName: "photo")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                            }
                     default:
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .controlBackgroundColor))
+                            .fill(AppTheme.secondaryBackground)
                             .frame(height: 120)
                             .overlay { ProgressView().controlSize(.small) }
                     }

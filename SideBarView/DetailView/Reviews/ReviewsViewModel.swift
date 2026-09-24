@@ -115,6 +115,14 @@ final class ReviewsViewModel: ObservableObject {
     /// for this app are (re)fetched, and in-flight fetches for the same app
     /// are not cancelled-and-restarted.
     func load(app: AppsData) {
+        // App switch: the phased-release card belongs to the previous app —
+        // without this reset it would show stale state and its buttons
+        /// would PATCH the wrong app's release.
+        if currentAppId != app.id {
+            phasedVersionId = nil
+            phasedRelease = nil
+            writeError = nil
+        }
         currentAppId = app.id
         if reviewsLoadedAppId != app.id, reviewsInFlightAppId != app.id {
             reviewsFetchTask?.cancel()
@@ -148,6 +156,14 @@ final class ReviewsViewModel: ObservableObject {
         submissionsNextCursor = nil
         reviewsPaginationFailed = false
         submissionsPaginationFailed = false
+        // Batch J write state clears with everything else.
+        phasedVersionId = nil
+        phasedRelease = nil
+        phasedLoading = false
+        phasedActionInFlight = false
+        submittingReview = false
+        cancellingSubmissionId = nil
+        writeError = nil
     }
 
     func retryAll() {
@@ -224,16 +240,21 @@ final class ReviewsViewModel: ObservableObject {
 
     // MARK: - Submit for review / cancel
 
-    /// POST /v1/reviewSubmissions with the app linkage. On success the
-    /// submissions list is refetched so the new row appears; true = posted.
-    func submitForReview(appId: String) async -> Bool {
+    /// Full submit pipeline (verified against spec v4.3.1 + the ASC
+    /// submission workflow): POST /reviewSubmissions → POST
+    /// /reviewSubmissionItems linking the appStoreVersion → PATCH the
+    /// submission {submitted: true}. A POST alone only creates a draft.
+    /// `versionId` is required — the UI disables submit without one.
+    func submitForReview(appId: String, versionId: String) async -> Bool {
         guard !submittingReview else { return false }
         submittingReview = true
         defer { submittingReview = false }
 
+        // Step 1: create the submission (platform omitted — the server
+        // derives it from the linked version's app).
         let body = ReviewSubmissionCreateRequest(
             data: ReviewSubmissionCreateData(
-                attributes: ReviewSubmissionCreateAttributes(platform: "IOS"),
+                attributes: nil,
                 relationships: ReviewSubmissionAppLinkage(
                     app: ReviewSubmissionAppRef(
                         data: ReviewSubmissionAppRefData(id: appId)))
@@ -248,8 +269,48 @@ final class ReviewsViewModel: ObservableObject {
         }
 
         do {
-            _ = try await APIClient.shared.callAPI(with: request)
+            let responseData = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return false }
+            let submission = try getDecoder().decode(ReviewSubmissionModel.self, from: responseData)
+
+            // Step 2: link the version as the item under review.
+            let item = ReviewSubmissionItemCreateRequest(
+                data: ReviewSubmissionItemCreateData(
+                    relationships: ReviewSubmissionItemRelationships(
+                        reviewSubmission: ReviewSubmissionItemRef(
+                            data: ReviewSubmissionItemRefData(id: submission.id)),
+                        appStoreVersion: ReviewSubmissionItemVersionRef(
+                            data: ReviewSubmissionItemVersionRefData(id: versionId))
+                    )
+                )
+            )
+            guard let itemData = try? JSONEncoder().encode(item),
+                  let itemRequest = APIClient.shared.getRequest(
+                    api: .post(name: .reviewSubmissionItems, body: itemData),
+                    apiVersion: .v1) else {
+                writeError = APIError.jsonConversionFailure.details
+                return false
+            }
+            _ = try await APIClient.shared.callAPI(with: itemRequest)
+            guard !Task.isCancelled else { return false }
+
+            // Step 3: flip submitted=true — this actually sends it.
+            let update = ReviewSubmissionUpdateRequest(
+                data: ReviewSubmissionUpdateData(
+                    id: submission.id,
+                    attributes: ReviewSubmissionUpdateAttributes(submitted: true, canceled: nil)
+                )
+            )
+            guard let updateData = try? JSONEncoder().encode(update),
+                  let updateRequest = APIClient.shared.getRequest(
+                    api: .patch(name: .getReviewSubmissions, body: updateData, path: submission.id),
+                    apiVersion: .v1) else {
+                writeError = APIError.jsonConversionFailure.details
+                return false
+            }
+            _ = try await APIClient.shared.callAPI(with: updateRequest)
+            guard !Task.isCancelled else { return false }
+
             // Invalidate so the next load refetches with the new row.
             submissionsLoadedAppId = nil
             submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
@@ -306,7 +367,10 @@ final class ReviewsViewModel: ObservableObject {
 
     /// GET /v1/appStoreVersions/{id}/appStoreVersionPhasedRelease.
     /// A 404 means no phased release was ever started — that is a valid
-    /// empty state (phasedRelease = nil), not an error.
+    /// empty state (phasedRelease = nil), not an error. Responses for a
+    /// version the user has since navigated away from are dropped, so a
+    /// slow earlier request can't overwrite (or arm buttons against)
+    /// the currently selected version's release.
     func loadPhasedRelease(versionId: String) async {
         phasedVersionId = versionId
         phasedLoading = true
@@ -319,10 +383,10 @@ final class ReviewsViewModel: ObservableObject {
         }
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, phasedVersionId == versionId else { return }
             phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: data)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, phasedVersionId == versionId else { return }
             if let apiError = error as? APIError, apiError.statusCode == 404 {
                 phasedRelease = nil
             } else {
