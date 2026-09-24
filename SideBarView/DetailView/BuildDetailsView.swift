@@ -22,6 +22,7 @@ struct BuildDetailsView: View {
     /// the committed text for it is read from the view model.
     @State private var selectedLocales: [String: String] = [:]
     @State private var toastMessage: String? = nil
+    @State private var toastVariant: ToastVariant = .neutral
     @State private var toastWorkItem: DispatchWorkItem? = nil
     @State private var showLocalePopover = false
 
@@ -86,7 +87,7 @@ struct BuildDetailsView: View {
             if let toast = toastMessage {
                 VStack {
                     Spacer()
-                    ToastView(message: toast)
+                    ToastView(message: toast, variant: toastVariant)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .animation(.spring(), value: toastMessage)
                         .padding(.bottom, 20)
@@ -404,6 +405,7 @@ struct BuildDetailsView: View {
     private func showToast(_ message: String) {
         toastWorkItem?.cancel()
         toastMessage = message
+        toastVariant = ToastVariant.infer(from: message)
 
         let workItem = DispatchWorkItem {
             withAnimation {
@@ -415,17 +417,78 @@ struct BuildDetailsView: View {
     }
 }
 
+/// Toast feedback variant: neutral (default, current look) or tinted
+/// success/error/warning with a matching icon.
+enum ToastVariant {
+    case neutral
+    case success
+    case error
+    case warning
+
+    var systemImage: String? {
+        switch self {
+        case .neutral: return nil
+        case .success: return "checkmark.circle.fill"
+        case .error: return "exclamationmark.triangle.fill"
+        case .warning: return "exclamationmark.circle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .neutral: return .secondary
+        case .success: return .green
+        case .error: return .red
+        case .warning: return .orange
+        }
+    }
+
+    /// Tinted background wash; the neutral variant keeps the existing look.
+    var background: Color {
+        switch self {
+        case .neutral: return AppTheme.secondaryBackground
+        default: return tint.opacity(0.12)
+        }
+    }
+
+    /// Conservative message → variant mapping. The view model publishes
+    /// toasts as plain strings, so only high-confidence prefixes are
+    /// classified; everything else stays neutral.
+    static func infer(from message: String) -> ToastVariant {
+        let lower = message.lowercased()
+        if lower.hasPrefix("failed") || lower.hasPrefix("couldn't") {
+            return .error
+        }
+        if lower.contains("already") {
+            return .warning
+        }
+        if lower.hasPrefix("copied") || lower.hasPrefix("removed") || lower.hasPrefix("build expired") {
+            return .success
+        }
+        return .neutral
+    }
+}
+
 struct ToastView: View {
     let message: String
+    var variant: ToastVariant = .neutral
 
     var body: some View {
-        Text(message)
-            .font(.appCaption)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(AppTheme.secondaryBackground)
-            .cornerRadius(8)
-            .shadow(radius: 4)
+        HStack(spacing: 8) {
+            if let systemImage = variant.systemImage {
+                Image(systemName: systemImage)
+                    .font(.appCaption)
+                    .foregroundColor(variant.tint)
+                    .accessibilityHidden(true)
+            }
+            Text(message)
+                .font(.appCaption)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(variant.background)
+        .cornerRadius(8)
+        .shadow(radius: 4)
     }
 }
 
