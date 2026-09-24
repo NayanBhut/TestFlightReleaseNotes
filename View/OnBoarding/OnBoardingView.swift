@@ -143,9 +143,12 @@ struct OnBoardingView: View {
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(AppTheme.windowBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(AppTheme.accent.opacity(0.22), lineWidth: 1)
+                )
         )
-        .shadow(color: .black.opacity(0.15), radius: 30, x: 0, y: 15)
-        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+        .appShadow(radius: 30, y: 15)
         .padding(20)
 //        .interactiveDismissDisabled(true)
     }
