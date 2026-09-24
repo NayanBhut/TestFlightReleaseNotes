@@ -98,6 +98,26 @@ struct StateErrorView: View {
     }
 }
 
+/// Tap feedback for row-style targets (app rows, version chips): a small
+/// scale-down plus dim while pressed, springing back on release. Defined
+/// once here and reused at every site so the feel stays identical.
+struct PressableScaleButtonStyle: ButtonStyle {
+    /// How far the target shrinks while pressed.
+    var pressedScale: CGFloat = 0.97
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == PressableScaleButtonStyle {
+    /// `.buttonStyle(.pressableScale)` — defined once in StateView.swift.
+    static var pressableScale: PressableScaleButtonStyle { .init() }
+}
+
 #Preview {
     VStack(spacing: 32) {
         EmptyStateView(icon: "info.circle", title: "No App Selected", subtitle: "Select an app from the sidebar")
