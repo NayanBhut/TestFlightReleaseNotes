@@ -384,6 +384,11 @@ final class ReviewsViewModel: ObservableObject {
         do {
             let data = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled, phasedVersionId == versionId else { return }
+            if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               payload["data"] is NSNull {
+                phasedRelease = nil
+                return
+            }
             phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: data)
         } catch {
             guard !Task.isCancelled, phasedVersionId == versionId else { return }
@@ -391,7 +396,11 @@ final class ReviewsViewModel: ObservableObject {
                 phasedRelease = nil
             } else {
                 reviewsLogger.error("Failed to load phased release: \(error.localizedDescription)")
-                writeError = writeMessage(for: error)
+                if error is DecodingError {
+                    writeError = "Couldn't read the phased release response. Try again."
+                } else {
+                    writeError = writeMessage(for: error)
+                }
             }
         }
     }

@@ -114,9 +114,9 @@ extension String {
         switch upper {
         case "READY_FOR_SALE", "ACCEPTED", "READY_FOR_REVIEW", "COMPLETE", "APPROVED", "ENABLED", "ACTIVE", "VALID":
             return AppTheme.readyForSale
-        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "CANCELING", "COMPLETING":
+        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "CANCELING", "COMPLETING", "WAITING_FOR_REVIEW":
             return AppTheme.pending
-        case "IN_REVIEW", "WAITING_FOR_REVIEW":
+        case "IN_REVIEW":
             return AppTheme.inReview
         case "PROCESSING_FOR_APP_STORE":
             return AppTheme.processing

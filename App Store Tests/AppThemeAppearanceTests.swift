@@ -117,8 +117,8 @@ final class AppThemeAppearanceTests: XCTestCase {
     func testStateColorMapping() {
         let mappings: [([String], Color)] = [
             (["READY_FOR_SALE", "ACCEPTED", "READY_FOR_REVIEW", "COMPLETE", "APPROVED", "ENABLED", "ACTIVE", "VALID"], AppTheme.readyForSale),
-            (["PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "CANCELING", "COMPLETING"], AppTheme.pending),
-            (["IN_REVIEW", "WAITING_FOR_REVIEW"], AppTheme.inReview),
+            (["PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "CANCELING", "COMPLETING", "WAITING_FOR_REVIEW"], AppTheme.pending),
+            (["IN_REVIEW"], AppTheme.inReview),
             (["REJECTED", "INVALID_BINARY", "UNRESOLVED_ISSUES", "INVALID"], AppTheme.rejected),
             (["UNKNOWN"], AppTheme.secondaryText),
         ]
