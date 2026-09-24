@@ -395,6 +395,7 @@ struct SideBarView: View {
                             viewModel.setSelectedAppAndGetVersions(app: app)
                         } label: {
                             AppRowView(app: app, isSelected: app.isSelected)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.pressableScale)

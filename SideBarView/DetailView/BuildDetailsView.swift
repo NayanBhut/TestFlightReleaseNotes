@@ -98,7 +98,7 @@ struct BuildDetailsView: View {
             // Toast events carry identity (UUID), so consecutive identical
             // messages still re-fire — the dismissal timer restarts each time.
             if let newToast {
-                showToast(newToast.message)
+                showToast(newToast.message, variant: newToast.variant)
             }
         }
         // Surface failed release-note saves instead of silently logging them.
@@ -402,10 +402,10 @@ struct BuildDetailsView: View {
         .padding(.vertical, 4)
     }
 
-    private func showToast(_ message: String) {
+    private func showToast(_ message: String, variant: ToastVariant = .neutral) {
         toastWorkItem?.cancel()
         toastMessage = message
-        toastVariant = ToastVariant.infer(from: message)
+        toastVariant = variant
 
         let workItem = DispatchWorkItem {
             withAnimation {
@@ -443,29 +443,19 @@ enum ToastVariant {
         }
     }
 
-    /// Tinted background wash; the neutral variant keeps the existing look.
-    var background: Color {
+    /// Tinted background wash over the opaque neutral base; the neutral
+    /// variant keeps the existing look. Tinted variants layer over the
+    /// opaque base so scrolling content never bleeds through the toast.
+    var background: some View {
         switch self {
-        case .neutral: return AppTheme.secondaryBackground
-        default: return tint.opacity(0.12)
+        case .neutral:
+            return AnyView(AppTheme.secondaryBackground)
+        default:
+            return AnyView(
+                AppTheme.secondaryBackground
+                    .overlay(tint.opacity(0.12))
+            )
         }
-    }
-
-    /// Conservative message → variant mapping. The view model publishes
-    /// toasts as plain strings, so only high-confidence prefixes are
-    /// classified; everything else stays neutral.
-    static func infer(from message: String) -> ToastVariant {
-        let lower = message.lowercased()
-        if lower.hasPrefix("failed") || lower.hasPrefix("couldn't") {
-            return .error
-        }
-        if lower.contains("already") {
-            return .warning
-        }
-        if lower.hasPrefix("copied") || lower.hasPrefix("removed") || lower.hasPrefix("build expired") {
-            return .success
-        }
-        return .neutral
     }
 }
 
@@ -709,6 +699,7 @@ struct LocaleCompletenessPopover: View {
                         .font(.appCaption)
                         .foregroundColor(.secondary)
                         .contentTransition(.numericText())
+                        .animation(.default, value: completeCount.complete)
                 }
                 if builds.isEmpty {
                     Text("No builds selected")

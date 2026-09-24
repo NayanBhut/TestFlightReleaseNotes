@@ -19,6 +19,7 @@ struct EmptyStateView: View {
             Image(systemName: icon)
                 .font(.system(size: 44))
                 .foregroundColor(.secondary)
+                .emptyStateIconAppear()
             Text(title)
                 .font(.subheader)
                 .fontWeight(.medium)
