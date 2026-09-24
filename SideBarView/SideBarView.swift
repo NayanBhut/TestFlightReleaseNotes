@@ -138,6 +138,8 @@ struct SideBarView: View {
                         Text("\(total) apps")
                             .font(.appCaption)
                             .foregroundColor(.secondary)
+                            .contentTransition(.numericText())
+                            .animation(.default, value: total)
                     }
                 }
             }

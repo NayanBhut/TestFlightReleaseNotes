@@ -708,6 +708,7 @@ struct LocaleCompletenessPopover: View {
                     Text("\(completeCount.complete)/\(completeCount.total) complete")
                         .font(.appCaption)
                         .foregroundColor(.secondary)
+                        .contentTransition(.numericText())
                 }
                 if builds.isEmpty {
                     Text("No builds selected")
