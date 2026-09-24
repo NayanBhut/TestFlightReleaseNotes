@@ -197,7 +197,7 @@ struct ReviewsView: View {
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
-                                    .foregroundColor(.red)
+                                    .foregroundColor(AppTheme.negative)
                                 }
                             }
                         }

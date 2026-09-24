@@ -60,7 +60,7 @@ struct OnBoardingView: View {
                         .fontWeight(.medium)
 
                     Text("*")
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
 
                     Spacer()
 
@@ -95,10 +95,10 @@ struct OnBoardingView: View {
             if viewModel.isFormValid && viewModel.isDuplicateTeam {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.pending)
                     Text("A team with this name already exists")
                         .font(.appCaption)
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.pending)
                 }
                 .padding(.vertical, 2)
             }
@@ -107,10 +107,10 @@ struct OnBoardingView: View {
             if let errorMessage = viewModel.errorMessage {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.pending)
                     Text(errorMessage)
                         .font(.appCaption)
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.pending)
                 }
                 .padding(.vertical, 4)
             }
@@ -176,7 +176,7 @@ struct OnBoardingField: View {
 
                 if isRequired {
                     Text("*")
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                 }
             }
 

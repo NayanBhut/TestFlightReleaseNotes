@@ -431,7 +431,7 @@ struct DiffLinesView: View {
                     ForEach(removed, id: \.self) { line in
                         Text("\u{2212} " + line)
                             .font(.appCaption)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppTheme.negative)
                             .padding(.horizontal, 8)
                             .background(AppTheme.negative.opacity(0.1))
                             .cornerRadius(4)
@@ -443,7 +443,7 @@ struct DiffLinesView: View {
                     ForEach(added, id: \.self) { line in
                         Text("+ \(line)")
                             .font(.appCaption)
-                            .foregroundColor(.green)
+                            .foregroundColor(AppTheme.positive)
                             .padding(.horizontal, 8)
                             .background(AppTheme.positive.opacity(0.1))
                             .cornerRadius(4)

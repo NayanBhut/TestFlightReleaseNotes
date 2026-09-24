@@ -180,7 +180,7 @@ struct BetaGroupView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background((group.isInternalGroup == true ? Color.blue : AppTheme.readyForSale).opacity(0.15))
-                            .foregroundColor(group.isInternalGroup == true ? .blue : .green)
+                            .foregroundColor(group.isInternalGroup == true ? .blue : AppTheme.positive)
                             .cornerRadius(4)
                         if group.publicLinkEnabled == true {
                             Text("Public link")
@@ -380,7 +380,7 @@ struct BetaGroupView: View {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.plain)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppTheme.negative)
                             .accessibilityLabel("Remove \(tester.displayName) from group")
                             .help("Remove from group")
                             Button(role: .destructive) {
@@ -389,7 +389,7 @@ struct BetaGroupView: View {
                                 Image(systemName: "trash.circle")
                             }
                             .buttonStyle(.plain)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppTheme.negative)
                             .accessibilityLabel("Delete \(tester.displayName) from team")
                             .help("Delete from team")
                         }
@@ -439,7 +439,7 @@ struct BetaGroupView: View {
             if let result = betaViewModel.searchResult {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(AppTheme.positive)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(result.displayName)
                             .font(.appBody)
@@ -457,7 +457,7 @@ struct BetaGroupView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background((inGroup ? AppTheme.readyForSale : AppTheme.pending).opacity(0.15))
-                            .foregroundColor(inGroup ? .green : .orange)
+                            .foregroundColor(inGroup ? AppTheme.positive : AppTheme.pending)
                             .cornerRadius(4)
                         if !inGroup {
                             Button("Add to this group") {
@@ -474,7 +474,7 @@ struct BetaGroupView: View {
             } else if !betaViewModel.isSearching {
                 HStack(spacing: 8) {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.pending)
                     Text("\(betaViewModel.searchText) is not invited to this app.")
                         .font(.appBody)
                     Spacer()
@@ -511,7 +511,7 @@ struct BetaGroupView: View {
             if let limitError = groupLimitError {
                 Text(limitError)
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.negative)
             }
             Text("Test on a throwaway group first. Needs an API key with the Admin role.")
                 .font(.appCaption)
@@ -826,10 +826,10 @@ struct BetaGroupView: View {
 
     private func reviewStatusColor(_ state: String) -> Color {
         switch state {
-        case "APPROVED": return .green
-        case "REJECTED": return .red
-        case "IN_REVIEW": return .blue
-        case "WAITING_FOR_REVIEW": return .orange
+        case "APPROVED": return AppTheme.positive
+        case "REJECTED": return AppTheme.negative
+        case "IN_REVIEW": return AppTheme.inReview
+        case "WAITING_FOR_REVIEW": return AppTheme.pending
         case "NO_SUBMISSION": return .secondary
         default: return .secondary
         }
