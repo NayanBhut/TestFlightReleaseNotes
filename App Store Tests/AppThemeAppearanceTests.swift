@@ -34,6 +34,23 @@ final class AppThemeAppearanceTests: XCTestCase {
         (components[0] + components[1] + components[2]) / 3
     }
 
+    private func assertColor(
+        _ actual: Color,
+        equals expected: Color,
+        dark: Bool,
+        state: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(
+            resolvedComponents(of: actual, dark: dark),
+            resolvedComponents(of: expected, dark: dark),
+            state,
+            file: file,
+            line: line
+        )
+    }
+
     func testBackgroundsAreDarkerInDarkMode() {
         for color in [
             AppTheme.primaryBackground,
@@ -75,6 +92,43 @@ final class AppThemeAppearanceTests: XCTestCase {
                 resolvedComponents(of: color, dark: false),
                 resolvedComponents(of: color, dark: true)
             )
+        }
+    }
+
+    func testStateColorsAdapt() {
+        let colors = [
+            AppTheme.readyForSale,
+            AppTheme.inReview,
+            AppTheme.processing,
+            AppTheme.rejected,
+            AppTheme.pending,
+            AppTheme.waiting,
+            AppTheme.developerRejected,
+            AppTheme.compliance,
+        ] as [Color]
+        for color in colors {
+            XCTAssertNotEqual(
+                resolvedComponents(of: color, dark: false),
+                resolvedComponents(of: color, dark: true)
+            )
+        }
+    }
+
+    func testStateColorMapping() {
+        let mappings: [([String], Color)] = [
+            (["READY_FOR_SALE", "ACCEPTED", "READY_FOR_REVIEW", "COMPLETE", "APPROVED", "ENABLED", "ACTIVE", "VALID"], AppTheme.readyForSale),
+            (["PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "CANCELING", "COMPLETING"], AppTheme.pending),
+            (["IN_REVIEW", "WAITING_FOR_REVIEW"], AppTheme.inReview),
+            (["REJECTED", "INVALID_BINARY", "UNRESOLVED_ISSUES", "INVALID"], AppTheme.rejected),
+            (["UNKNOWN"], AppTheme.secondaryText),
+        ]
+
+        for dark in [false, true] {
+            for (states, expected) in mappings {
+                for state in states {
+                    assertColor(state.stateColor, equals: expected, dark: dark, state: state)
+                }
+            }
         }
     }
 }

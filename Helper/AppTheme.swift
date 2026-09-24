@@ -48,17 +48,17 @@ enum AppTheme {
     static let tertiaryText = adaptive(light: rgb(0.6, 0.62, 0.702), dark: rgb(0.52, 0.53, 0.58))
 
     // MARK: - State Colors (saturated modern palette, legible on both modes)
-    static let readyForSale = Color(red: 0.216, green: 0.729, blue: 0.443) // Emerald
-    static let inReview = Color(red: 0.392, green: 0.4, blue: 0.941) // Indigo
-    static let processing = Color(red: 0.561, green: 0.365, blue: 0.875) // Violet
-    static let rejected = Color(red: 0.906, green: 0.302, blue: 0.337) // Rose
-    static let pending = Color(red: 0.976, green: 0.69, blue: 0.157) // Amber
-    static let waiting = Color(red: 0.973, green: 0.847, blue: 0.149) // Yellow-amber
-    static let accepted = Color(red: 0.216, green: 0.729, blue: 0.443) // Emerald
-    static let metadataRejected = Color(red: 0.78, green: 0.267, blue: 0.267) // Dark red
-    static let developerRejected = Color(red: 0.565, green: 0.58, blue: 0.639) // Gray
-    static let removed = Color(red: 0.565, green: 0.58, blue: 0.639) // Gray
-    static let compliance = Color(red: 0.125, green: 0.69, blue: 0.855) // Cyan
+    static let readyForSale = adaptive(light: rgb(0, 0.420, 0.286), dark: rgb(0.353, 0.820, 0.608))
+    static let inReview = adaptive(light: rgb(0.263, 0.220, 0.792), dark: rgb(0.647, 0.706, 0.988))
+    static let processing = adaptive(light: rgb(0.427, 0.157, 0.851), dark: rgb(0.769, 0.655, 1.0))
+    static let rejected = adaptive(light: rgb(0.706, 0.137, 0.184), dark: rgb(1.0, 0.541, 0.580))
+    static let pending = adaptive(light: rgb(0.549, 0.294, 0), dark: rgb(0.984, 0.749, 0.141))
+    static let waiting = adaptive(light: rgb(0.463, 0.337, 0), dark: rgb(0.957, 0.827, 0.369))
+    static let accepted = readyForSale
+    static let metadataRejected = rejected
+    static let developerRejected = adaptive(light: rgb(0.294, 0.333, 0.388), dark: rgb(0.706, 0.729, 0.784))
+    static let removed = developerRejected
+    static let compliance = adaptive(light: rgb(0.012, 0.388, 0.490), dark: rgb(0.404, 0.835, 0.949))
 
     // MARK: - Interactive
     static let hoverOverlay = adaptive(light: rgb(0, 0, 0, 0.04), dark: rgb(1, 1, 1, 0.07))
@@ -68,9 +68,9 @@ enum AppTheme {
     static let overlay = Color.black.opacity(0.5)
 
     // MARK: - Chart / Data
-    static let positive = Color(red: 0.216, green: 0.729, blue: 0.443) // Green
-    static let negative = Color(red: 0.906, green: 0.302, blue: 0.337) // Red
-    static let neutral = Color(red: 0.6, green: 0.62, blue: 0.702) // Gray
+    static let positive = readyForSale
+    static let negative = rejected
+    static let neutral = tertiaryText
 }
 
 // MARK: - Color Extension
@@ -112,15 +112,15 @@ extension String {
     var stateColor: Color {
         let upper = uppercased()
         switch upper {
-        case "READY_FOR_SALE", "ACCEPTED", "READY_FOR_REVIEW":
+        case "READY_FOR_SALE", "ACCEPTED", "READY_FOR_REVIEW", "COMPLETE", "APPROVED", "ENABLED", "ACTIVE", "VALID":
             return AppTheme.readyForSale
-        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE":
+        case "PENDING_DEVELOPER_RELEASE", "PENDING_CONTRACT", "PENDING_APPLE_RELEASE", "CANCELING", "COMPLETING":
             return AppTheme.pending
         case "IN_REVIEW", "WAITING_FOR_REVIEW":
             return AppTheme.inReview
         case "PROCESSING_FOR_APP_STORE":
             return AppTheme.processing
-        case "REJECTED", "INVALID_BINARY":
+        case "REJECTED", "INVALID_BINARY", "UNRESOLVED_ISSUES", "INVALID":
             return AppTheme.rejected
         case "METADATA_REJECTED", "DEVELOPER_REJECTED", "DEVELOPER_REMOVED_FROM_SALE", "REMOVED_FROM_SALE":
             return AppTheme.developerRejected
@@ -145,10 +145,13 @@ extension View {
         Text("Accent").foregroundColor(AppTheme.accent)
         Text("Primary BG").background(AppTheme.primaryBackground)
         Text("Card").background(AppTheme.cardBackground)
-        Text("Ready").foregroundColor(AppTheme.readyForSale)
-        Text("In Review").foregroundColor(AppTheme.inReview)
-        Text("Processing").foregroundColor(AppTheme.processing)
-        Text("Rejected").foregroundColor(AppTheme.rejected)
+        HStack {
+            StateChip(text: "READY_FOR_SALE")
+            StateChip(text: "IN_REVIEW")
+            StateChip(text: "CANCELING")
+            StateChip(text: "REJECTED")
+            StateChip(text: "UNKNOWN")
+        }
     }
     .padding()
     .background(AppTheme.primaryBackground)
@@ -159,10 +162,13 @@ extension View {
         Text("Accent").foregroundColor(AppTheme.accent)
         Text("Primary BG").background(AppTheme.primaryBackground)
         Text("Card").background(AppTheme.cardBackground)
-        Text("Ready").foregroundColor(AppTheme.readyForSale)
-        Text("In Review").foregroundColor(AppTheme.inReview)
-        Text("Processing").foregroundColor(AppTheme.processing)
-        Text("Rejected").foregroundColor(AppTheme.rejected)
+        HStack {
+            StateChip(text: "READY_FOR_SALE")
+            StateChip(text: "IN_REVIEW")
+            StateChip(text: "CANCELING")
+            StateChip(text: "REJECTED")
+            StateChip(text: "UNKNOWN")
+        }
     }
     .padding()
     .background(AppTheme.primaryBackground)

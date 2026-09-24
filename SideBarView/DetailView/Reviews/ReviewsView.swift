@@ -589,24 +589,7 @@ struct StarRating: View {
 struct StateChip: View {
     let text: String
 
-    private var color: Color {
-        switch text.uppercased() {
-        case "COMPLETE", "APPROVED", "ACCEPTED", "ENABLED", "ACTIVE", "VALID":
-            return .green
-        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
-            // Orange, not yellow: yellow on yellow.opacity(0.15) fails
-            // contrast against light-mode surfaces.
-            return .orange
-        case "IN_REVIEW":
-            return .blue
-        case "UNRESOLVED_ISSUES", "REJECTED", "INVALID":
-            return .red
-        case "CANCELING", "COMPLETING":
-            return .orange
-        default:
-            return .secondary
-        }
-    }
+    private var color: Color { text.stateColor }
 
     var body: some View {
         Text(text)
