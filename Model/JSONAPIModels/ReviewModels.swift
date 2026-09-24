@@ -116,6 +116,43 @@ struct ReviewSubmissionUpdateAttributes: Codable {
     let canceled: Bool?
 }
 
+// MARK: - POST /v1/reviewSubmissionItems
+
+/// Verified against spec v4.3.1: relationships.reviewSubmission is
+/// required; appStoreVersion links the version under review. The item
+/// must exist before the submission can be PATCHed to submitted=true.
+struct ReviewSubmissionItemCreateRequest: Codable {
+    let data: ReviewSubmissionItemCreateData
+}
+
+struct ReviewSubmissionItemCreateData: Codable {
+    let type: String = "reviewSubmissionItems"
+    let relationships: ReviewSubmissionItemRelationships
+}
+
+struct ReviewSubmissionItemRelationships: Codable {
+    let reviewSubmission: ReviewSubmissionItemRef
+    let appStoreVersion: ReviewSubmissionItemVersionRef
+}
+
+struct ReviewSubmissionItemRef: Codable {
+    let data: ReviewSubmissionItemRefData
+}
+
+struct ReviewSubmissionItemRefData: Codable {
+    let type: String = "reviewSubmissions"
+    let id: String
+}
+
+struct ReviewSubmissionItemVersionRef: Codable {
+    let data: ReviewSubmissionItemVersionRefData
+}
+
+struct ReviewSubmissionItemVersionRefData: Codable {
+    let type: String = "appStoreVersions"
+    let id: String
+}
+
 // MARK: - Phased releases
 
 /// Verified against spec v4.3.1. PhasedReleaseState: INACTIVE, ACTIVE,

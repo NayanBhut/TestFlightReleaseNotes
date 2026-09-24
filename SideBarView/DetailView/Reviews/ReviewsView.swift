@@ -230,8 +230,14 @@ struct ReviewsView: View {
     }
 
     /// Submit-for-review action row. Submitting is a server-side state
-    /// change, so it asks for confirmation first.
+    /// change, so it asks for confirmation first. Disabled while an open
+    /// submission exists (the server 409s duplicates) or when the app has
+    /// no App Store version to submit (the pipeline requires one).
     @ViewBuilder private func submitRow(app: AppsData) -> some View {
+        let hasOpenSubmission = reviewsViewModel.submissionsState.loadedValue?.contains {
+            !["COMPLETE", "CANCELING"].contains($0.state ?? "")
+        } ?? false
+        let submittableVersionId = app.appStoreVersions.first?.id
         HStack {
             Text("Send the app for App Store review")
                 .font(.appCaption)
@@ -241,24 +247,29 @@ struct ReviewsView: View {
                 ProgressView()
                     .controlSize(.small)
             } else {
-                Button("Submit for Review") {
+                Button(hasOpenSubmission ? "Submission in progress" : "Submit for Review") {
                     confirmingSubmit = true
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .disabled(hasOpenSubmission || submittableVersionId == nil)
+                .help(submittableVersionId == nil
+                      ? "The app has no App Store version to submit"
+                      : (hasOpenSubmission ? "An open review submission already exists" : ""))
                 .confirmationDialog(
                     "Submit for App Review?",
                     isPresented: $confirmingSubmit,
                     titleVisibility: .visible
                 ) {
                     Button("Submit") {
+                        guard let versionId = submittableVersionId else { return }
                         Task {
-                            await reviewsViewModel.submitForReview(appId: app.id)
+                            await reviewsViewModel.submitForReview(appId: app.id, versionId: versionId)
                         }
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This sends \(app.name ?? "the app") to App Store review.")
+                    Text("This submits \(app.name ?? "the app") \(app.appStoreVersions.first?.versionString ?? "") to App Store review.")
                 }
             }
         }

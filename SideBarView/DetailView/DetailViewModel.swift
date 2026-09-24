@@ -121,6 +121,10 @@ class DetailViewModel: ObservableObject {
     @Published var screenshots: [AppScreenshotModel] = []
     @Published var screenshotsLoading = false
     @Published var selectedScreenshotSetId: String?
+    /// Localization whose sets are currently loaded — switching localizations
+    /// ( reopening the sheet for another locale) clears the stale set
+    /// selection so uploads can never land in the wrong locale's set.
+    @Published private(set) var screenshotSetsLoadedLocalizationId: String?
     @Published var uploadingFileName: String?
     @Published var screenshotUploadProgress: Double?
     @Published var screenshotError: String?
@@ -615,6 +619,13 @@ extension DetailViewModel {
     func loadScreenshotSets(localizationId: String) async {
         screenshotSetsLoading = true
         screenshotError = nil
+        // Stale-selection guard: opening the sheet for a different locale
+        // must not keep the previous locale's set selected — uploads would
+        // go into the wrong set.
+        if screenshotSetsLoadedLocalizationId != localizationId {
+            selectedScreenshotSetId = nil
+            screenshots = []
+        }
         defer { screenshotSetsLoading = false }
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .appStoreVersionLocalizations, path: "\(localizationId)/appScreenshotSets"),
@@ -627,6 +638,7 @@ extension DetailViewModel {
             guard !Task.isCancelled else { return }
             let model = try getDecoder().decode(AppScreenshotSetsDocument.self, from: data)
             screenshotSets = model.data
+            screenshotSetsLoadedLocalizationId = localizationId
             if selectedScreenshotSetId == nil {
                 selectedScreenshotSetId = model.data.first?.id
             }
@@ -697,9 +709,6 @@ extension DetailViewModel {
     /// time); progress tracks completed PUT operations.
     func uploadScreenshot(setId: String, fileURL: URL) async -> ScreenshotUploadResult {
         guard uploadingFileName == nil else { return .ignored }
-        guard let bytes = try? Data(contentsOf: fileURL), !bytes.isEmpty else {
-            return .failure("Couldn't read the image file.")
-        }
         uploadingFileName = fileURL.lastPathComponent
         screenshotUploadProgress = 0
         screenshotError = nil
@@ -708,9 +717,21 @@ extension DetailViewModel {
             screenshotUploadProgress = nil
         }
 
+        // Read the image off the main actor — screenshots are commonly
+        // 5–20 MB and a synchronous Data(contentsOf:) here would freeze
+        // the UI for the duration of the disk read.
+        let fileName = fileURL.lastPathComponent
+        let loadedBytes = await Task.detached(priority: .userInitiated) { () -> Data in
+            (try? Data(contentsOf: fileURL)) ?? Data()
+        }.value
+        guard !loadedBytes.isEmpty else {
+            return .failure("Couldn't read the image file.")
+        }
+        let bytes = loadedBytes
+
         let reserve = ScreenshotCreateRequest(
             data: ScreenshotCreateData(
-                attributes: ScreenshotCreateAttributes(fileName: fileURL.lastPathComponent, fileSize: bytes.count),
+                attributes: ScreenshotCreateAttributes(fileName: fileName, fileSize: bytes.count),
                 relationships: ScreenshotSetLinkage(
                     appScreenshotSet: ScreenshotSetRef(
                         data: ScreenshotSetRefData(id: setId)))
@@ -729,6 +750,11 @@ extension DetailViewModel {
             let reserved = try getDecoder().decode(AppScreenshotModel.self, from: response)
 
             let operations = reserved.uploadOperations ?? []
+            // No operations = nothing was uploaded — PATCHing uploaded=true
+            // anyway would strand a permanently broken asset server-side.
+            guard !operations.isEmpty else {
+                return .failure("The server returned no upload operations.")
+            }
             for (index, operation) in operations.enumerated() {
                 guard let urlString = operation.url, let url = URL(string: urlString) else {
                     return .failure("The server returned an unusable upload URL.")

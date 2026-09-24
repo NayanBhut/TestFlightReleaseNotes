@@ -60,12 +60,37 @@ final class ReportsViewModel: ObservableObject {
     @Published var reportDate = Date()
     @Published private(set) var state: State = .idle
 
-    private static let dateFormatter: DateFormatter = {
+    private static func makeFormatter(format: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.dateFormat = "yyyy-MM-dd"
+        // POSIX locale: user calendars/locales can emit non-Gregorian
+        // digits, which the API rejects. GMT keeps the date stable
+        // regardless of the user's timezone.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = format
         return formatter
-    }()
+    }
+
+    private static let dayFormatter = makeFormatter(format: "yyyy-MM-dd")
+    private static let monthFormatter = makeFormatter(format: "yyyy-MM")
+    private static let yearFormatter = makeFormatter(format: "yyyy")
+
+    /// Apple expects frequency-dependent reportDate formats (verified
+    /// against the ASC docs): finance is monthly (yyyy-MM); sales uses
+    /// yyyy-MM-dd for DAILY/WEEKLY, yyyy-MM for MONTHLY, yyyy for YEARLY.
+    private static func reportDateString(kind: Kind, frequency: String, date: Date) -> String {
+        switch kind {
+        case .finance:
+            return monthFormatter.string(from: date)
+        case .sales:
+            switch frequency {
+            case "MONTHLY": return monthFormatter.string(from: date)
+            case "YEARLY": return yearFormatter.string(from: date)
+            default: return dayFormatter.string(from: date)
+            }
+        }
+    }
 
     private var vendorKey: String {
         "vendorNumber_\(CredentialStorage.shared.selectedTeam?.key ?? "default")"
@@ -92,7 +117,7 @@ final class ReportsViewModel: ObservableObject {
         UserDefaults.standard.set(vendor, forKey: vendorKey)
         state = .downloading
 
-        let dateString = Self.dateFormatter.string(from: reportDate)
+        let dateString = Self.reportDateString(kind: kind, frequency: frequency, date: reportDate)
         let queryParams: [String: String]
         let apiName: APIName
         let filePrefix: String
@@ -149,6 +174,13 @@ final class ReportsViewModel: ObservableObject {
                 state = .failed(error.localizedDescription)
             }
         }
+    }
+
+    // Cancellation today can only come from VM teardown (the sheet owns the
+    // Task), so the guards above simply drop the response; state resets to
+    // idle here rather than pinning the spinner forever.
+    func cancelDownload() {
+        state = .idle
     }
 
     private func saveDownloaded(data: Data, filePrefix: String, dateString: String) {

@@ -284,8 +284,12 @@ final class APIClient {
             }
         } catch let apiError as APIError {
             throw apiError
+        } catch let urlError as URLError {
+            // URLSession error descriptions embed the full presigned URL
+            // (signature included) — never surface or log that verbatim.
+            throw APIError.apiError(error: "Upload failed: \(urlError.code.rawValue)")
         } catch {
-            throw APIError.apiError(error: error.localizedDescription)
+            throw APIError.apiError(error: "Upload failed")
         }
     }
 
@@ -493,6 +497,10 @@ enum APIName: String {
     // this path — the verb comes from APIMethod, so reuse this case for
     // writes (spec v4.3.1 has NO DELETE here; cancel is PATCH {canceled}).
     case getReviewSubmissions = "/reviewSubmissions"
+    // POST /v1/reviewSubmissionItems — links an appStoreVersion to a
+    // review submission (required between POST submission and the
+    // submitted=true PATCH; verified in spec v4.3.1).
+    case reviewSubmissionItems = "/reviewSubmissionItems"
     // POST/PATCH/DELETE /v1/appStoreVersionPhasedReleases[/{id}] (spec
     // v4.3.1). No GET collection — current state is read via the
     // appStoreVersion related link:
