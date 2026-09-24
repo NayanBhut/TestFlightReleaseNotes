@@ -8,7 +8,9 @@
 import Foundation
 
 enum AppConfigs {
-    static let appListLimit: Int = 10
+    /// Page size for the apps list. The GET /v1/apps limit caps at 200
+    /// (Apple docs), so 50 is safe; the sidebar paginates on demand.
+    static let appListLimit: Int = 50
     static let versionLimit: Int = 10
     static let buildLimit: Int = 5
     /// Batch C: page size for customer reviews and review submissions.
