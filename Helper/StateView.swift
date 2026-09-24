@@ -33,6 +33,33 @@ struct EmptyStateView: View {
     }
 }
 
+/// One-time appear-bounce for large empty-state icons: fades and scales
+/// in once (0.3 s, never looping) with hierarchical symbol rendering for
+/// depth. Shared so every empty state feels identical.
+private struct EmptyStateIconModifier: ViewModifier {
+    @State private var appeared = false
+
+    func body(content: Content) -> some View {
+        content
+            .symbolRenderingMode(.hierarchical)
+            .scaleEffect(appeared ? 1 : 0.9)
+            .opacity(appeared ? 1 : 0)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    appeared = true
+                }
+            }
+    }
+}
+
+extension View {
+    /// `symbolRenderingMode(.hierarchical)` plus a one-time scale+fade-in
+    /// for empty-state icons (use at size-48 icon sites).
+    func emptyStateIconAppear() -> some View {
+        modifier(EmptyStateIconModifier())
+    }
+}
+
 /// Reusable loading-state renderer — replaces the inline
 /// ProgressView + "Loading..." blocks in BetaGroupView,
 /// AppInfoView (section method), ReviewsView (submissions & reviews).

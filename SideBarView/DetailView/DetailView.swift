@@ -302,6 +302,7 @@ struct DetailView: View {
                 Image(systemName: "app.badge")
                     .font(.system(size: 48))
                     .foregroundColor(.secondary)
+                    .emptyStateIconAppear()
                 Text("No App Selected")
                     .font(.subheader)
                     .fontWeight(.medium)
