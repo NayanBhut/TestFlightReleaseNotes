@@ -439,6 +439,7 @@ struct SideBarView: View {
                     Image(systemName: "app.dashed")
                         .font(.system(size: 48))
                         .foregroundColor(.secondary)
+                        .emptyStateIconAppear()
                     // Branch the copy: with no teams at all, "no apps for
                     // this team" is misleading — the real problem is that
                     // no team exists yet.
