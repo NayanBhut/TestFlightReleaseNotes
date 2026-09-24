@@ -577,7 +577,7 @@ private struct RegisterDeviceForm: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -652,7 +652,7 @@ private struct CreateCertificateForm: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -738,7 +738,7 @@ private struct CreateBundleIdForm: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -936,7 +936,7 @@ private struct InviteUserForm: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -1113,7 +1113,7 @@ private struct CreateProfileForm: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -1334,7 +1334,7 @@ private struct DeviceRow: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.appCaption2)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1405,11 +1405,11 @@ private struct CertificateRow: View {
                     .textSelection(.enabled)
                 Text("Expires: \(certificate.expirationDate ?? "—")")
                     .font(.appCaption2)
-                    .foregroundColor(isExpired ? .red : .secondary)
+                    .foregroundColor(isExpired ? AppTheme.negative : .secondary)
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.appCaption2)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1427,7 +1427,7 @@ private struct CertificateRow: View {
                     Button("Revoke") { showRevokeConfirm = true }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .accessibilityLabel("Revoke \(certificate.displayName ?? certificate.name ?? "certificate")")
                 }
             }
@@ -1483,7 +1483,7 @@ private struct BundleIdRow: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.appCaption2)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1539,7 +1539,7 @@ private struct BundleIdRow: View {
                         Button("Delete") { showDeleteConfirm = true }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppTheme.negative)
                             .accessibilityLabel("Delete \(bundleId.name ?? "bundle ID")")
                     }
                 }
@@ -1595,7 +1595,7 @@ private struct ProfileRow: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.appCaption2)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1616,7 +1616,7 @@ private struct ProfileRow: View {
                     Button("Delete") { showDeleteConfirm = true }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .accessibilityLabel("Delete \(profile.name ?? "profile")")
                 }
             }
@@ -1684,7 +1684,7 @@ private struct InvitationRow: View {
                         .textSelection(.enabled)
                     Text("Pending")
                         .font(.system(size: 9, design: .rounded))
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppTheme.pending)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(AppTheme.pending.opacity(0.12))
@@ -1702,7 +1702,7 @@ private struct InvitationRow: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.appCaption2)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1724,7 +1724,7 @@ private struct InvitationRow: View {
                         Button("Revoke") { showRevokeConfirm = true }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppTheme.negative)
                             .accessibilityLabel("Revoke invitation for \(invitation.email ?? "user")")
                     }
                 }
@@ -1798,7 +1798,7 @@ private struct UserRow: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.appCaption2)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1861,7 +1861,7 @@ private struct UserRow: View {
                         Button("Remove") { showRemoveConfirm = true }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppTheme.negative)
                             .accessibilityLabel("Remove \(user.username ?? "user")")
                     }
                 }
