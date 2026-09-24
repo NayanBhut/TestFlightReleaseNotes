@@ -259,6 +259,11 @@ struct ScreenshotsSheet: View {
             if let fileName = viewModel.uploadingFileName {
                 ProgressView(value: viewModel.screenshotUploadProgress ?? 0)
                     .progressViewStyle(.linear)
+                    .tint(AppTheme.accent)
+                    .animation(
+                        .spring(response: 0.2, dampingFraction: 0.7),
+                        value: viewModel.screenshotUploadProgress
+                    )
                     .frame(maxWidth: 200)
                 Text("Uploading \(fileName)…")
                     .font(.caption)
