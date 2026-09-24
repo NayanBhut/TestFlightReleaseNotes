@@ -166,14 +166,16 @@ struct DetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(versions, id: \.id) { version in
-                        VersionChip(version: version, isSelected: version.isSelected,
-                                    selectionNamespace: versionSelectionNamespace)
-                            .id(version.id)
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
-                                }
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.setSelectedVersionAndGetBuilds(selectedVersion: version)
                             }
+                        } label: {
+                            VersionChip(version: version, isSelected: version.isSelected,
+                                        selectionNamespace: versionSelectionNamespace)
+                        }
+                        .buttonStyle(.pressableScale)
+                        .id(version.id)
                     }
                 // Cursor pagination, like apps/builds: offer the next page
                 // inline after the chips, with a retry on pagination failure.

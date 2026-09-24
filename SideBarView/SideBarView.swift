@@ -389,12 +389,14 @@ struct SideBarView: View {
                     noMatchesView
                 } else {
                     List(viewModel.filteredApps, id: \.id) { app in
-                        AppRowView(app: app, isSelected: app.isSelected)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                viewModel.setSelectedAppAndGetVersions(app: app)
-                            }
-                            .onAppear {
+                        Button {
+                            viewModel.setSelectedAppAndGetVersions(app: app)
+                        } label: {
+                            AppRowView(app: app, isSelected: app.isSelected)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.pressableScale)
+                        .onAppear {
                                 // Lazy List renders only visible rows, so this
                                 // fires when the last row scrolls into view
                                 // (or while the list is shorter than the
