@@ -1202,12 +1202,12 @@ extension DetailViewModel {
             builds[buildIndex].betaBuildLocalizations.remove(at: locIndex)
             buildsState = .loaded(builds)
             savedNotes.removeValue(forKey: saveKey)
-            showToast("Removed \(locale) draft")
+            showToast("Removed \(locale) draft", variant: .success)
             return
         }
 
         guard !updatingSaveKeys.contains(saveKey) else {
-            showToast("A save is already in progress for this build.")
+            showToast("A save is already in progress for this build.", variant: .warning)
             return
         }
         updatingSaveKeys.insert(saveKey)
@@ -1276,7 +1276,7 @@ extension DetailViewModel {
             builds[buildIndex].betaBuildLocalizations.remove(at: locIndex)
             buildsState = .loaded(builds)
             savedNotes.removeValue(forKey: "\(buildId)|\(locale)")
-            showToast("Removed \(locale) notes")
+            showToast("Removed \(locale) notes", variant: .success)
         } catch {
             detailLogger.error("Failed to delete localization: \(error.localizedDescription)")
             saveError = BuildSaveError(buildId: buildId, locale: locale, message: friendlySaveMessage(for: error), kind: .delete)
@@ -1348,17 +1348,24 @@ extension NSPasteboard: PasteboardWriting {
 }
 
 /// Toast event with identity so consecutive identical messages still
-/// re-fire `onChange` (which only triggers on value change).
+/// re-fire `onChange` (which only triggers on value change). Carries an
+/// explicit semantic variant so the view never reverse-engineers it from
+/// user-facing copy.
 struct ToastEvent: Equatable {
     let id = UUID()
     let message: String
+    var variant: ToastVariant = .neutral
+
+    static func == (lhs: ToastEvent, rhs: ToastEvent) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 extension DetailViewModel {
     func createOrUpdate(buildId: String, buildLocalization: BuildLocalizationsModel, localization: String, locale: String) {
         let saveKey = "\(buildId)|\(locale)"
         guard !updatingSaveKeys.contains(saveKey) else {
-            showToast("A save is already in progress for this build.")
+            showToast("A save is already in progress for this build.", variant: .warning)
             return
         }
         updatingSaveKeys.insert(saveKey)
@@ -1497,7 +1504,7 @@ extension DetailViewModel {
         guard let data = try? encoder.encode(requestBody),
               let request = APIClient.shared.getRequest(api: .patch(name: .getVersionBuilds, body: data, path: buildId), apiVersion: .v1) else {
             expireTogglingBuildId = nil
-            showToast("Couldn't build the expire request.")
+            showToast("Couldn't build the expire request.", variant: .error)
             return
         }
 
@@ -1512,10 +1519,10 @@ extension DetailViewModel {
                 updatedBuild.expired = model.expired ?? true
                 currentBuilds[buildIndex] = updatedBuild
                 buildsState = .loaded(currentBuilds)
-                showToast("Build expired")
+                showToast("Build expired", variant: .success)
             } catch {
                 detailLogger.error("Failed to expire build: \(error.localizedDescription)")
-                showToast("Failed to expire build")
+                showToast("Failed to expire build", variant: .error)
             }
         }
     }
@@ -1527,13 +1534,13 @@ extension DetailViewModel {
         let versionBuildString = "\(version) (\(build.version ?? "")) - Build ID: \(buildId)"
         pasteboard.clear()
         pasteboard.setString(versionBuildString)
-        showToast("Copied: \(versionBuildString)")
+        showToast("Copied: \(versionBuildString)", variant: .success)
     }
 
-    private func showToast(_ message: String) {
+    private func showToast(_ message: String, variant: ToastVariant = .neutral) {
         // The view owns dismissal timing; each event carries a fresh UUID so
         // even identical consecutive messages re-trigger onChange.
-        toast = ToastEvent(message: message)
+        toast = ToastEvent(message: message, variant: variant)
     }
 }
 

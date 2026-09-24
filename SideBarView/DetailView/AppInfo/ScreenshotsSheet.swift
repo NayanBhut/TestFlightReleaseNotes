@@ -261,7 +261,7 @@ struct ScreenshotsSheet: View {
                     .progressViewStyle(.linear)
                     .tint(AppTheme.accent)
                     .animation(
-                        .spring(response: 0.2, dampingFraction: 0.7),
+                        .linear(duration: 0.15),
                         value: viewModel.screenshotUploadProgress
                     )
                     .frame(maxWidth: 200)

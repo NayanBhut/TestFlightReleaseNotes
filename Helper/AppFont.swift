@@ -12,51 +12,66 @@ import AppKit
 /// `Font.custom(_:size:relativeTo:)` so it tracks the user's accessibility
 /// text-size setting; at the default size the point sizes are unchanged,
 /// so existing call sites keep their named fonts (:appBody, :caption, ...)
-/// and their current look. Falls back to a fixed-size system font if the
-/// rounded SF family isn't available.
+/// and their current look. The rounded face is resolved from the *system*
+/// font descriptor (`.rounded` design) — never a downloadable PostScript
+/// name — so it works on every stock macOS install without bundling fonts.
 enum AppFont {
-    /// The mesh-rounded SF Pro Rounded family ships on all supported macOS.
-    private static let roundedCapable = NSFont(name: "SFProRounded-Regular", size: 13) != nil
-
-    static var appTitle: Font { dynamic(size: 28, weight: .bold, design: .rounded, relativeTo: .title) }
-    static var appLargeTitle: Font { dynamic(size: 24, weight: .bold, design: .rounded, relativeTo: .title2) }
-    static var sectionHeader: Font { dynamic(size: 20, weight: .semibold, design: .rounded, relativeTo: .title3) }
-    static var subheader: Font { dynamic(size: 17, weight: .semibold, design: .rounded, relativeTo: .headline) }
-    static var appBody: Font { dynamic(size: 16, weight: .regular, design: .rounded, relativeTo: .body) }
-    static var bodyMedium: Font { dynamic(size: 16, weight: .medium, design: .rounded, relativeTo: .body) }
-    static var appCaption: Font { dynamic(size: 13, weight: .regular, design: .rounded, relativeTo: .caption) }
-    static var captionMedium: Font { dynamic(size: 13, weight: .medium, design: .rounded, relativeTo: .caption) }
-    static var appCaption2: Font { dynamic(size: 11, weight: .regular, design: .rounded, relativeTo: .caption2) }
-    static var label: Font { dynamic(size: 14, weight: .medium, design: .rounded, relativeTo: .subheadline) }
-    static var button: Font { dynamic(size: 14, weight: .semibold, design: .rounded, relativeTo: .subheadline) }
+    static var appTitle: Font { dynamic(size: 28, weight: .bold, relativeTo: .title) }
+    static var appLargeTitle: Font { dynamic(size: 24, weight: .bold, relativeTo: .title2) }
+    static var sectionHeader: Font { dynamic(size: 20, weight: .semibold, relativeTo: .title3) }
+    static var subheader: Font { dynamic(size: 17, weight: .semibold, relativeTo: .headline) }
+    static var appBody: Font { dynamic(size: 16, weight: .regular, relativeTo: .body) }
+    static var bodyMedium: Font { dynamic(size: 16, weight: .medium, relativeTo: .body) }
+    static var appCaption: Font { dynamic(size: 13, weight: .regular, relativeTo: .caption) }
+    static var captionMedium: Font { dynamic(size: 13, weight: .medium, relativeTo: .caption) }
+    static var appCaption2: Font { dynamic(size: 11, weight: .regular, relativeTo: .caption2) }
+    static var label: Font { dynamic(size: 14, weight: .medium, relativeTo: .subheadline) }
+    static var button: Font { dynamic(size: 14, weight: .semibold, relativeTo: .subheadline) }
     static var monospaced: Font { .system(.body, design: .monospaced) }
 
-    /// Rounded SF font scoped to the given weight, relative to a text
-    /// style so it scales with Dynamic Type. Falls back to the fixed-size
-    /// system font when the family isn't present.
-    private static func dynamic(size: CGFloat, weight: Font.Weight, design: Font.Design, relativeTo style: Font.TextStyle) -> Font {
-        guard roundedCapable, let name = postScriptName(weight: weight, design: design) else {
-            return .system(size: size, weight: weight, design: design)
+    /// Resolves the system rounded face for the given weight and anchors it
+    /// to a text style so it scales with Dynamic Type. The descriptor-based
+    /// route uses the system's built-in rounded design (available on all
+    /// supported macOS) rather than a downloadable PostScript name that may
+    /// be absent on stock installs. The resolved font's PostScript name is
+    /// fed to `Font.custom(_:size:relativeTo:)` so accessibility text-size
+    /// scaling stays in effect.
+    private static func dynamic(size: CGFloat, weight: Font.Weight, relativeTo style: Font.TextStyle) -> Font {
+        let descriptor = NSFontDescriptor
+            .preferredFontDescriptor(forTextStyle: nsTextStyle(style))
+            .withDesign(.rounded)?
+            .addingAttributes([
+                .traits: [NSFontDescriptor.TraitKey.weight: nsFontWeight(weight)]
+            ])
+        guard let descriptor,
+              let resolved = NSFont(descriptor: descriptor, size: size) else {
+            return .system(size: size, weight: weight, design: .rounded)
         }
-        return .custom(name, size: size, relativeTo: style)
+        return .custom(resolved.fontName, size: size, relativeTo: style)
     }
 
-    private static func postScriptName(weight: Font.Weight, design: Font.Design) -> String? {
-        let base: String
-        switch design {
-        case .rounded: base = "SFProRounded"
-        case .monospaced: base = "SFMono"
-        default: base = "SFPro"
-        }
-        let suffix: String
+    private static func nsFontWeight(_ weight: Font.Weight) -> NSFont.Weight {
         switch weight {
-        case .regular: suffix = "Regular"
-        case .medium: suffix = "Medium"
-        case .semibold: suffix = "Semibold"
-        case .bold: suffix = "Bold"
-        default: return nil
+        case .regular: return .regular
+        case .medium: return .medium
+        case .semibold: return .semibold
+        case .bold: return .bold
+        default: return .regular
         }
-        return base + "-" + suffix
+    }
+
+    private static func nsTextStyle(_ style: Font.TextStyle) -> NSFont.TextStyle {
+        switch style {
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .body: return .body
+        case .subheadline: return .subheadline
+        case .caption: return .caption1
+        case .caption2: return .caption2
+        default: return .body
+        }
     }
 }
 
