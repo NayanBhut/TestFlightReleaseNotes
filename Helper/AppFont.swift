@@ -6,20 +6,58 @@
 //
 
 import SwiftUI
+import AppKit
 
+/// App-wide type ramp. Every font is anchored to a `Font.TextStyle` via
+/// `Font.custom(_:size:relativeTo:)` so it tracks the user's accessibility
+/// text-size setting; at the default size the point sizes are unchanged,
+/// so existing call sites keep their named fonts (:appBody, :caption, ...)
+/// and their current look. Falls back to a fixed-size system font if the
+/// rounded SF family isn't available.
 enum AppFont {
-    static var appTitle: Font { .system(size: 28, weight: .bold, design: .rounded) }
-    static var appLargeTitle: Font { .system(size: 24, weight: .bold, design: .rounded) }
-    static var sectionHeader: Font { .system(size: 20, weight: .semibold, design: .rounded) }
-    static var subheader: Font { .system(size: 17, weight: .semibold, design: .rounded) }
-    static var appBody: Font { .system(size: 16, weight: .regular, design: .rounded) }
-    static var bodyMedium: Font { .system(size: 16, weight: .medium, design: .rounded) }
-    static var appCaption: Font { .system(size: 13, weight: .regular, design: .rounded) }
-    static var captionMedium: Font { .system(size: 13, weight: .medium, design: .rounded) }
-    static var appCaption2: Font { .system(size: 11, weight: .regular, design: .rounded) }
-    static var label: Font { .system(size: 14, weight: .medium, design: .rounded) }
-    static var button: Font { .system(size: 14, weight: .semibold, design: .rounded) }
+    /// The mesh-rounded SF Pro Rounded family ships on all supported macOS.
+    private static let roundedCapable = NSFont(name: "SFProRounded-Regular", size: 13) != nil
+
+    static var appTitle: Font { dynamic(size: 28, weight: .bold, design: .rounded, relativeTo: .title) }
+    static var appLargeTitle: Font { dynamic(size: 24, weight: .bold, design: .rounded, relativeTo: .title2) }
+    static var sectionHeader: Font { dynamic(size: 20, weight: .semibold, design: .rounded, relativeTo: .title3) }
+    static var subheader: Font { dynamic(size: 17, weight: .semibold, design: .rounded, relativeTo: .headline) }
+    static var appBody: Font { dynamic(size: 16, weight: .regular, design: .rounded, relativeTo: .body) }
+    static var bodyMedium: Font { dynamic(size: 16, weight: .medium, design: .rounded, relativeTo: .body) }
+    static var appCaption: Font { dynamic(size: 13, weight: .regular, design: .rounded, relativeTo: .caption) }
+    static var captionMedium: Font { dynamic(size: 13, weight: .medium, design: .rounded, relativeTo: .caption) }
+    static var appCaption2: Font { dynamic(size: 11, weight: .regular, design: .rounded, relativeTo: .caption2) }
+    static var label: Font { dynamic(size: 14, weight: .medium, design: .rounded, relativeTo: .subheadline) }
+    static var button: Font { dynamic(size: 14, weight: .semibold, design: .rounded, relativeTo: .subheadline) }
     static var monospaced: Font { .system(.body, design: .monospaced) }
+
+    /// Rounded SF font scoped to the given weight, relative to a text
+    /// style so it scales with Dynamic Type. Falls back to the fixed-size
+    /// system font when the family isn't present.
+    private static func dynamic(size: CGFloat, weight: Font.Weight, design: Font.Design, relativeTo style: Font.TextStyle) -> Font {
+        guard roundedCapable, let name = postScriptName(weight: weight, design: design) else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        return .custom(name, size: size, relativeTo: style)
+    }
+
+    private static func postScriptName(weight: Font.Weight, design: Font.Design) -> String? {
+        let base: String
+        switch design {
+        case .rounded: base = "SFProRounded"
+        case .monospaced: base = "SFMono"
+        default: base = "SFPro"
+        }
+        let suffix: String
+        switch weight {
+        case .regular: suffix = "Regular"
+        case .medium: suffix = "Medium"
+        case .semibold: suffix = "Semibold"
+        case .bold: suffix = "Bold"
+        default: return nil
+        }
+        return base + "-" + suffix
+    }
 }
 
 extension Font {
