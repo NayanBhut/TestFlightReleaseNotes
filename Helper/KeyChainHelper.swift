@@ -20,7 +20,7 @@ struct Credential: Codable {
 }
 
 final class CredentialStorage: ObservableObject {
-    static var shared: CredentialStorage = .init()
+    static let shared: CredentialStorage = .init()
 
     /// Scopes every keychain item to this service so credentials from
     /// other services are never read, written, or listed.
@@ -99,7 +99,7 @@ final class CredentialStorage: ObservableObject {
 
             var add = Self.baseQuery(forKey: teamName)
             add[kSecValueData as String] = winner
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             if SecItemAdd(add as CFDictionary, nil) != errSecSuccess {
                 let rollback: [String: Any] = [
                     kSecClass as String: kSecClassGenericPassword,
@@ -132,7 +132,7 @@ final class CredentialStorage: ObservableObject {
     /// only on membership-changing mutations (init/migration/save/delete).
     private func refreshTeams() {
         teams = getAllKeysFromKeychain()
-            .map { $0.replacingOccurrences(of: Self.accountPrefix, with: "") }
+            .compactMap(Self.teamName(fromAccount:))
     }
 
     var selectedTeam: Credential?
@@ -178,12 +178,15 @@ final class CredentialStorage: ObservableObject {
     private func upsert(key: String, data: Data) -> OSStatus {
         var addQuery = Self.baseQuery(forKey: key)
         addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecDuplicateItem {
             return SecItemUpdate(
                 Self.baseQuery(forKey: key) as CFDictionary,
-                [kSecValueData as String: data] as CFDictionary)
+                [
+                    kSecValueData as String: data,
+                    kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                ] as CFDictionary)
         }
         return status
     }
@@ -238,6 +241,11 @@ extension CredentialStorage {
         ]
     }
 
+    private static func teamName(fromAccount account: String) -> String? {
+        guard account.hasPrefix(accountPrefix) else { return nil }
+        return String(account.dropFirst(accountPrefix.count))
+    }
+
     private func getAllKeysFromKeychain() -> [String] {
         // Scoped by kSecAttrService — only items belonging to this
         // service are returned, never a global keychain dump.
@@ -255,11 +263,9 @@ extension CredentialStorage {
         guard status == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
 
         return items.compactMap { item -> String? in
-            if let account = item[kSecAttrAccount as String] as? String {
-                return account
-            }
-            return nil
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  Self.teamName(fromAccount: account) != nil else { return nil }
+            return account
         }
-        .filter { $0.hasPrefix(Self.accountPrefix) }
     }
 }

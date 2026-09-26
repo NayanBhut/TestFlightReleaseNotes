@@ -741,7 +741,8 @@ final class BetaViewModel: ObservableObject {
             // stuck on — the spinner permanently replaces the Search button.
             isSearching = false
             // Drop stale results if the app or the query changed mid-flight.
-            guard self.currentAppId == searchedAppId, self.searchText == query else { return }
+            guard self.currentAppId == searchedAppId,
+                  self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
             do {
                 let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
                 searchResult = model.data.first
@@ -750,6 +751,8 @@ final class BetaViewModel: ObservableObject {
             }
         } catch {
             isSearching = false
+            guard self.currentAppId == searchedAppId,
+                  self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
             presentError(error)
         }
     }

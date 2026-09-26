@@ -8,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 class OnBoardingViewModel: ObservableObject {
     @Published var teamName: String = ""
     @Published var issuerID: String = ""
@@ -15,6 +16,8 @@ class OnBoardingViewModel: ObservableObject {
     @Published var privateKey: String = ""
     @Published var isShowSpinner = false
     @Published var errorMessage: String?
+
+    private static let maxPrivateKeyFileBytes = 64 * 1024
     
     var isFormValid: Bool {
         !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -134,15 +137,36 @@ class OnBoardingViewModel: ObservableObject {
     }
     
     func getPrivateKey(filePath: URL?) {
-        if let filePath = filePath, let data = try? Data(contentsOf: filePath) {
-            let strData = String(decoding: data, as: UTF8.self)
+        guard let filePath else { return }
+        errorMessage = nil
+        Task {
+            do {
+                let data = try await Self.loadPrivateKeyData(from: filePath)
+                let strData = String(decoding: data, as: UTF8.self)
                 .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
                 .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
                 .replacingOccurrences(of: "\n", with: "")
                 .replacingOccurrences(of: "\r", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            privateKey = strData
+                await MainActor.run {
+                    privateKey = strData
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Couldn't read that .p8 file. Choose the API key file downloaded from App Store Connect."
+                }
+            }
         }
+    }
+
+    private static func loadPrivateKeyData(from url: URL) async throws -> Data {
+        try await Task.detached(priority: .userInitiated) {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let size = values.fileSize, size > maxPrivateKeyFileBytes {
+                throw CocoaError(.fileReadTooLarge)
+            }
+            return try Data(contentsOf: url, options: [.mappedIfSafe])
+        }.value
     }
     
     func showOpenPanel() -> URL? {

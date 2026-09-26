@@ -8,6 +8,7 @@
 import Foundation
 import JSONAPI
 import OSLog
+import CryptoKit
 
 private let apiLogger = Logger(subsystem: "com.appstore.release-notes", category: "API")
 
@@ -17,7 +18,7 @@ enum JWTLimits {
     static let expiryInterval: TimeInterval = 60 * 20
 }
 
-final class APIClient {
+final class APIClient: @unchecked Sendable {
     typealias JSONTaskCompletionHandler = (Data?, APIError?) -> Void
     
     static let shared = APIClient()
@@ -35,11 +36,14 @@ final class APIClient {
         self.session = session
     }
 
-    /// Cache key includes a hash of the private key so re-adding a
+    /// Cache key includes a stable digest of the private key so re-adding a
     /// credential with the same Key ID + Issuer ID but a new .p8 never
     /// reuses tokens signed with the old key.
     private func cacheKey(for credential: Credential) -> String {
-        "\(credential.keyID)-\(credential.issuerID)-\(credential.privateKey.hashValue)"
+        let keyDigest = SHA256.hash(data: Data(credential.privateKey.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "\(credential.keyID)-\(credential.issuerID)-\(keyDigest)"
     }
 
     private func cachedJWTToken(for credential: Credential) -> String? {
@@ -55,7 +59,7 @@ final class APIClient {
     private func storeJWTToken(_ token: String, for credential: Credential) {
         let key = cacheKey(for: credential)
         let expiry = Date().addingTimeInterval(jwtCacheLifetime)
-        jwtCacheQueue.async(flags: .barrier) {
+        jwtCacheQueue.sync(flags: .barrier) {
             self.jwtCache[key] = (token: token, expiry: expiry)
         }
     }
@@ -94,13 +98,13 @@ final class APIClient {
             // Bodies and queries carry PII (tester emails/names): emails
             // stay redacted, but bodies log in full (see sanitizedBody).
             if let url = request.url, let query = url.query {
-                apiLogger.debug("[API] Query: \(Self.redactingPII(in: query))")
+                apiLogger.debug("[API] Query: \(Self.redactingPII(in: query), privacy: .private)")
             }
             if let body = request.httpBody {
-                apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body))")
+                apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body), privacy: .private)")
             }
             if let data = data {
-                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data))")
+                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data), privacy: .private)")
             }
             #endif
             
