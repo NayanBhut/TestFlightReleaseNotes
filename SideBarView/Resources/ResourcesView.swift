@@ -1251,26 +1251,29 @@ private struct ChecklistDropdownMenu: View {
     }
 }
 
-/// Shared certificate expiry parsing — the row and the profile picker
-/// both render it. App Store Connect returns fractional seconds on some
-/// endpoints; the plain parser silently fails on those, so try it as a
-/// fallback.
-private let certificateExpiryParser = ISO8601DateFormatter()
-private let certificateExpiryParserFractional: ISO8601DateFormatter = {
+/// App Store Connect returns fractional seconds on some endpoints; the
+/// plain parser silently fails on those, so try it as a fallback.
+private func makeCertificateExpiryParser() -> ISO8601DateFormatter {
+    ISO8601DateFormatter()
+}
+
+private func makeCertificateExpiryParserFractional() -> ISO8601DateFormatter {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter
-}()
+}
 
-private let certificateExpiryDisplayFormatter: DateFormatter = {
+private func makeCertificateExpiryDisplayFormatter() -> DateFormatter {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.dateFormat = "MMM d, yyyy"
     return formatter
-}()
+}
 
 private func certificateExpiryDate(_ raw: String?) -> Date? {
     guard let raw, !raw.isEmpty else { return nil }
+    let certificateExpiryParserFractional = makeCertificateExpiryParserFractional()
+    let certificateExpiryParser = makeCertificateExpiryParser()
     return certificateExpiryParserFractional.date(from: raw) ?? certificateExpiryParser.date(from: raw)
 }
 
@@ -1278,7 +1281,7 @@ private func certificateExpiryDate(_ raw: String?) -> Date? {
 /// mirrors the Apple Developer site's certificate picker rows.
 private func certificateExpiryLabel(_ raw: String?) -> String? {
     guard let date = certificateExpiryDate(raw) else { return nil }
-    let formatted = certificateExpiryDisplayFormatter.string(from: date)
+    let formatted = makeCertificateExpiryDisplayFormatter().string(from: date)
     return date < Date() ? "expired \(formatted)" : "expires \(formatted)"
 }
 

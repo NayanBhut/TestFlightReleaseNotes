@@ -909,7 +909,7 @@ final class ResourcesViewModel: ObservableObject {
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
             return .failure("Enter a valid email address.")
         }
-        guard !allAppsVisible else {
+        guard allAppsVisible else {
             return .failure("This invite is scoped to specific apps. Revoke it and send a new invite with the app picker instead.")
         }
         guard !roles.isEmpty else { return .failure("The invitation has no roles to re-create.") }

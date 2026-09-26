@@ -17,7 +17,7 @@ private let iconLogger = Logger(subsystem: "com.appstore.release-notes", categor
 /// cache headers — Apple's icon responses revalidate aggressively, so
 /// every scroll and every launch re-downloaded the same artwork.
 /// This cache keys by resolved URL with our own TTL instead.
-final class AppIconImageCache: Sendable {
+final class AppIconImageCache: @unchecked Sendable {
     static let shared = AppIconImageCache()
 
     /// Icons change only when the app's artwork changes (new upload);
