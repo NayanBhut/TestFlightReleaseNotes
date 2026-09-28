@@ -27,6 +27,16 @@ final class CredentialStorage: ObservableObject {
     private static let service = "com.appstore.release-notes"
     private static let accountPrefix = "App_Store_Connect_API_"
 
+    /// UserDefaults key remembering the last-selected team so a relaunch
+    /// restores the active account instead of falling back to an arbitrary
+    /// (keychain-order) first team. The secret itself stays in the keychain —
+    /// only the team *name* is persisted here.
+    private static let selectedTeamNameKey = "selectedTeamName"
+    /// One-time migration flag. Set only after a *successful* scan/migration
+    /// so a transient keychain error retries on next launch instead of being
+    /// skipped forever — but a completed migration never re-scans.
+    private static let legacyMigrationDoneKey = "legacyKeychainMigrationDone"
+
     /// In-memory mirror of the keychain's team names. Published so SwiftUI
     /// views re-render when teams are added/removed (a bare
     /// `CredentialStorage.shared.getTeams` read inside body is an
@@ -34,8 +44,26 @@ final class CredentialStorage: ObservableObject {
     /// the keychain. Refreshed by the membership-changing mutations below.
     @Published private(set) var teams: [String] = []
 
+    /// The active credential. Published (not a bare var) so views observing
+    /// CredentialStorage re-render on account switch even when the team list
+    /// itself is unchanged. Backed by the keychain; mirrored here plus a
+    /// per-team cache so switching accounts doesn't hit the keychain (and
+    /// its potential auth prompt) on every switch.
+    @Published private(set) var selectedTeam: Credential?
+
+    /// Decoded-credential cache. Warmed lazily on selection — never bulk-read
+    /// at launch, so the app prompts at most once per team actually used.
+    private var credentialCache: [String: Credential] = [:]
+
+    /// Teams whose keychain read failed this session (denied prompt, locked
+    /// keychain, orphaned pre-sandbox item…). Remembered so every view
+    /// re-render / team restore doesn't re-trigger the system prompt for the
+    /// same unreadable team. Evicted on save/delete and pruned whenever the
+    /// team list refreshes.
+    private var unreadableTeams: Set<String> = []
+
     private init() {
-        migrateLegacyUnscopedItems()
+        migrateLegacyUnscopedItemsIfNeeded()
         refreshTeams()
         if selectedTeam == nil {
             restoreDefaultTeam()
@@ -44,12 +72,15 @@ final class CredentialStorage: ObservableObject {
 
     /// One-time upgrade path: KeychainSwift stored items with no
     /// kSecAttrService, so pre-scoping teams are invisible to the
-    /// service-scoped queries. Idempotent by construction: once nothing
-    /// unscoped matches, the attributes-only scan is a cheap no-op (a
-    /// UserDefaults "done" flag is deliberately NOT used — it would
-    /// permanently skip migration if the first launch hit a transient
-    /// keychain error).
-    private func migrateLegacyUnscopedItems() {
+    /// service-scoped queries.
+    ///
+    /// The global (unscoped) attributes scan runs at most once: a
+    /// UserDefaults flag is set only after a *successful* pass, so a
+    /// transient keychain error still retries on next launch, while a
+    /// completed migration never re-scans the whole login keychain (that
+    /// repeat scan was prompting for keychain access on every launch).
+    private func migrateLegacyUnscopedItemsIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.legacyMigrationDoneKey) else { return }
         // Phase 1: ATTRIBUTES ONLY — data of other services' passwords
         // never leaves the keychain; nothing unrelated is read or prompted.
         let scan: [String: Any] = [
@@ -59,16 +90,40 @@ final class CredentialStorage: ObservableObject {
             kSecReturnData as String: false
         ]
         var scanResult: AnyObject?
-        guard SecItemCopyMatching(scan as CFDictionary, &scanResult) == errSecSuccess,
-              let items = scanResult as? [[String: Any]] else { return }
+        let scanStatus = SecItemCopyMatching(scan as CFDictionary, &scanResult)
+        guard scanStatus == errSecSuccess,
+              let items = scanResult as? [[String: Any]] else {
+            // errSecItemNotFound just means an empty keychain — migration is
+            // trivially done.
+            if scanStatus == errSecItemNotFound {
+                UserDefaults.standard.set(true, forKey: Self.legacyMigrationDoneKey)
+                return
+            }
+            // The user denied the prompt (or interaction isn't allowed):
+            // mark done and stop pestering. Re-scanning every launch would
+            // re-prompt every launch. Legacy items stay put — the user can
+            // re-add the team, which writes a proper scoped item.
+            if scanStatus == errSecAuthFailed || scanStatus == errSecInteractionNotAllowed {
+                keychainLogger.error("Migration scan denied (OSStatus \(scanStatus)); skipping future scans")
+                UserDefaults.standard.set(true, forKey: Self.legacyMigrationDoneKey)
+                return
+            }
+            // Any other status is transient: don't set the flag so the next
+            // launch retries.
+            return
+        }
         let legacyAccounts = items.compactMap { item -> String? in
             guard let account = item[kSecAttrAccount as String] as? String,
                   account.hasPrefix(Self.accountPrefix),
                   item[kSecAttrService as String] as? String == nil else { return nil }
             return account
         }
-        guard !legacyAccounts.isEmpty else { return }
+        guard !legacyAccounts.isEmpty else {
+            UserDefaults.standard.set(true, forKey: Self.legacyMigrationDoneKey)
+            return
+        }
 
+        var hadFailure = false
         for account in legacyAccounts {
             let teamName = String(account.dropFirst(Self.accountPrefix.count))
             // Phase 2a: fetch data only for OUR legacy item (exact account).
@@ -82,6 +137,7 @@ final class CredentialStorage: ObservableObject {
             guard SecItemCopyMatching(fetchQuery as CFDictionary, &fetched) == errSecSuccess,
                   let legacyData = fetched as? Data else {
                 keychainLogger.error("Migration: couldn't read legacy item '\(teamName, privacy: .public)'")
+                hadFailure = true
                 continue
             }
             // Prefer the scoped entry when the team was re-added after the
@@ -109,7 +165,13 @@ final class CredentialStorage: ObservableObject {
                 ]
                 SecItemAdd(rollback as CFDictionary, nil)
                 keychainLogger.error("Migration: scoped write failed for '\(teamName, privacy: .public)', legacy item restored")
+                hadFailure = true
             }
+        }
+        // Only a fully successful pass marks migration done — a partial
+        // failure retries next launch instead of stranding a legacy item.
+        if !hadFailure {
+            UserDefaults.standard.set(true, forKey: Self.legacyMigrationDoneKey)
         }
     }
 
@@ -130,12 +192,16 @@ final class CredentialStorage: ObservableObject {
 
     /// Re-reads the keychain's team list into the published cache. Called
     /// only on membership-changing mutations (init/migration/save/delete).
+    /// Sorted so the default-team fallback is stable across launches
+    /// (keychain return order is undefined). Deduped: a re-added team can
+    /// briefly twin its orphaned pre-sandbox item under the same name, and
+    /// duplicate names would break ForEach(id: \.self) in the team picker.
     private func refreshTeams() {
-        teams = getAllKeysFromKeychain()
+        let names = getAllKeysFromKeychain()
             .map { $0.replacingOccurrences(of: Self.accountPrefix, with: "") }
+        teams = Array(Set(names)).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        unreadableTeams.formIntersection(teams)
     }
-
-    var selectedTeam: Credential?
 
     var changeTeam: String? {
         get {
@@ -145,7 +211,15 @@ final class CredentialStorage: ObservableObject {
             return getTeams.first ?? nil
         }
         set {
-            selectedTeam = newValue == nil ? nil : getCredential(key: newValue!)
+            guard let name = newValue else {
+                selectedTeam = nil
+                UserDefaults.standard.removeObject(forKey: Self.selectedTeamNameKey)
+                return
+            }
+            selectedTeam = cachedOrFetchedCredential(key: name)
+            if selectedTeam != nil {
+                UserDefaults.standard.set(name, forKey: Self.selectedTeamNameKey)
+            }
         }
     }
 
@@ -167,6 +241,8 @@ final class CredentialStorage: ObservableObject {
                 return false
             }
             refreshTeams()
+            credentialCache[teamName] = credential
+            unreadableTeams.remove(teamName)
             return true
         } catch {
             keychainLogger.error("Credential encoding failed for '\(teamName, privacy: .public)'")
@@ -189,18 +265,41 @@ final class CredentialStorage: ObservableObject {
     }
 
     func getCredential(key: String) -> Credential? {
+        if let cached = credentialCache[key] {
+            return cached
+        }
+        // Failed earlier this session (denied prompt etc.) — don't ask the
+        // keychain (and the user) again for the same team.
+        if unreadableTeams.contains(key) {
+            return nil
+        }
+        var query = Self.baseQuery(forKey: key)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecReturnData as String] = true
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else {
+            if status == errSecAuthFailed || status == errSecInteractionNotAllowed {
+                keychainLogger.error("Keychain read denied for '\(key, privacy: .public)' (OSStatus \(status)); won't retry this session")
+            }
+            unreadableTeams.insert(key)
+            return nil
+        }
         do {
-            var query = Self.baseQuery(forKey: key)
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-            query[kSecReturnData as String] = true
-            var result: AnyObject?
-            guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-                  let data = result as? Data else { return nil }
-            let decoder = JSONDecoder()
-            return try decoder.decode(Credential.self, from: data)
-        } catch {}
+            let credential = try JSONDecoder().decode(Credential.self, from: data)
+            credentialCache[key] = credential
+            return credential
+        } catch {
+            keychainLogger.error("Credential decoding failed for '\(key, privacy: .public)'")
+            unreadableTeams.insert(key)
+            return nil
+        }
+    }
 
-        return nil
+    /// Cache-first read used by selection changes so switching accounts
+    /// doesn't prompt the keychain when the credential is already known.
+    private func cachedOrFetchedCredential(key: String) -> Credential? {
+        credentialCache[key] ?? getCredential(key: key)
     }
 
     @discardableResult
@@ -208,33 +307,44 @@ final class CredentialStorage: ObservableObject {
         // errSecItemNotFound → false preserves the old "already gone" contract.
         let deleted = SecItemDelete(Self.baseQuery(forKey: key) as CFDictionary) == errSecSuccess
         if deleted {
+            credentialCache.removeValue(forKey: key)
+            unreadableTeams.remove(key)
             // Drop the in-memory credential too: otherwise a stale selectedTeam
             // keeps signing API requests after its keychain entry is gone.
             if selectedTeam?.key == key {
                 selectedTeam = nil
+            }
+            if UserDefaults.standard.string(forKey: Self.selectedTeamNameKey) == key {
+                UserDefaults.standard.removeObject(forKey: Self.selectedTeamNameKey)
             }
             refreshTeams()
         }
         return deleted
     }
 
+    /// Restores the last-used team when it still exists, otherwise the first
+    /// (sorted) team. Persists the outcome so the next launch agrees.
     @discardableResult
     func restoreDefaultTeam() -> Bool {
         let teams = getTeams
         guard !teams.isEmpty else { return false }
-        changeTeam = teams.first
-        return true
+        let saved = UserDefaults.standard.string(forKey: Self.selectedTeamNameKey)
+        let pick = (saved.flatMap { name in teams.contains(name) ? name : nil }) ?? teams.first!
+        changeTeam = pick
+        return selectedTeam != nil
     }
 }
 
 extension CredentialStorage {
     /// Every query is scoped by kSecAttrService + kSecAttrAccount —
     /// no global dump, only this service's items are ever touched.
+    /// synchronizable=false keeps API secrets off iCloud Keychain.
     private static func baseQuery(forKey key: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: accountPrefix + key
+            kSecAttrAccount as String: accountPrefix + key,
+            kSecAttrSynchronizable as String: false
         ]
     }
 

@@ -135,6 +135,37 @@ Build from source:
 xcodebuild -scheme "App Store" -sdk macosx CODE_SIGNING_ALLOWED=NO build
 ```
 
+### Running locally without an Apple Developer account
+
+The app is sandboxed (`ENABLE_APP_SANDBOX = YES`) with a Keychain Sharing
+entitlement (`keychain-access-groups`). That identity is what lets macOS
+match the app to its saved teams across launches — but it only works when the
+app is signed with a real development team. Without an Apple Developer
+account, Xcode falls back to ad-hoc/unsigned builds, which get a different
+identity every time. Expect these issues in that setup:
+
+- macOS asks for Keychain access on **every launch and every team switch**.
+- Saved teams can appear "lost" after a rebuild/restart (you'll have to
+  re-add the team), because the new build can't see the previous build's
+  keychain items.
+- Credentials saved by a sandboxed signed build are invisible to an
+  unsigned build and vice versa — switching build modes means re-adding
+  teams once.
+
+To run locally without an account, disable the sandbox for your local build:
+
+1. In Xcode: target **App Store → Build Settings → `ENABLE_APP_SANDBOX`** → set to **NO** (Debug configuration is enough).
+2. Alternatively, remove the `keychain-access-groups` array from
+   `App Store/App_Store.entitlements`.
+3. Clean and rebuild.
+
+An unsandboxed build reads/writes the login keychain like a normal app:
+approve the prompt once, then launches and team switches stay silent.
+Trade-off: **re-enable the sandbox (and the entitlement) before any App
+Store distribution** — App Store builds require it. (Note: you still need a
+real App Store Connect API key to load any data; without one the app runs
+but shows "No Teams Yet".)
+
 ## Project Structure
 
 ```
