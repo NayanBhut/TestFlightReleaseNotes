@@ -129,7 +129,145 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(allAppsJSON.contains("visibleApps"))
     }
 
-    // MARK: - CredentialStorage (keychain-backed: pure parts only)
+    @MainActor
+    func testBuildEligibilityRequiresValidMatchingPlatformAndUnexpired() {
+        var preRelease = PreReleaseVersionsModel(id: "pre-1")
+        preRelease.version = "2.1.0"
+        preRelease.platform = "IOS"
+        var build = BuildsModel(id: "build-1", betaBuildLocalizations: [])
+        build.processingState = "VALID"
+        build.expired = false
+        build.preReleaseVersion = preRelease
+        XCTAssertTrue(ReviewsViewModel.isEligibleBuild(build, versionString: "2.1.0", platform: "IOS"))
+
+        build.expired = nil
+        XCTAssertFalse(ReviewsViewModel.isEligibleBuild(build, versionString: "2.1.0", platform: "IOS"))
+        build.expired = false
+
+        build.processingState = "PROCESSING"
+        XCTAssertFalse(ReviewsViewModel.isEligibleBuild(build, versionString: "2.1.0", platform: "IOS"))
+        build.processingState = "VALID"
+        build.expired = true
+        XCTAssertFalse(ReviewsViewModel.isEligibleBuild(build, versionString: "2.1.0", platform: "IOS"))
+        build.expired = false
+        XCTAssertFalse(ReviewsViewModel.isEligibleBuild(build, versionString: "2.1.0", platform: "MAC_OS"))
+        XCTAssertFalse(ReviewsViewModel.isEligibleBuild(build, versionString: "2.2.0", platform: "IOS"))
+    }
+
+    @MainActor
+    func testVersionCaseStateUsesSpecifiedLivePendingAndIgnoredStates() {
+        var version = AppStoreVersionsModel(id: "version-1", appStoreVersionLocalizations: [])
+        for state in ["PREPARE_FOR_SUBMISSION", "WAITING_FOR_REVIEW", "IN_REVIEW",
+                      "PENDING_DEVELOPER_RELEASE", "REJECTED", "METADATA_REJECTED",
+                      "DEVELOPER_REJECTED", "INVALID_BINARY", "PENDING_CONTRACT",
+                      "PROCESSING_FOR_DISTRIBUTION"] {
+            version.appStoreState = state
+            XCTAssertTrue(ReviewsViewModel.isPendingApprovalVersion(version), state)
+        }
+        for state in ["READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE",
+                      "REPLACED_WITH_NEW_VERSION", "REMOVED_FROM_SALE", "UNKNOWN"] {
+            version.appStoreState = state
+            XCTAssertFalse(ReviewsViewModel.isPendingApprovalVersion(version), state)
+        }
+
+        let live = Self.version(id: "live", state: "READY_FOR_SALE", created: "2026-09-20T10:00:00Z")
+        let pending = Self.version(id: "pending", state: "PREPARE_FOR_SUBMISSION", created: "2026-09-24T10:00:00Z")
+        let ignored = Self.version(id: "ignored", state: "REPLACED_WITH_NEW_VERSION", created: "2026-09-25T10:00:00Z")
+
+        XCTAssertEqual(getVersionCaseState(versions: [ignored]).`case`, .noVersion)
+        XCTAssertEqual(getVersionCaseState(versions: [live]).`case`, .liveOnly)
+        XCTAssertEqual(getVersionCaseState(versions: [pending]).`case`, .pendingOnly)
+        XCTAssertEqual(getVersionCaseState(versions: [ignored, live, pending]).`case`, .both)
+        XCTAssertEqual(getVersionCaseState(versions: [ignored, live, pending]).liveVersion?.id, "live")
+        XCTAssertEqual(getVersionCaseState(versions: [ignored, live, pending]).pendingVersion?.id, "pending")
+
+        let olderPending = Self.version(id: "older", state: "IN_REVIEW", created: "2026-09-23T10:00:00Z")
+        XCTAssertEqual(getVersionCaseState(versions: [olderPending, pending]).pendingVersion?.id, "pending")
+        XCTAssertEqual(ReviewsViewModel.preferredAppStoreVersion([live, pending])?.id, "pending")
+
+        let vm = ReviewsViewModel()
+        vm.appStoreVersionsState = .loaded([ignored, live, pending])
+        XCTAssertEqual(vm.appStoreVersionDisplayState, .both)
+        XCTAssertEqual(vm.displayedAppStoreVersions.map(\.id), ["live", "pending"])
+        XCTAssertFalse(vm.canCreateAppStoreVersion)
+        XCTAssertEqual(vm.submissionVersion?.id, "pending")
+
+        vm.appStoreVersionsState = .loaded([live])
+        XCTAssertEqual(vm.displayedAppStoreVersions.map(\.id), ["live"])
+        XCTAssertTrue(vm.canCreateAppStoreVersion)
+
+        var macLive = live
+        macLive.id = "mac-live"
+        macLive.platform = "MAC_OS"
+        var tvInReview = Self.version(id: "tv-review", state: "IN_REVIEW", created: "2026-09-25T10:00:00Z")
+        tvInReview.platform = "TV_OS"
+        vm.appStoreVersionsState = .loaded([live, macLive, tvInReview])
+        vm.appStoreVersionPlatforms = ["IOS", "MAC_OS", "TV_OS"]
+        XCTAssertEqual(vm.creatableAppStoreVersionPlatforms, [.iOS, .macOS])
+    }
+
+    func testStatusLabelsAndEditability() {
+        let labels = [
+            "PREPARE_FOR_SUBMISSION": "Draft",
+            "WAITING_FOR_REVIEW": "Waiting for Review",
+            "IN_REVIEW": "In Review",
+            "PENDING_DEVELOPER_RELEASE": "Approved – Ready to Release",
+            "REJECTED": "Rejected",
+            "DEVELOPER_REJECTED": "Rejected",
+            "METADATA_REJECTED": "Metadata Rejected",
+            "INVALID_BINARY": "Invalid Binary – Needs New Build",
+            "PENDING_CONTRACT": "Pending Contract",
+            "PROCESSING_FOR_DISTRIBUTION": "Processing"
+        ]
+        for (state, label) in labels {
+            XCTAssertEqual(getStatusLabel(appStoreState: state), label)
+        }
+        for state in ["PREPARE_FOR_SUBMISSION", "REJECTED", "DEVELOPER_REJECTED",
+                      "METADATA_REJECTED", "INVALID_BINARY"] {
+            XCTAssertTrue(isVersionEditable(appStoreState: state), state)
+        }
+        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE",
+                      "PENDING_CONTRACT", "PROCESSING_FOR_DISTRIBUTION",
+                      "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE"] {
+            XCTAssertFalse(isVersionEditable(appStoreState: state), state)
+        }
+    }
+
+    private static func version(id: String, state: String, created: String) -> AppStoreVersionsModel {
+        var version = AppStoreVersionsModel(id: id, appStoreVersionLocalizations: [])
+        version.appStoreState = state
+        version.platform = "IOS"
+        version.createdDate = created
+        return version
+    }
+
+    @MainActor
+    func testSubmitRequiresAttachedBuild() {
+        let vm = ReviewsViewModel()
+        XCTAssertFalse(vm.canSubmitForReview)
+        var approved = AppStoreVersionsModel(id: "version-1", appStoreVersionLocalizations: [])
+        approved.appVersionState = "READY_FOR_DISTRIBUTION"
+        approved.build = BuildsModel(id: "build-1", betaBuildLocalizations: [])
+        vm.appStoreVersionsState = .loaded([approved])
+        XCTAssertFalse(vm.canSubmitForReview)
+    }
+
+    @MainActor
+    func testStaleResponseProtection() {
+        XCTAssertTrue(ReviewsViewModel.responseIsCurrent(generation: 3, current: 3))
+        XCTAssertFalse(ReviewsViewModel.responseIsCurrent(generation: 2, current: 3))
+    }
+
+    @MainActor
+    func testWorkflowFailurePreservesLoadedVersions() {
+        let vm = ReviewsViewModel()
+        vm.appStoreVersionsState = .loaded([])
+        vm.recordAppStoreVersionsFailure("server unavailable")
+        XCTAssertEqual(vm.appStoreVersionsState, .loaded([]))
+        XCTAssertEqual(vm.appStoreVersionsError, "server unavailable")
+    }
+
+
 
     func testCredentialCodableRoundTrip() throws {
         let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id")

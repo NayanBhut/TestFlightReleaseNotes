@@ -39,6 +39,7 @@ struct PreReleaseVersionsModel: Equatable {
     var id: String
     
     @ResourceAttribute var version: String?
+    @ResourceAttribute var platform: String?
     @ResourceAttribute var appStoreState: String?
     @ResourceAttribute var appVersionState: String?
     @ResourceAttribute var createdDate: String?
@@ -53,11 +54,16 @@ struct AppStoreVersionsModel: Equatable {
     var id: String
     
     @ResourceAttribute var versionString: String?
+    @ResourceAttribute var platform: String?
     @ResourceAttribute var appStoreState: String?
     @ResourceAttribute var appVersionState: String?
+    @ResourceAttribute var copyright: String?
+    @ResourceAttribute var releaseType: String?
+    @ResourceAttribute var earliestReleaseDate: String?
     @ResourceAttribute var createdDate: String?
     @ResourceAttribute var storeIcon: StoreIcon?
     @ResourceRelationship var appStoreVersionLocalizations: [AppStoreVersionLocalizationsModel]
+    @ResourceRelationship var build: BuildsModel?
 }
 
 struct StoreIcon: Equatable, Codable {
@@ -183,6 +189,194 @@ struct ExpireBuildAttributes: Encodable {
 typealias BuildsDocument = CompoundDocument<[BuildsModel], Meta>
 typealias AppsDocument = CompoundDocument<[AppsData], Meta>
 typealias PreReleaseVersionsDocument = CompoundDocument<[PreReleaseVersionsModel], Meta>
+typealias AppStoreVersionsDocument = CompoundDocument<[AppStoreVersionsModel], Meta>
+
+struct AppStoreVersionCreateRequest: Codable {
+    let data: AppStoreVersionCreateData
+}
+
+struct AppStoreVersionCreateData: Codable {
+    let type: String = "appStoreVersions"
+    let attributes: AppStoreVersionCreateAttributes
+    let relationships: AppStoreVersionCreateRelationships
+}
+
+struct AppStoreVersionCreateAttributes: Codable {
+    let platform: String
+    let versionString: String
+    let copyright: String?
+    let releaseType: String?
+    let earliestReleaseDate: String?
+
+    init(platform: String,
+         versionString: String,
+         copyright: String?,
+         releaseType: String?,
+         earliestReleaseDate: String? = nil) {
+        self.platform = platform
+        self.versionString = versionString
+        self.copyright = copyright
+        self.releaseType = releaseType
+        self.earliestReleaseDate = earliestReleaseDate
+    }
+}
+
+struct AppStoreVersionCreateRelationships: Codable {
+    let app: AppStoreVersionAppLinkage
+}
+
+struct AppStoreVersionAppLinkage: Codable {
+    let data: AppStoreVersionAppRef
+}
+
+struct AppStoreVersionAppRef: Codable {
+    let type: String = "apps"
+    let id: String
+}
+
+struct AppStoreVersionBuildLinkageRequest: Codable {
+    let data: AppStoreVersionBuildRef
+}
+
+struct AppStoreVersionUpdateRequest: Encodable {
+    let data: AppStoreVersionUpdateData
+}
+
+struct AppStoreVersionUpdateData: Encodable {
+    let type: String = "appStoreVersions"
+    let id: String
+    let attributes: AppStoreVersionUpdateAttributes
+}
+
+struct AppStoreVersionUpdateAttributes: Encodable {
+    let releaseType: String
+    let earliestReleaseDate: String?
+    let copyright: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case releaseType
+        case earliestReleaseDate
+        case copyright
+    }
+
+    init(releaseType: String,
+         earliestReleaseDate: String?,
+         copyright: String? = nil) {
+        self.releaseType = releaseType
+        self.earliestReleaseDate = earliestReleaseDate
+        self.copyright = copyright
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(releaseType, forKey: .releaseType)
+        if let earliestReleaseDate {
+            try container.encode(earliestReleaseDate, forKey: .earliestReleaseDate)
+        } else {
+            try container.encodeNil(forKey: .earliestReleaseDate)
+        }
+        if let copyright {
+            try container.encode(copyright, forKey: .copyright)
+        } else {
+            try container.encodeNil(forKey: .copyright)
+        }
+    }
+}
+
+struct AppStoreVersionBuildRef: Codable {
+    let type: String = "builds"
+    let id: String
+}
+
+struct VersionLocalizationCreateRequest: Encodable {
+    let data: VersionLocalizationCreateData
+}
+
+struct VersionLocalizationCreateData: Encodable {
+    let type: String = "appStoreVersionLocalizations"
+    let attributes: VersionLocalizationCreateAttributes
+    let relationships: VersionLocalizationCreateRelationships
+}
+
+struct VersionLocalizationCreateAttributes: Encodable {
+    let locale: String
+    let descriptionData: String?
+    let keywords: String?
+    let marketingUrl: String?
+    let promotionalText: String?
+    let supportUrl: String?
+    let whatsNew: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case locale
+        case descriptionData = "description"
+        case keywords, marketingUrl, promotionalText, supportUrl, whatsNew
+    }
+}
+
+struct VersionLocalizationCreateRelationships: Encodable {
+    let appStoreVersion: VersionLocalizationVersionLinkage
+}
+
+struct VersionLocalizationVersionLinkage: Encodable {
+    let data: AppStoreVersionCreateRef
+}
+
+struct AppStoreVersionCreateRef: Encodable {
+    let type: String = "appStoreVersions"
+    let id: String
+}
+
+struct AppStoreVersionReleaseRequest: Encodable {
+    let data: AppStoreVersionReleaseRequestData
+}
+
+struct AppStoreVersionReleaseRequestData: Encodable {
+    let type: String = "appStoreVersionReleaseRequests"
+    let relationships: AppStoreVersionReleaseRequestRelationships
+}
+
+struct AppStoreVersionReleaseRequestRelationships: Encodable {
+    let appStoreVersion: AppStoreVersionReleaseVersionLinkage
+}
+
+struct AppStoreVersionReleaseVersionLinkage: Encodable {
+    let data: AppStoreVersionCreateRef
+}
+
+enum AppStoreVersionPlatform: String, CaseIterable, Identifiable {
+    case iOS = "IOS"
+    case macOS = "MAC_OS"
+    case tvOS = "TV_OS"
+    case visionOS = "VISION_OS"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .iOS: return "iOS"
+        case .macOS: return "macOS"
+        case .tvOS: return "tvOS"
+        case .visionOS: return "visionOS"
+        }
+    }
+}
+
+enum AppStoreVersionReleaseType: String, CaseIterable, Identifiable {
+    case manual = "MANUAL"
+    case afterApproval = "AFTER_APPROVAL"
+    case scheduled = "SCHEDULED"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .manual: return "Manual"
+        case .afterApproval: return "After approval"
+        case .scheduled: return "Scheduled"
+        }
+    }
+}
 
 // MARK: - Batch C1: App Info (read-only)
 //

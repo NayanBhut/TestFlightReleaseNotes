@@ -14,7 +14,6 @@ struct ReviewsView: View {
     var selectedApp: AppsData?
     @State private var confirmingSubmit = false
     @State private var submissionToCancel: ReviewSubmissionModel?
-    @State private var confirmingCompletePhased = false
 
     var body: some View {
         Group {
@@ -32,7 +31,6 @@ struct ReviewsView: View {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
                                 submissionsSection(app: app)
-                                phasedReleaseSection(app: app)
                             }
                             .padding(.vertical, 20)
                         }
@@ -46,11 +44,9 @@ struct ReviewsView: View {
                 }
                 .onAppear {
                     reviewsViewModel.load(app: app)
-                    selectDefaultPhasedVersion(app: app)
                 }
                 .onChange(of: app.id) { _, _ in
                     reviewsViewModel.load(app: app)
-                    selectDefaultPhasedVersion(app: app)
                 }
                 .alert("Action Failed",
                        isPresented: Binding(
@@ -68,15 +64,6 @@ struct ReviewsView: View {
                                subtitle: "Select an app from the sidebar to view its reviews")
             }
         }
-    }
-
-    /// Defaults the phased-release version picker to the first App Store
-    /// version and loads its phased-release state.
-    private func selectDefaultPhasedVersion(app: AppsData) {
-        guard reviewsViewModel.phasedVersionId == nil,
-              let first = app.appStoreVersions.first else { return }
-        reviewsViewModel.phasedVersionId = first.id
-        Task { await reviewsViewModel.loadPhasedRelease(versionId: first.id) }
     }
 
     // MARK: - Header
@@ -237,7 +224,9 @@ struct ReviewsView: View {
         let hasOpenSubmission = reviewsViewModel.submissionsState.loadedValue?.contains {
             !["COMPLETE", "CANCELING"].contains($0.state ?? "")
         } ?? false
-        let submittableVersionId = app.appStoreVersions.first?.id
+        let submittableVersion = reviewsViewModel.submissionVersion
+        let submittableVersionId = submittableVersion?.id
+        let hasAttachedBuild = submittableVersion?.build != nil
         HStack {
             Text("Send the app for App Store review")
                 .font(.appCaption)
@@ -252,9 +241,9 @@ struct ReviewsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(hasOpenSubmission || submittableVersionId == nil)
-                .help(submittableVersionId == nil
-                      ? "The app has no App Store version to submit"
+                .disabled(hasOpenSubmission || !reviewsViewModel.canSubmitForReview)
+                .help(!hasAttachedBuild
+                      ? "Attach an eligible build before submitting"
                       : (hasOpenSubmission ? "An open review submission already exists" : ""))
                 .confirmationDialog(
                     "Submit for App Review?",
@@ -263,110 +252,16 @@ struct ReviewsView: View {
                 ) {
                     Button("Submit") {
                         guard let versionId = submittableVersionId else { return }
+                        guard hasAttachedBuild else { return }
                         Task {
                             await reviewsViewModel.submitForReview(appId: app.id, versionId: versionId)
                         }
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This submits \(app.name ?? "the app") \(app.appStoreVersions.first?.versionString ?? "") to App Store review.")
+                    Text("This submits \(app.name ?? "the app") \(submittableVersion?.versionString ?? "") to App Store review.")
                 }
             }
-        }
-    }
-
-    // MARK: - Phased release
-
-    /// Gradual rollout controls for one App Store version. State is read
-    /// from GET /v1/appStoreVersions/{id}/appStoreVersionPhasedRelease
-    /// (404 = none started); writes go through the top-level
-    /// /v1/appStoreVersionPhasedReleases collection.
-    @ViewBuilder private func phasedReleaseSection(app: AppsData) -> some View {
-        InfoCard(title: "Phased Release", systemImage: "tortoise") {
-            if app.appStoreVersions.isEmpty {
-                Text("No App Store versions for this app")
-                    .font(.appCaption)
-                    .foregroundColor(.secondary)
-            } else {
-                HStack {
-                    Menu {
-                        ForEach(app.appStoreVersions, id: \.id) { version in
-                            Button(version.versionString ?? version.id) {
-                                reviewsViewModel.phasedVersionId = version.id
-                                Task {
-                                    await reviewsViewModel.loadPhasedRelease(versionId: version.id)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(
-                            app.appStoreVersions.first(where: { $0.id == reviewsViewModel.phasedVersionId })?.versionString ?? "Select version",
-                            systemImage: "chevron.down"
-                        )
-                        .font(.appCaption)
-                    }
-                    .menuStyle(.borderlessButton)
-
-                    Spacer()
-
-                    phasedStateContent
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var phasedStateContent: some View {
-        if reviewsViewModel.phasedLoading {
-            ProgressView()
-                .controlSize(.small)
-        } else if reviewsViewModel.phasedActionInFlight {
-            ProgressView()
-                .controlSize(.small)
-        } else if let release = reviewsViewModel.phasedRelease {
-            let state = release.phasedReleaseState ?? "UNKNOWN"
-            StateChip(text: state)
-            switch state.uppercased() {
-            case "ACTIVE":
-                Button("Pause") {
-                    Task { await reviewsViewModel.setPhasedReleaseState("PAUSED") }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            case "PAUSED", "INACTIVE":
-                Button("Resume") {
-                    Task { await reviewsViewModel.setPhasedReleaseState("ACTIVE") }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                Button("Complete") {
-                    confirmingCompletePhased = true
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .confirmationDialog(
-                    "Complete Phased Release?",
-                    isPresented: $confirmingCompletePhased,
-                    titleVisibility: .visible
-                ) {
-                    Button("Complete Release", role: .destructive) {
-                        Task { await reviewsViewModel.setPhasedReleaseState("COMPLETE") }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("The version releases to all remaining users immediately. This cannot be undone.")
-                }
-            default:
-                EmptyView()
-            }
-        } else if let versionId = reviewsViewModel.phasedVersionId {
-            Text("Not started")
-                .font(.appCaption)
-                .foregroundColor(.secondary)
-            Button("Start") {
-                Task { await reviewsViewModel.startPhasedRelease(versionId: versionId) }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         }
     }
 
@@ -501,6 +396,102 @@ struct ReviewsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
+    }
+}
+
+struct NewVersionView: View {
+    @ObservedObject var reviewsViewModel: ReviewsViewModel
+    let app: AppsData?
+    @Environment(\.dismiss) private var dismiss
+    @State private var versionString = ""
+    @State private var platform: AppStoreVersionPlatform = .iOS
+    @State private var copyright = ""
+    @State private var buildNumber = ""
+    @State private var releaseType: AppStoreVersionReleaseType = .afterApproval
+    @State private var earliestReleaseDate = Date()
+
+    init(reviewsViewModel: ReviewsViewModel, app: AppsData?) {
+        self.reviewsViewModel = reviewsViewModel
+        self.app = app
+        let creatable = reviewsViewModel.creatableAppStoreVersionPlatforms
+        let selected = reviewsViewModel.selectedAppStoreVersionPlatform
+            .flatMap(AppStoreVersionPlatform.init(rawValue:))
+        _platform = State(initialValue: selected.flatMap { value in
+            creatable.contains(value) ? value : creatable.first
+        } ?? .iOS)
+    }
+
+    private var creatablePlatforms: [AppStoreVersionPlatform] {
+        reviewsViewModel.creatableAppStoreVersionPlatforms
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("New App Store Version")
+                    .font(.sectionHeader)
+                    .fontWeight(.semibold)
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            Divider()
+            Form {
+                TextField("Version string", text: $versionString)
+                Picker("Platform", selection: $platform) {
+                    ForEach(creatablePlatforms) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                TextField("Copyright", text: $copyright)
+                TextField("Build number (optional)", text: $buildNumber)
+                Picker("Release type", selection: $releaseType) {
+                    ForEach(AppStoreVersionReleaseType.allCases) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                if releaseType == .scheduled {
+                    DatePicker("Release no earlier than", selection: $earliestReleaseDate)
+                        .datePickerStyle(.compact)
+                }
+            }
+            .formStyle(.grouped)
+            if let error = reviewsViewModel.createVersionError {
+                Text(error)
+                    .font(.appCaption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button {
+                    guard let app else { return }
+                    Task {
+                        let created = await reviewsViewModel.createVersion(
+                            appId: app.id,
+                            versionString: versionString,
+                            platform: platform,
+                            copyright: copyright,
+                            releaseType: releaseType,
+                            buildNumber: buildNumber,
+                            earliestReleaseDate: releaseType == .scheduled ? earliestReleaseDate : nil)
+                        if created { dismiss() }
+                    }
+                } label: {
+                    if reviewsViewModel.creatingVersion {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Create Version")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(reviewsViewModel.creatingVersion || versionString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
