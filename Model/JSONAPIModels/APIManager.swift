@@ -507,6 +507,7 @@ enum APIName: String {
     // GET /v1/appStoreVersions/{id}/appStoreVersionPhasedRelease
     // (composed with getAppStoreVersions + path; 404 = none started).
     case appStoreVersionPhasedReleases = "/appStoreVersionPhasedReleases"
+    case appStoreVersionReleaseRequests = "/appStoreVersionReleaseRequests"
     // Batch J (F3): sales + finance reports. GET-only collections that
     // return application/a-gzip (raw download, NOT JSON:API) — the bytes
     // go straight to disk, never through the JSONAPI decoder.

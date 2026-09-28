@@ -13,6 +13,121 @@ import JSONAPI
 import OSLog
 
 private let reviewsLogger = Logger(subsystem: "com.appstore.release-notes", category: "Reviews")
+private let liveAppStoreVersionStates: Set<String> = [
+    "READY_FOR_SALE",
+    "READY_FOR_DISTRIBUTION",
+    "PENDING_APPLE_RELEASE"
+]
+private let pendingAppStoreVersionStates: Set<String> = [
+    "PREPARE_FOR_SUBMISSION",
+    "WAITING_FOR_REVIEW",
+    "IN_REVIEW",
+    "PENDING_DEVELOPER_RELEASE",
+    "REJECTED",
+    "METADATA_REJECTED",
+    "DEVELOPER_REJECTED",
+    "INVALID_BINARY",
+    "PENDING_CONTRACT",
+    "PROCESSING_FOR_DISTRIBUTION"
+]
+private let ignoredAppStoreVersionStates: Set<String> = [
+    "REPLACED_WITH_NEW_VERSION",
+    "REMOVED_FROM_SALE"
+]
+private let editableAppStoreVersionStates: Set<String> = [
+    "PREPARE_FOR_SUBMISSION",
+    "REJECTED",
+    "DEVELOPER_REJECTED",
+    "METADATA_REJECTED",
+    "INVALID_BINARY"
+]
+
+enum AppStoreVersionDisplayState: Equatable {
+    case noVersion
+    case liveOnly
+    case both
+    case pendingOnly
+}
+
+struct AppStoreVersionCaseState {
+    let `case`: AppStoreVersionDisplayState
+    let liveVersion: AppStoreVersionsModel?
+    let pendingVersion: AppStoreVersionsModel?
+}
+
+private func appStoreVersionState(_ version: AppStoreVersionsModel) -> String? {
+    version.appStoreState ?? version.appVersionState
+}
+
+private func appStoreVersionCreatedDateValue(_ version: AppStoreVersionsModel) -> Date? {
+    guard let value = version.createdDate else { return nil }
+    let fractionalFormatter = ISO8601DateFormatter()
+    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractionalFormatter.date(from: value) {
+        return date
+    }
+    return ISO8601DateFormatter().date(from: value)
+}
+
+private func mostRecentlyCreatedVersion(_ versions: [AppStoreVersionsModel]) -> AppStoreVersionsModel? {
+    versions.sorted { lhs, rhs in
+        switch (appStoreVersionCreatedDateValue(lhs), appStoreVersionCreatedDateValue(rhs)) {
+        case let (.some(lhsDate), .some(rhsDate)):
+            return lhsDate > rhsDate
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            return (lhs.versionString ?? "").localizedStandardCompare(rhs.versionString ?? "") == .orderedDescending
+        }
+    }.first
+}
+
+func getVersionCaseState(versions: [AppStoreVersionsModel]) -> AppStoreVersionCaseState {
+    let relevantVersions = versions.filter { version in
+        guard let state = appStoreVersionState(version) else { return false }
+        return !ignoredAppStoreVersionStates.contains(state)
+    }
+    let liveVersion = mostRecentlyCreatedVersion(relevantVersions.filter { version in
+        guard let state = appStoreVersionState(version) else { return false }
+        return liveAppStoreVersionStates.contains(state)
+    })
+    let pendingCandidates = relevantVersions.filter { version in
+        guard let state = appStoreVersionState(version) else { return false }
+        return pendingAppStoreVersionStates.contains(state)
+    }
+    let pendingVersion = mostRecentlyCreatedVersion(pendingCandidates)
+    let versionCase: AppStoreVersionDisplayState
+    switch (liveVersion, pendingVersion) {
+    case (.some, .some): versionCase = .both
+    case (.some, .none): versionCase = .liveOnly
+    case (.none, .some): versionCase = .pendingOnly
+    case (.none, .none): versionCase = .noVersion
+    }
+    return AppStoreVersionCaseState(case: versionCase, liveVersion: liveVersion, pendingVersion: pendingVersion)
+}
+
+func getStatusLabel(appStoreState: String?) -> String {
+    switch appStoreState {
+    case "PREPARE_FOR_SUBMISSION": return "Draft"
+    case "WAITING_FOR_REVIEW": return "Waiting for Review"
+    case "IN_REVIEW": return "In Review"
+    case "PENDING_DEVELOPER_RELEASE": return "Approved – Ready to Release"
+    case "REJECTED", "DEVELOPER_REJECTED": return "Rejected"
+    case "METADATA_REJECTED": return "Metadata Rejected"
+    case "INVALID_BINARY": return "Invalid Binary – Needs New Build"
+    case "PENDING_CONTRACT": return "Pending Contract"
+    case "PROCESSING_FOR_DISTRIBUTION": return "Processing"
+    case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE": return "Live"
+    default: return appStoreState?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Unknown"
+    }
+}
+
+func isVersionEditable(appStoreState: String?) -> Bool {
+    guard let appStoreState else { return false }
+    return editableAppStoreVersionStates.contains(appStoreState)
+}
 
 @MainActor
 final class ReviewsViewModel: ObservableObject {
@@ -20,6 +135,8 @@ final class ReviewsViewModel: ObservableObject {
         // A stuck network call must not keep the VM alive.
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
+        appStoreVersionsFetchTask?.cancel()
+        eligibleBuildsFetchTask?.cancel()
     }
     // MARK: - Customer reviews
 
@@ -34,7 +151,49 @@ final class ReviewsViewModel: ObservableObject {
     @Published var submissionsNextCursor: String?
     @Published var submissionsPaginationFailed = false
 
-    // MARK: - Staleness / in-flight bookkeeping
+    @Published var appStoreVersionsState: ViewState<[AppStoreVersionsModel]> = .idle
+    @Published var appStoreVersionsNextCursor: String?
+    @Published var appStoreVersionsPaginationFailed = false
+    @Published var appStoreVersionsError: String?
+    @Published var appStoreVersionPlatforms: [String] = []
+    @Published private(set) var selectedAppStoreVersionPlatform: String?
+    @Published private(set) var selectedAppStoreVersionId: String?
+    @Published private(set) var selectedBuildId: String?
+    @Published private(set) var eligibleBuildsState: ViewState<[BuildsModel]> = .idle
+    @Published private(set) var eligibleBuildsNextCursor: String?
+    @Published private(set) var eligibleBuildsPaginationFailed = false
+    @Published private(set) var eligibleBuildsError: String?
+    @Published private(set) var creatingVersion = false
+    @Published private(set) var attachingBuild = false
+    @Published private(set) var savingReleaseSettingsVersionId: String?
+    @Published private(set) var releasingVersionId: String?
+    @Published private(set) var deletingVersionId: String?
+    @Published var releaseSettingsError: String?
+    @Published var createVersionError: String?
+    @Published var attachBuildError: String?
+    @Published var workflowMessage: String?
+    @Published private(set) var requestedBuildNumber: String?
+
+    private var appStoreVersionsFetchTask: Task<Void, Never>?
+    private var eligibleBuildsFetchTask: Task<Void, Never>?
+    private var appStoreVersionsInFlightAppId: String?
+    private var eligibleBuildsInFlightVersionId: String?
+    private var isPaginatingAppStoreVersions = false
+    private var isPaginatingEligibleBuilds = false
+    private var versionWorkflowGeneration = 0
+    private var eligibleBuildsGeneration = 0
+    private var phasedReleaseGeneration = 0
+    private var reviewsGeneration = 0
+    private var submissionsGeneration = 0
+    private var reviewSubmissionWorkflowGeneration = 0
+    private var versionReleaseRequestGeneration = 0
+    private var createVersionGeneration = 0
+    private var attachBuildGeneration = 0
+    private var releaseSettingsGeneration = 0
+    private var deleteVersionGeneration = 0
+    private var cancelSubmissionGeneration = 0
+    private var selectedAppStoreVersionSnapshot: AppStoreVersionsModel?
+
 
     /// The app whose lists are in flight / last requested (loadMore target).
     private(set) var currentAppId: String?
@@ -122,17 +281,64 @@ final class ReviewsViewModel: ObservableObject {
             phasedVersionId = nil
             phasedRelease = nil
             writeError = nil
+            versionWorkflowGeneration += 1
+            phasedReleaseGeneration += 1
+            reviewsGeneration += 1
+            submissionsGeneration += 1
+            reviewSubmissionWorkflowGeneration += 1
+            versionReleaseRequestGeneration += 1
+            createVersionGeneration += 1
+            attachBuildGeneration += 1
+            releaseSettingsGeneration += 1
+            deleteVersionGeneration += 1
+            cancelSubmissionGeneration += 1
+            appStoreVersionsFetchTask?.cancel()
+            eligibleBuildsFetchTask?.cancel()
+            eligibleBuildsGeneration += 1
+            appStoreVersionsState = .idle
+            appStoreVersionsNextCursor = nil
+            appStoreVersionsPaginationFailed = false
+            isPaginatingAppStoreVersions = false
+            isPaginatingEligibleBuilds = false
+            appStoreVersionsError = nil
+            eligibleBuildsError = nil
+            appStoreVersionPlatforms = []
+            selectedAppStoreVersionPlatform = nil
+            selectedAppStoreVersionId = nil
+            selectedAppStoreVersionSnapshot = nil
+            selectedBuildId = nil
+            eligibleBuildsState = .idle
+            eligibleBuildsNextCursor = nil
+            eligibleBuildsPaginationFailed = false
+            isPaginatingReviews = false
+            isPaginatingSubmissions = false
+            createVersionError = nil
+            attachBuildError = nil
+            releaseSettingsError = nil
+            savingReleaseSettingsVersionId = nil
+            releasingVersionId = nil
+            deletingVersionId = nil
+            workflowMessage = nil
+            requestedBuildNumber = nil
         }
         currentAppId = app.id
+        if appStoreVersionsInFlightAppId != app.id, appStoreVersionsState.loadedValue == nil {
+            appStoreVersionsFetchTask?.cancel()
+            appStoreVersionsInFlightAppId = app.id
+            let generation = versionWorkflowGeneration
+            appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: app.id, generation: generation) }
+        }
         if reviewsLoadedAppId != app.id, reviewsInFlightAppId != app.id {
             reviewsFetchTask?.cancel()
             reviewsInFlightAppId = app.id
-            reviewsFetchTask = Task { await fetchReviews(appId: app.id) }
+            let generation = reviewsGeneration
+            reviewsFetchTask = Task { await fetchReviews(appId: app.id, generation: generation) }
         }
         if submissionsLoadedAppId != app.id, submissionsInFlightAppId != app.id {
             submissionsFetchTask?.cancel()
             submissionsInFlightAppId = app.id
-            submissionsFetchTask = Task { await fetchSubmissions(appId: app.id) }
+            let generation = submissionsGeneration
+            submissionsFetchTask = Task { await fetchSubmissions(appId: app.id, generation: generation) }
         }
     }
 
@@ -144,18 +350,61 @@ final class ReviewsViewModel: ObservableObject {
     func resetForTeamSwitch() {
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
+        appStoreVersionsFetchTask?.cancel()
+        eligibleBuildsFetchTask?.cancel()
         currentAppId = nil
         reviewsLoadedAppId = nil
         submissionsLoadedAppId = nil
         reviewsInFlightAppId = nil
         submissionsInFlightAppId = nil
+        appStoreVersionsInFlightAppId = nil
+        eligibleBuildsInFlightVersionId = nil
+        versionWorkflowGeneration += 1
+        eligibleBuildsGeneration += 1
+        phasedReleaseGeneration += 1
+        reviewsGeneration += 1
+        submissionsGeneration += 1
+        reviewSubmissionWorkflowGeneration += 1
+        versionReleaseRequestGeneration += 1
+        createVersionGeneration += 1
+        attachBuildGeneration += 1
+        releaseSettingsGeneration += 1
+        deleteVersionGeneration += 1
+        cancelSubmissionGeneration += 1
         reviewsState = .idle
         submissionsState = .idle
+        appStoreVersionsState = .idle
+        eligibleBuildsState = .idle
         reviewsMeta = nil
         reviewsNextCursor = nil
         submissionsNextCursor = nil
+        appStoreVersionsNextCursor = nil
+        eligibleBuildsNextCursor = nil
         reviewsPaginationFailed = false
         submissionsPaginationFailed = false
+        appStoreVersionsPaginationFailed = false
+        eligibleBuildsPaginationFailed = false
+        isPaginatingAppStoreVersions = false
+        isPaginatingEligibleBuilds = false
+        isPaginatingReviews = false
+        isPaginatingSubmissions = false
+        appStoreVersionsError = nil
+        eligibleBuildsError = nil
+        appStoreVersionPlatforms = []
+        selectedAppStoreVersionPlatform = nil
+        selectedAppStoreVersionId = nil
+        selectedAppStoreVersionSnapshot = nil
+        selectedBuildId = nil
+        creatingVersion = false
+        attachingBuild = false
+        savingReleaseSettingsVersionId = nil
+        releasingVersionId = nil
+        deletingVersionId = nil
+        releaseSettingsError = nil
+        createVersionError = nil
+        attachBuildError = nil
+        workflowMessage = nil
+        requestedBuildNumber = nil
         // Batch J write state clears with everything else.
         phasedVersionId = nil
         phasedRelease = nil
@@ -170,24 +419,36 @@ final class ReviewsViewModel: ObservableObject {
         guard let appId = currentAppId else { return }
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
+        reviewsGeneration += 1
+        submissionsGeneration += 1
+        isPaginatingReviews = false
+        isPaginatingSubmissions = false
         reviewsInFlightAppId = appId
         submissionsInFlightAppId = appId
-        reviewsFetchTask = Task { await fetchReviews(appId: appId) }
-        submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
+        let reviewsGeneration = reviewsGeneration
+        let submissionsGeneration = submissionsGeneration
+        reviewsFetchTask = Task { await fetchReviews(appId: appId, generation: reviewsGeneration) }
+        submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: submissionsGeneration) }
     }
 
     func retryReviews() {
         guard let appId = currentAppId else { return }
         reviewsFetchTask?.cancel()
+        reviewsGeneration += 1
+        isPaginatingReviews = false
+        let generation = reviewsGeneration
         reviewsInFlightAppId = appId
-        reviewsFetchTask = Task { await fetchReviews(appId: appId) }
+        reviewsFetchTask = Task { await fetchReviews(appId: appId, generation: generation) }
     }
 
     func retrySubmissions() {
         guard let appId = currentAppId else { return }
         submissionsFetchTask?.cancel()
+        submissionsGeneration += 1
+        isPaginatingSubmissions = false
+        let generation = submissionsGeneration
         submissionsInFlightAppId = appId
-        submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
+        submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: generation) }
     }
 
     /// POST /v1/customerReviews/{id}/customerReviewResponses.
@@ -238,7 +499,711 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Submit for review / cancel
+    // MARK: - App Store version workflow
+
+    static func responseIsCurrent(generation: Int, current: Int) -> Bool {
+        generation == current
+    }
+
+    private var platformFilteredAppStoreVersions: [AppStoreVersionsModel] {
+        let versions = appStoreVersionsState.loadedValue ?? []
+        guard let platform = selectedAppStoreVersionPlatform else { return versions }
+        return versions.filter { $0.platform == platform }
+    }
+
+    private var versionCaseState: AppStoreVersionCaseState {
+        getVersionCaseState(versions: platformFilteredAppStoreVersions)
+    }
+
+    var submissionVersion: AppStoreVersionsModel? {
+        if let version = versionCaseState.pendingVersion {
+            return version
+        }
+        if let snapshot = selectedAppStoreVersionSnapshot,
+           snapshot.id == selectedAppStoreVersionId,
+           Self.isPendingApprovalVersion(snapshot) {
+            return snapshot
+        }
+        return nil
+    }
+
+    var displayedAppStoreVersion: AppStoreVersionsModel? {
+        if let version = versionCaseState.pendingVersion ?? versionCaseState.liveVersion {
+            return version
+        }
+        if let snapshot = selectedAppStoreVersionSnapshot,
+           snapshot.id == selectedAppStoreVersionId {
+            return snapshot
+        }
+        return nil
+    }
+
+    var liveAppStoreVersion: AppStoreVersionsModel? {
+        versionCaseState.liveVersion
+    }
+
+    var pendingAppStoreVersion: AppStoreVersionsModel? {
+        versionCaseState.pendingVersion
+    }
+
+    var displayedAppStoreVersions: [AppStoreVersionsModel] {
+        switch versionCaseState.case {
+        case .both:
+            return [versionCaseState.liveVersion, versionCaseState.pendingVersion].compactMap { $0 }
+        case .liveOnly:
+            return versionCaseState.liveVersion.map { [$0] } ?? []
+        case .pendingOnly:
+            return versionCaseState.pendingVersion.map { [$0] } ?? []
+        case .noVersion:
+            return []
+        }
+    }
+
+    var appStoreVersionDisplayState: AppStoreVersionDisplayState {
+        versionCaseState.case
+    }
+
+    var canCreateAppStoreVersion: Bool {
+        appStoreVersionDisplayState == .liveOnly
+    }
+
+    var creatableAppStoreVersionPlatforms: [AppStoreVersionPlatform] {
+        appStoreVersionPlatforms.compactMap { rawValue in
+            guard let platform = AppStoreVersionPlatform(rawValue: rawValue) else { return nil }
+            let versions = (appStoreVersionsState.loadedValue ?? [])
+                .filter { $0.platform == rawValue }
+            return getVersionCaseState(versions: versions).`case` == .liveOnly ? platform : nil
+        }
+    }
+
+    var canSubmitForReview: Bool {
+        guard let version = submissionVersion,
+              isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState) else {
+            return false
+        }
+        return version.build != nil
+    }
+
+    func selectAppStoreVersionPlatform(_ platform: String) {
+        guard appStoreVersionPlatforms.contains(platform),
+              platform != selectedAppStoreVersionPlatform else { return }
+        selectedAppStoreVersionPlatform = platform
+        let versions = appStoreVersionsState.loadedValue?.filter { $0.platform == platform } ?? []
+        let caseState = getVersionCaseState(versions: versions)
+        let displayedVersion = caseState.pendingVersion ?? caseState.liveVersion
+        let selectionChanged = selectedAppStoreVersionId != displayedVersion?.id
+        selectedAppStoreVersionId = displayedVersion?.id
+        selectedAppStoreVersionSnapshot = displayedVersion
+        requestedBuildNumber = nil
+        eligibleBuildsNextCursor = nil
+        eligibleBuildsPaginationFailed = false
+        eligibleBuildsError = nil
+        attachBuildError = nil
+        releaseSettingsError = nil
+        workflowMessage = nil
+        if selectionChanged, let displayedVersion, Self.isPendingApprovalVersion(displayedVersion) {
+            loadEligibleBuilds(for: displayedVersion)
+        }
+    }
+
+    func selectAppStoreVersion(_ version: AppStoreVersionsModel) {
+        guard Self.isPendingApprovalVersion(version) else { return }
+        if selectedAppStoreVersionId != version.id {
+            requestedBuildNumber = nil
+            eligibleBuildsNextCursor = nil
+            eligibleBuildsPaginationFailed = false
+            eligibleBuildsError = nil
+        }
+        selectedAppStoreVersionId = version.id
+        selectedAppStoreVersionSnapshot = version
+        phasedReleaseGeneration += 1
+        phasedVersionId = version.id
+        phasedRelease = nil
+        attachBuildError = nil
+        releaseSettingsError = nil
+        workflowMessage = nil
+        loadEligibleBuilds(for: version)
+    }
+
+    func load(appId: String, force: Bool = false) {
+        guard currentAppId == appId else { return }
+        if force || appStoreVersionsInFlightAppId != appId {
+            appStoreVersionsFetchTask?.cancel()
+            versionWorkflowGeneration += 1
+            isPaginatingAppStoreVersions = false
+            appStoreVersionsInFlightAppId = appId
+            appStoreVersionsNextCursor = nil
+            let generation = versionWorkflowGeneration
+            appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: appId, generation: generation) }
+        }
+    }
+
+    func retryAppStoreVersions() {
+        guard let appId = currentAppId else { return }
+        load(appId: appId, force: true)
+    }
+
+    func loadMoreAppStoreVersions(cursor: String) {
+        guard let appId = currentAppId, !isPaginatingAppStoreVersions else { return }
+        appStoreVersionsFetchTask?.cancel()
+        versionWorkflowGeneration += 1
+        appStoreVersionsInFlightAppId = appId
+        let generation = versionWorkflowGeneration
+        appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: appId, cursor: cursor, generation: generation) }
+    }
+
+    func fetchAppStoreVersions(appId: String, cursor: String? = nil, generation: Int) async {
+        guard !Task.isCancelled,
+              generation == versionWorkflowGeneration,
+              currentAppId == appId else { return }
+        let isPaginating = cursor != nil
+        if isPaginating {
+            isPaginatingAppStoreVersions = true
+        } else if appStoreVersionsState.loadedValue == nil {
+            appStoreVersionsState = .loading
+        }
+        appStoreVersionsPaginationFailed = false
+        defer {
+            if generation == versionWorkflowGeneration {
+                if isPaginating { isPaginatingAppStoreVersions = false }
+                appStoreVersionsInFlightAppId = nil
+            }
+        }
+
+        let existing = isPaginating ? (appStoreVersionsState.loadedValue ?? []) : []
+        var fetchedVersions: [AppStoreVersionsModel] = []
+        var nextCursor = cursor
+        var visitedCursors = Set<String>()
+
+        do {
+            repeat {
+                var queryParams = [
+                    "include": "build",
+                    "limit": "200"
+                ]
+                if let pageCursor = nextCursor {
+                    guard visitedCursors.insert(pageCursor).inserted else { break }
+                    queryParams["cursor"] = pageCursor
+                }
+                guard let request = APIClient.shared.getRequest(
+                    api: .get(name: .getAllApps, queryParams: queryParams, path: "\(appId)/appStoreVersions"),
+                    apiVersion: .v1) else {
+                    if !isPaginating { appStoreVersionsState = .error("No team selected. Add a team to load App Store versions.") }
+                    return
+                }
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled,
+                      Self.responseIsCurrent(generation: generation, current: versionWorkflowGeneration),
+                      currentAppId == appId else { return }
+                let model = try getDecoder().decode(AppStoreVersionsDocument.self, from: data)
+                fetchedVersions.append(contentsOf: model.data)
+                nextCursor = model.meta.paging.nextCursor
+            } while nextCursor != nil
+
+            let existingIDs = Set(existing.map(\.id))
+            let merged = existing + fetchedVersions.filter { !existingIDs.contains($0.id) }
+            appStoreVersionsError = nil
+            let sorted = merged.sorted {
+                ($0.versionString ?? "").localizedStandardCompare($1.versionString ?? "") == .orderedDescending
+            }
+            let platforms = Array(Set(sorted.compactMap(\.platform))).sorted()
+            appStoreVersionPlatforms = platforms
+            if !platforms.contains(selectedAppStoreVersionPlatform ?? "") {
+                selectedAppStoreVersionPlatform = platforms.first
+            }
+            let platformVersions: [AppStoreVersionsModel]
+            if let selectedAppStoreVersionPlatform {
+                platformVersions = sorted.filter { $0.platform == selectedAppStoreVersionPlatform }
+            } else {
+                platformVersions = sorted
+            }
+            let pendingVersions = platformVersions.filter(Self.isPendingApprovalVersion)
+            if pendingVersions.count > 1 {
+                reviewsLogger.warning("App returned \(pendingVersions.count, privacy: .public) pending App Store versions for the selected platform; showing the most recently created")
+            }
+            appStoreVersionsState = sorted.isEmpty ? .empty : .loaded(sorted)
+            appStoreVersionsNextCursor = nil
+            let displayedVersion = Self.preferredAppStoreVersion(platformVersions)
+            let selectionChanged = selectedAppStoreVersionId != displayedVersion?.id
+            selectedAppStoreVersionId = displayedVersion?.id
+            selectedAppStoreVersionSnapshot = displayedVersion
+            if selectionChanged,
+               let displayedVersion,
+               Self.isPendingApprovalVersion(displayedVersion) {
+                loadEligibleBuilds(for: displayedVersion)
+            }
+        } catch {
+            guard !Task.isCancelled,
+                  Self.responseIsCurrent(generation: generation, current: versionWorkflowGeneration),
+                  currentAppId == appId else { return }
+            reviewsLogger.error("Failed to load App Store versions: \(error.localizedDescription)")
+            if isPaginating {
+                appStoreVersionsPaginationFailed = true
+            } else {
+                recordAppStoreVersionsFailure(workflowMessage(for: error))
+            }
+        }
+    }
+
+    func createVersion(appId: String,
+                       versionString: String,
+                       platform: AppStoreVersionPlatform,
+                       copyright: String,
+                       releaseType: AppStoreVersionReleaseType,
+                       buildNumber: String? = nil,
+                       earliestReleaseDate: Date? = nil) async -> Bool {
+        guard !creatingVersion, currentAppId == appId else { return false }
+        let platformVersions = (appStoreVersionsState.loadedValue ?? [])
+            .filter { $0.platform == platform.rawValue }
+        guard getVersionCaseState(versions: platformVersions).`case` == .liveOnly else {
+            createVersionError = "A new version requires an existing live version for \(platform.displayName) with no pending version."
+            return false
+        }
+        let trimmedVersion = versionString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCopyright = copyright.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            createVersionError = "Enter a version string."
+            return false
+        }
+        guard releaseType != .scheduled || earliestReleaseDate != nil else {
+            createVersionError = "Choose a release date for a scheduled release."
+            return false
+        }
+        createVersionGeneration += 1
+        let operationGeneration = createVersionGeneration
+        creatingVersion = true
+        createVersionError = nil
+        workflowMessage = nil
+        let trimmedBuildNumber = buildNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        requestedBuildNumber = trimmedBuildNumber.isEmpty ? nil : trimmedBuildNumber
+        defer {
+            if operationGeneration == createVersionGeneration { creatingVersion = false }
+        }
+
+        let formatter = ISO8601DateFormatter()
+        let body = AppStoreVersionCreateRequest(data: AppStoreVersionCreateData(
+            attributes: AppStoreVersionCreateAttributes(
+                platform: platform.rawValue,
+                versionString: trimmedVersion,
+                copyright: trimmedCopyright.isEmpty ? nil : trimmedCopyright,
+                releaseType: releaseType.rawValue,
+                earliestReleaseDate: earliestReleaseDate.map(formatter.string(from:))),
+            relationships: AppStoreVersionCreateRelationships(
+                app: AppStoreVersionAppLinkage(data: AppStoreVersionAppRef(id: appId)))))
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(api: .post(name: .getAppStoreVersions, body: data), apiVersion: .v1) else {
+            createVersionError = APIError.jsonConversionFailure.details
+            return false
+        }
+        do {
+            let response = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  operationGeneration == createVersionGeneration,
+                  currentAppId == appId else { return false }
+            let version = try getDecoder().decode(AppStoreVersionsModel.self, from: response)
+            var versions = appStoreVersionsState.loadedValue ?? []
+            versions.removeAll { $0.id == version.id }
+            versions.append(version)
+            versions.sort {
+                ($0.versionString ?? "").localizedStandardCompare($1.versionString ?? "") == .orderedDescending
+            }
+            if let platform = version.platform {
+                if !appStoreVersionPlatforms.contains(platform) {
+                    appStoreVersionPlatforms.append(platform)
+                    appStoreVersionPlatforms.sort()
+                }
+                selectedAppStoreVersionPlatform = platform
+            }
+            appStoreVersionsState = .loaded(versions)
+            let platformVersions = selectedAppStoreVersionPlatform.map { platform in
+                versions.filter { $0.platform == platform }
+            } ?? versions
+            let displayedVersion = Self.preferredAppStoreVersion(platformVersions)
+            selectedAppStoreVersionId = displayedVersion?.id
+            selectedAppStoreVersionSnapshot = displayedVersion
+            workflowMessage = "Created version \(version.versionString ?? trimmedVersion)."
+            load(appId: appId, force: true)
+            if let displayedVersion,
+               Self.isPendingApprovalVersion(displayedVersion) {
+                loadEligibleBuilds(for: displayedVersion)
+            }
+            return true
+        } catch {
+            guard !Task.isCancelled,
+                  operationGeneration == createVersionGeneration,
+                  currentAppId == appId else { return false }
+            reviewsLogger.error("Failed to create App Store version: \(error.localizedDescription)")
+            requestedBuildNumber = nil
+            createVersionError = workflowMessage(for: error)
+            return false
+        }
+    }
+
+    func deleteAppStoreVersion(versionId: String) async -> Bool {
+        guard deletingVersionId == nil,
+              let appId = currentAppId,
+              let version = appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }),
+              Self.isPendingApprovalVersion(version),
+              isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState) else {
+            return false
+        }
+        deleteVersionGeneration += 1
+        let operationGeneration = deleteVersionGeneration
+        deletingVersionId = versionId
+        releaseSettingsError = nil
+        workflowMessage = nil
+        defer {
+            if operationGeneration == deleteVersionGeneration {
+                deletingVersionId = nil
+            }
+        }
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .getAppStoreVersions, path: versionId),
+            apiVersion: .v1) else {
+            releaseSettingsError = APIError.jsonConversionFailure.details
+            return false
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  operationGeneration == deleteVersionGeneration,
+                  currentAppId == appId else { return false }
+            var versions = appStoreVersionsState.loadedValue ?? []
+            versions.removeAll { $0.id == versionId }
+            appStoreVersionsState = versions.isEmpty ? .empty : .loaded(versions)
+            let platformVersions = selectedAppStoreVersionPlatform.map { platform in
+                versions.filter { $0.platform == platform }
+            } ?? versions
+            let displayedVersion = Self.preferredAppStoreVersion(platformVersions)
+            selectedAppStoreVersionId = displayedVersion?.id
+            selectedAppStoreVersionSnapshot = displayedVersion
+            requestedBuildNumber = nil
+            eligibleBuildsState = .idle
+            eligibleBuildsNextCursor = nil
+            eligibleBuildsError = nil
+            selectedBuildId = nil
+            workflowMessage = "Deleted version \(version.versionString ?? versionId)."
+            if let appId = currentAppId {
+                load(appId: appId, force: true)
+            }
+            return true
+        } catch {
+            guard !Task.isCancelled,
+                  operationGeneration == deleteVersionGeneration,
+                  currentAppId == appId else { return false }
+            reviewsLogger.error("Failed to delete App Store version: \(error.localizedDescription)")
+            releaseSettingsError = workflowMessage(for: error)
+            return false
+        }
+    }
+
+    func recordAppStoreVersionsFailure(_ message: String) {
+        appStoreVersionsError = message
+        if appStoreVersionsState.loadedValue == nil {
+            appStoreVersionsState = .error(message)
+        }
+    }
+
+    func recordEligibleBuildsFailure(_ message: String) {
+        eligibleBuildsError = message
+        if eligibleBuildsState.loadedValue == nil {
+            eligibleBuildsState = .error(message)
+        }
+    }
+
+    func selectBuild(_ build: BuildsModel) {
+        guard let version = submissionVersion else { return }
+        guard Self.isEligibleBuild(build, versionString: version.versionString ?? "", platform: version.platform ?? "") else { return }
+        selectedBuildId = build.id
+        attachBuildError = nil
+    }
+
+    static func isPendingApprovalVersion(_ version: AppStoreVersionsModel) -> Bool {
+        let state = version.appStoreState ?? version.appVersionState
+        return pendingAppStoreVersionStates.contains(state ?? "")
+    }
+
+    static func preferredAppStoreVersion(_ versions: [AppStoreVersionsModel]) -> AppStoreVersionsModel? {
+        let state = getVersionCaseState(versions: versions)
+        return state.pendingVersion ?? state.liveVersion
+    }
+
+    static func isEligibleBuild(_ build: BuildsModel, versionString: String, platform: String) -> Bool {
+        guard build.processingState == "VALID", build.expired == false else { return false }
+        let buildVersion = build.preReleaseVersion?.version
+        guard buildVersion == versionString else { return false }
+        return build.preReleaseVersion?.platform == platform
+    }
+
+    func loadEligibleBuilds(for version: AppStoreVersionsModel, cursor: String? = nil) {
+        guard let appId = currentAppId, let versionString = version.versionString, let platform = version.platform else { return }
+        if cursor != nil, isPaginatingEligibleBuilds { return }
+        eligibleBuildsFetchTask?.cancel()
+        eligibleBuildsGeneration += 1
+        let generation = eligibleBuildsGeneration
+        eligibleBuildsInFlightVersionId = version.id
+        if cursor == nil {
+            isPaginatingEligibleBuilds = false
+            eligibleBuildsNextCursor = nil
+            eligibleBuildsPaginationFailed = false
+            eligibleBuildsError = nil
+            eligibleBuildsState = .loading
+            selectedBuildId = nil
+        }
+        eligibleBuildsFetchTask = Task {
+            await fetchEligibleBuilds(appId: appId,
+                                      version: version,
+                                      versionString: versionString,
+                                      platform: platform,
+                                      cursor: cursor,
+                                      generation: generation)
+        }
+    }
+
+    func fetchEligibleBuilds(appId: String,
+                             version: AppStoreVersionsModel,
+                             versionString: String,
+                             platform: String,
+                              cursor: String? = nil,
+                              generation: Int) async {
+        guard !Task.isCancelled,
+              generation == eligibleBuildsGeneration,
+              currentAppId == appId,
+              selectedAppStoreVersionId == version.id else { return }
+        let isPaginating = cursor != nil
+        if isPaginating { isPaginatingEligibleBuilds = true }
+        eligibleBuildsPaginationFailed = false
+        defer {
+            if generation == eligibleBuildsGeneration {
+                if isPaginating { isPaginatingEligibleBuilds = false }
+                if eligibleBuildsInFlightVersionId == version.id { eligibleBuildsInFlightVersionId = nil }
+            }
+        }
+        var queryParams = [
+            "filter[app]": appId,
+            "filter[processingState]": "VALID",
+            "filter[expired]": "false",
+            "filter[preReleaseVersion.version]": versionString,
+            "filter[preReleaseVersion.platform]": platform,
+            "sort": "-uploadedDate",
+            "include": "preReleaseVersion",
+            "limit": "200"
+        ]
+        if let cursor { queryParams["cursor"] = cursor }
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else {
+            if !isPaginating { eligibleBuildsState = .error("No team selected. Add a team to load builds.") }
+            return
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  Self.responseIsCurrent(generation: generation, current: eligibleBuildsGeneration),
+                  currentAppId == appId,
+                  selectedAppStoreVersionId == version.id else { return }
+            let model = try getDecoder().decode(BuildsDocument.self, from: data)
+            let eligible = model.data.filter { Self.isEligibleBuild($0, versionString: versionString, platform: platform) }
+            let existing = isPaginating ? (eligibleBuildsState.loadedValue ?? []) : []
+            let existingIDs = Set(existing.map(\.id))
+            let merged = existing + eligible.filter { !existingIDs.contains($0.id) }
+            eligibleBuildsError = nil
+            eligibleBuildsState = merged.isEmpty ? .empty : .loaded(merged)
+            eligibleBuildsNextCursor = model.meta.paging.nextCursor
+            if let requestedBuildNumber {
+                if let build = merged.first(where: { $0.version == requestedBuildNumber }) {
+                    self.requestedBuildNumber = nil
+                    selectBuild(build)
+                    _ = await attachSelectedBuild()
+                } else if model.meta.paging.nextCursor == nil {
+                    self.requestedBuildNumber = nil
+                    attachBuildError = "Build \(requestedBuildNumber) was not found for this version."
+                }
+            }
+        } catch {
+            guard !Task.isCancelled,
+                  Self.responseIsCurrent(generation: generation, current: eligibleBuildsGeneration),
+                  currentAppId == appId,
+                  selectedAppStoreVersionId == version.id else { return }
+            reviewsLogger.error("Failed to load eligible builds: \(error.localizedDescription)")
+            if isPaginating {
+                eligibleBuildsPaginationFailed = true
+            } else {
+                recordEligibleBuildsFailure(workflowMessage(for: error))
+            }
+        }
+    }
+
+    func attachSelectedBuild() async -> Bool {
+        guard let appId = currentAppId, let version = submissionVersion, let buildId = selectedBuildId, !attachingBuild else { return false }
+        guard let build = eligibleBuildsState.loadedValue?.first(where: { $0.id == buildId }) else {
+            attachBuildError = "Choose an eligible build first."
+            return false
+        }
+        guard Self.isEligibleBuild(build, versionString: version.versionString ?? "", platform: version.platform ?? "") else {
+            attachBuildError = "That build is no longer eligible."
+            return false
+        }
+        attachBuildGeneration += 1
+        let operationGeneration = attachBuildGeneration
+        attachingBuild = true
+        attachBuildError = nil
+        workflowMessage = nil
+        defer {
+            if operationGeneration == attachBuildGeneration { attachingBuild = false }
+        }
+        let body = AppStoreVersionBuildLinkageRequest(data: AppStoreVersionBuildRef(id: buildId))
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .getAppStoreVersions, body: data, path: "\(version.id)/relationships/build"),
+                apiVersion: .v1) else {
+            attachBuildError = APIError.jsonConversionFailure.details
+            return false
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  operationGeneration == attachBuildGeneration,
+                  currentAppId == appId,
+                  selectedAppStoreVersionId == version.id else { return false }
+            workflowMessage = "Attached build \(build.version ?? buildId)."
+            load(appId: appId, force: true)
+            return true
+        } catch {
+            guard !Task.isCancelled,
+                  operationGeneration == attachBuildGeneration,
+                  currentAppId == appId,
+                  selectedAppStoreVersionId == version.id else { return false }
+            reviewsLogger.error("Failed to attach build: \(error.localizedDescription)")
+            attachBuildError = workflowMessage(for: error)
+            return false
+        }
+    }
+
+    private func workflowMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            if apiError.statusCode == 403 {
+                return "\(apiError.details) — this action requires an API key with the App Manager or Admin role."
+            }
+            return apiError.details
+        }
+        return error.localizedDescription
+    }
+
+    enum ReleaseSettingsSaveResult {
+        case success
+        case failure(String)
+        case ignored
+    }
+
+    func saveReleaseSettings(versionId: String,
+                             releaseType: AppStoreVersionReleaseType,
+                             earliestReleaseDate: Date?,
+                             copyright: String? = nil) async -> ReleaseSettingsSaveResult {
+        guard savingReleaseSettingsVersionId == nil,
+              currentAppId != nil,
+              selectedAppStoreVersionId == versionId else { return .ignored }
+        guard releaseType != .scheduled || earliestReleaseDate != nil else {
+            releaseSettingsError = "Choose a release date for a scheduled release."
+            return .failure(releaseSettingsError ?? "Choose a release date.")
+        }
+        releaseSettingsGeneration += 1
+        let operationGeneration = releaseSettingsGeneration
+        savingReleaseSettingsVersionId = versionId
+        releaseSettingsError = nil
+        defer {
+            if operationGeneration == releaseSettingsGeneration { savingReleaseSettingsVersionId = nil }
+        }
+
+        let formatter = ISO8601DateFormatter()
+        let trimmedCopyright = copyright?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = AppStoreVersionUpdateRequest(data: AppStoreVersionUpdateData(
+            id: versionId,
+            attributes: AppStoreVersionUpdateAttributes(
+                releaseType: releaseType.rawValue,
+                earliestReleaseDate: earliestReleaseDate.map(formatter.string(from:)),
+                copyright: trimmedCopyright?.isEmpty == false ? trimmedCopyright : nil)))
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .getAppStoreVersions, body: data, path: versionId),
+                apiVersion: .v1) else {
+            releaseSettingsError = APIError.jsonConversionFailure.details
+            return .failure(releaseSettingsError ?? APIError.jsonConversionFailure.details)
+        }
+
+        do {
+            let response = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  operationGeneration == releaseSettingsGeneration,
+                  currentAppId != nil,
+                  selectedAppStoreVersionId == versionId else { return .ignored }
+            let model = try getDecoder().decode(AppStoreVersionsModel.self, from: response)
+            guard case .loaded(var versions) = appStoreVersionsState,
+                  let index = versions.firstIndex(where: { $0.id == versionId }) else {
+                return .ignored
+            }
+            versions[index] = model
+            appStoreVersionsState = .loaded(versions)
+            if selectedAppStoreVersionSnapshot?.id == versionId {
+                selectedAppStoreVersionSnapshot = model
+            }
+            return .success
+        } catch {
+            guard !Task.isCancelled,
+                  operationGeneration == releaseSettingsGeneration,
+                  selectedAppStoreVersionId == versionId else { return .ignored }
+            releaseSettingsError = workflowMessage(for: error)
+            return .failure(releaseSettingsError ?? error.localizedDescription)
+        }
+    }
+
+
+    func releaseVersion(versionId: String) async -> Bool {
+        guard releasingVersionId == nil,
+              let appId = currentAppId,
+              selectedAppStoreVersionId == versionId,
+              let version = submissionVersion,
+              version.id == versionId,
+              version.releaseType == AppStoreVersionReleaseType.manual.rawValue,
+              version.appVersionState == "PENDING_DEVELOPER_RELEASE" else { return false }
+        let generation = versionReleaseRequestGeneration
+        releasingVersionId = versionId
+        releaseSettingsError = nil
+        defer {
+            if generation == versionReleaseRequestGeneration { releasingVersionId = nil }
+        }
+
+        let body = AppStoreVersionReleaseRequest(
+            data: AppStoreVersionReleaseRequestData(
+                relationships: AppStoreVersionReleaseRequestRelationships(
+                    appStoreVersion: AppStoreVersionReleaseVersionLinkage(
+                        data: AppStoreVersionCreateRef(id: versionId)))))
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .appStoreVersionReleaseRequests, body: data),
+                apiVersion: .v1) else {
+            releaseSettingsError = APIError.jsonConversionFailure.details
+            return false
+        }
+
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  generation == versionReleaseRequestGeneration,
+                  currentAppId == appId,
+                  selectedAppStoreVersionId == versionId else { return false }
+            workflowMessage = "Released version \(version.versionString ?? versionId)."
+            load(appId: appId, force: true)
+            return true
+        } catch {
+            guard !Task.isCancelled,
+                  generation == versionReleaseRequestGeneration,
+                  currentAppId == appId,
+                  selectedAppStoreVersionId == versionId else { return false }
+            reviewsLogger.error("Failed to release App Store version: \(error.localizedDescription)")
+            releaseSettingsError = workflowMessage(for: error)
+            return false
+        }
+    }
 
     /// Full submit pipeline (verified against spec v4.3.1 + the ASC
     /// submission workflow): POST /reviewSubmissions → POST
@@ -246,9 +1211,17 @@ final class ReviewsViewModel: ObservableObject {
     /// submission {submitted: true}. A POST alone only creates a draft.
     /// `versionId` is required — the UI disables submit without one.
     func submitForReview(appId: String, versionId: String) async -> Bool {
-        guard !submittingReview else { return false }
+        guard !submittingReview,
+              currentAppId == appId,
+              let version = appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }),
+              Self.isPendingApprovalVersion(version),
+              isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState),
+              version.build != nil else { return false }
+        let generation = reviewSubmissionWorkflowGeneration
         submittingReview = true
-        defer { submittingReview = false }
+        defer {
+            if generation == reviewSubmissionWorkflowGeneration { submittingReview = false }
+        }
 
         // Step 1: create the submission (platform omitted — the server
         // derives it from the linked version's app).
@@ -270,7 +1243,9 @@ final class ReviewsViewModel: ObservableObject {
 
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == reviewSubmissionWorkflowGeneration,
+                  currentAppId == appId else { return false }
             let submission = try getDecoder().decode(ReviewSubmissionModel.self, from: responseData)
 
             // Step 2: link the version as the item under review.
@@ -292,7 +1267,9 @@ final class ReviewsViewModel: ObservableObject {
                 return false
             }
             _ = try await APIClient.shared.callAPI(with: itemRequest)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == reviewSubmissionWorkflowGeneration,
+                  currentAppId == appId else { return false }
 
             // Step 3: flip submitted=true — this actually sends it.
             let update = ReviewSubmissionUpdateRequest(
@@ -309,14 +1286,20 @@ final class ReviewsViewModel: ObservableObject {
                 return false
             }
             _ = try await APIClient.shared.callAPI(with: updateRequest)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == reviewSubmissionWorkflowGeneration,
+                  currentAppId == appId else { return false }
 
             // Invalidate so the next load refetches with the new row.
             submissionsLoadedAppId = nil
-            submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
+            submissionsGeneration += 1
+            let fetchGeneration = submissionsGeneration
+            submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: fetchGeneration) }
             return true
         } catch {
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == reviewSubmissionWorkflowGeneration,
+                  currentAppId == appId else { return false }
             reviewsLogger.error("Failed to submit for review: \(error.localizedDescription)")
             writeError = writeMessage(for: error)
             return false
@@ -332,8 +1315,12 @@ final class ReviewsViewModel: ObservableObject {
     func cancelSubmission(_ submission: ReviewSubmissionModel) async -> Bool {
         guard cancellingSubmissionId == nil else { return false }
         guard let appId = currentAppId else { return false }
+        cancelSubmissionGeneration += 1
+        let operationGeneration = cancelSubmissionGeneration
         cancellingSubmissionId = submission.id
-        defer { cancellingSubmissionId = nil }
+        defer {
+            if operationGeneration == cancelSubmissionGeneration { cancellingSubmissionId = nil }
+        }
 
         let body = ReviewSubmissionUpdateRequest(
             data: ReviewSubmissionUpdateData(
@@ -351,12 +1338,18 @@ final class ReviewsViewModel: ObservableObject {
 
         do {
             _ = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  operationGeneration == cancelSubmissionGeneration,
+                  currentAppId == appId else { return false }
             submissionsLoadedAppId = nil
-            submissionsFetchTask = Task { await fetchSubmissions(appId: appId) }
+            submissionsGeneration += 1
+            let generation = submissionsGeneration
+            submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: generation) }
             return true
         } catch {
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  operationGeneration == cancelSubmissionGeneration,
+                  currentAppId == appId else { return false }
             reviewsLogger.error("Failed to cancel submission: \(error.localizedDescription)")
             writeError = writeMessage(for: error)
             return false
@@ -373,8 +1366,14 @@ final class ReviewsViewModel: ObservableObject {
     /// the currently selected version's release.
     func loadPhasedRelease(versionId: String) async {
         phasedVersionId = versionId
+        phasedReleaseGeneration += 1
+        let generation = phasedReleaseGeneration
         phasedLoading = true
-        defer { phasedLoading = false }
+        defer {
+            if generation == phasedReleaseGeneration {
+                phasedLoading = false
+            }
+        }
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .getAppStoreVersions, path: "\(versionId)/appStoreVersionPhasedRelease"),
             apiVersion: .v1) else {
@@ -383,7 +1382,9 @@ final class ReviewsViewModel: ObservableObject {
         }
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled, phasedVersionId == versionId else { return }
+            guard !Task.isCancelled,
+                  generation == phasedReleaseGeneration,
+                  phasedVersionId == versionId else { return }
             if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                payload["data"] is NSNull {
                 phasedRelease = nil
@@ -391,7 +1392,9 @@ final class ReviewsViewModel: ObservableObject {
             }
             phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: data)
         } catch {
-            guard !Task.isCancelled, phasedVersionId == versionId else { return }
+            guard !Task.isCancelled,
+                  generation == phasedReleaseGeneration,
+                  phasedVersionId == versionId else { return }
             if let apiError = error as? APIError, apiError.statusCode == 404 {
                 phasedRelease = nil
             } else {
@@ -408,9 +1411,12 @@ final class ReviewsViewModel: ObservableObject {
     /// POST /v1/appStoreVersionPhasedReleases — starts phased release for
     /// a version that has none. Refetches state on success.
     func startPhasedRelease(versionId: String) async -> Bool {
-        guard !phasedActionInFlight else { return false }
+        guard !phasedActionInFlight, phasedVersionId == versionId else { return false }
+        let generation = phasedReleaseGeneration
         phasedActionInFlight = true
-        defer { phasedActionInFlight = false }
+        defer {
+            if generation == phasedReleaseGeneration { phasedActionInFlight = false }
+        }
 
         let body = PhasedReleaseCreateRequest(
             data: PhasedReleaseCreateData(
@@ -429,11 +1435,15 @@ final class ReviewsViewModel: ObservableObject {
 
         do {
             let response = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == phasedReleaseGeneration,
+                  phasedVersionId == versionId else { return false }
             phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: response)
             return true
         } catch {
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == phasedReleaseGeneration,
+                  phasedVersionId == versionId else { return false }
             reviewsLogger.error("Failed to start phased release: \(error.localizedDescription)")
             writeError = writeMessage(for: error)
             return false
@@ -443,9 +1453,14 @@ final class ReviewsViewModel: ObservableObject {
     /// PATCH state transitions: ACTIVE (start/resume), PAUSED (pause),
     /// COMPLETE (finish). Updates local state on success, no refetch needed.
     func setPhasedReleaseState(_ state: String) async -> Bool {
-        guard !phasedActionInFlight, let release = phasedRelease else { return false }
+        guard !phasedActionInFlight,
+              let versionId = phasedVersionId,
+              let release = phasedRelease else { return false }
+        let generation = phasedReleaseGeneration
         phasedActionInFlight = true
-        defer { phasedActionInFlight = false }
+        defer {
+            if generation == phasedReleaseGeneration { phasedActionInFlight = false }
+        }
 
         let body = PhasedReleaseUpdateRequest(
             data: PhasedReleaseUpdateData(
@@ -463,11 +1478,15 @@ final class ReviewsViewModel: ObservableObject {
 
         do {
             let response = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == phasedReleaseGeneration,
+                  phasedVersionId == versionId else { return false }
             phasedRelease = try getDecoder().decode(PhasedReleaseModel.self, from: response)
             return true
         } catch {
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled,
+                  generation == phasedReleaseGeneration,
+                  phasedVersionId == versionId else { return false }
             reviewsLogger.error("Failed to update phased release: \(error.localizedDescription)")
             writeError = writeMessage(for: error)
             return false
@@ -492,15 +1511,19 @@ final class ReviewsViewModel: ObservableObject {
         // guard would no-op the tap while leaving the first request killed.
         guard let appId = currentAppId, !isPaginatingReviews else { return }
         reviewsFetchTask?.cancel()
+        reviewsGeneration += 1
+        let generation = reviewsGeneration
         reviewsInFlightAppId = appId
-        reviewsFetchTask = Task { await fetchReviews(appId: appId, cursor: cursor) }
+        reviewsFetchTask = Task { await fetchReviews(appId: appId, cursor: cursor, generation: generation) }
     }
 
     func loadMoreSubmissions(cursor: String) {
         guard let appId = currentAppId, !isPaginatingSubmissions else { return }
         submissionsFetchTask?.cancel()
+        submissionsGeneration += 1
+        let generation = submissionsGeneration
         submissionsInFlightAppId = appId
-        submissionsFetchTask = Task { await fetchSubmissions(appId: appId, cursor: cursor) }
+        submissionsFetchTask = Task { await fetchSubmissions(appId: appId, cursor: cursor, generation: generation) }
     }
 
     // MARK: - Fetches
@@ -509,7 +1532,7 @@ final class ReviewsViewModel: ObservableObject {
     /// (getAllApps) + `path`, mirroring the existing buildBetaDetail
     /// pattern. sort=-createdDate (newest first); include=response surfaces
     /// existing developer replies.
-    func fetchReviews(appId: String, cursor: String? = nil) async {
+    func fetchReviews(appId: String, cursor: String? = nil, generation: Int) async {
         // A cancelled predecessor must not issue work (see ResourcesViewModel.fetch).
         guard !Task.isCancelled else { return }
         let isPaginating = cursor != nil
@@ -522,8 +1545,10 @@ final class ReviewsViewModel: ObservableObject {
         }
         reviewsPaginationFailed = false
         defer {
-            if isPaginating { isPaginatingReviews = false }
-            reviewsInFlightAppId = nil
+            if generation == reviewsGeneration {
+                if isPaginating { isPaginatingReviews = false }
+                reviewsInFlightAppId = nil
+            }
         }
 
         var queryParams = [
@@ -546,7 +1571,9 @@ final class ReviewsViewModel: ObservableObject {
 
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  generation == reviewsGeneration,
+                  currentAppId == appId else { return }
             let model = try getDecoder().decode(CustomerReviewsDocument.self, from: data)
 
             let merged: [CustomerReviewModel]
@@ -562,7 +1589,9 @@ final class ReviewsViewModel: ObservableObject {
             reviewsLoadedAppId = appId
             reviewsState = merged.isEmpty ? .empty : .loaded(merged)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  generation == reviewsGeneration,
+                  currentAppId == appId else { return }
             reviewsLogger.error("Failed to load customer reviews: \(error.localizedDescription)")
             if isPaginating {
                 reviewsPaginationFailed = true
@@ -579,7 +1608,7 @@ final class ReviewsViewModel: ObservableObject {
     /// appStoreVersion ("not a valid relationship name", verified at
     /// runtime), so the version relationship + row UI stay nil on list
     /// rows until a valid path for them is found.
-    func fetchSubmissions(appId: String, cursor: String? = nil) async {
+    func fetchSubmissions(appId: String, cursor: String? = nil, generation: Int) async {
         guard !Task.isCancelled else { return }
         let isPaginating = cursor != nil
         if isPaginating, isPaginatingSubmissions { return }
@@ -590,8 +1619,10 @@ final class ReviewsViewModel: ObservableObject {
         }
         submissionsPaginationFailed = false
         defer {
-            if isPaginating { isPaginatingSubmissions = false }
-            submissionsInFlightAppId = nil
+            if generation == submissionsGeneration {
+                if isPaginating { isPaginatingSubmissions = false }
+                submissionsInFlightAppId = nil
+            }
         }
 
         var queryParams = [
@@ -614,7 +1645,9 @@ final class ReviewsViewModel: ObservableObject {
 
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  generation == submissionsGeneration,
+                  currentAppId == appId else { return }
             let model = try getDecoder().decode(ReviewSubmissionsDocument.self, from: data)
 
             let merged: [ReviewSubmissionModel]
@@ -630,7 +1663,9 @@ final class ReviewsViewModel: ObservableObject {
             submissionsNextCursor = model.meta.paging.nextCursor
             submissionsState = merged.isEmpty ? .empty : .loaded(merged)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  generation == submissionsGeneration,
+                  currentAppId == appId else { return }
             reviewsLogger.error("Failed to load review submissions: \(error.localizedDescription)")
             if isPaginating {
                 submissionsPaginationFailed = true

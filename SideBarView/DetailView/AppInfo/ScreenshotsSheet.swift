@@ -12,10 +12,215 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// Same template resolution as the sidebar app icons
+/// ({w}x{h}bb / {w}x{h} / {w} / {h} placeholders, {f} → png).
+func screenshotThumbnailURL(_ template: String?, maxDimension: Int = 400) -> URL? {
+    guard var template, !template.isEmpty else { return nil }
+    let size = maxDimension
+    template = template.replacingOccurrences(of: "{w}x{h}bb", with: "\(size)x\(size)bb")
+    template = template.replacingOccurrences(of: "{w}x{h}", with: "\(size)x\(size)")
+    template = template.replacingOccurrences(of: "{w}", with: "\(size)")
+    template = template.replacingOccurrences(of: "{h}", with: "\(size)")
+    template = template.replacingOccurrences(of: "{f}", with: "png")
+    return URL(string: template)
+}
+
+private struct ScreenshotSheetTarget: Identifiable {
+    let id: String
+    let locale: String
+}
+
+struct ScreenshotsGroupView: View {
+    let title: String
+    @ObservedObject var viewModel: DetailViewModel
+    let state: ViewState<[AppStoreVersionLocalizationsModel]>
+    let isEditable: Bool
+    var primaryLocale: String?
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+            switch state {
+            case .idle, .loading:
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Spacer()
+                }
+            case .empty:
+                Text("No version localizations.")
+                    .font(.appCaption)
+                    .foregroundColor(.secondary)
+            case .loaded(let localizations):
+                ForEach(localizations, id: \.id) { localization in
+                    localeGroup(localization)
+                }
+            case .error(let message):
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(message)
+                        .font(.appCaption)
+                        .foregroundColor(.red)
+                    Button("Retry", action: retry)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        }
+        .onAppear { loadPreviews() }
+        .onChange(of: state.loadedValue?.map(\.id) ?? []) { _, _ in loadPreviews() }
+    }
+
+    private func loadPreviews() {
+        guard let localizations = state.loadedValue else { return }
+        for localization in localizations {
+            viewModel.loadLocalizationScreenshotPreview(localizationId: localization.id)
+        }
+    }
+
+    @ViewBuilder private func localeGroup(_ localization: AppStoreVersionLocalizationsModel) -> some View {
+        let locale = localization.locale ?? "Locale"
+        let fallback = fallbackLocale(for: localization)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(locale)
+                    .font(.appBody)
+                if let fallback {
+                    StateChip(text: "USING \(fallback)")
+                }
+                Spacer()
+                if let count = viewModel.localizationScreenshotPreviews[localization.id]?.loadedValue?.count,
+                   count > 0 {
+                    Text("\(count) image\(count == 1 ? "" : "s")")
+                        .font(.appCaption2)
+                        .foregroundColor(.secondary)
+                } else if let fallback {
+                    Text("\(fallbackImageCount(for: fallback) ?? 0) image\(fallbackImageCount(for: fallback) == 1 ? "" : "s") from \(fallback)")
+                        .font(.appCaption2)
+                        .foregroundColor(.secondary)
+                }
+                Button("Manage") {
+                    sheetTarget = ScreenshotSheetTarget(id: localization.id, locale: locale)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Manage screenshots for \(locale)")
+            }
+            screenshotStrip(localization, fallback: fallback)
+        }
+        .sheet(item: $sheetTarget) { target in
+            ScreenshotsSheet(
+                localizationId: target.id,
+                locale: target.locale,
+                viewModel: viewModel,
+                isEditable: isEditable,
+                primaryLocale: primaryLocale
+            )
+        }
+    }
+
+    private func primaryImageCount(locale: String) -> Int? {
+        guard let localization = state.loadedValue?.first(where: { $0.locale == locale }) else { return nil }
+        return viewModel.localizationScreenshotPreviews[localization.id]?.loadedValue?.count
+    }
+
+    private func fallbackImageCount(for locale: String) -> Int? {
+        primaryImageCount(locale: locale)
+    }
+
+    private func fallbackLocale(for localization: AppStoreVersionLocalizationsModel) -> String? {
+        guard let primaryLocale,
+              !primaryLocale.isEmpty,
+              primaryLocale != localization.locale,
+              let count = primaryImageCount(locale: primaryLocale),
+              count > 0 else { return nil }
+        return primaryLocale
+    }
+
+    @ViewBuilder private func screenshotStrip(_ localization: AppStoreVersionLocalizationsModel,
+                                              fallback: String?) -> some View {
+        switch viewModel.localizationScreenshotPreviews[localization.id] {
+        case .some(.loading), .none:
+            HStack {
+                Spacer()
+                ProgressView().controlSize(.mini)
+                Spacer()
+            }
+        case .some(.error(let message)):
+            Text(message)
+                .font(.appCaption2)
+                .foregroundColor(.red)
+        case .some(.empty):
+            fallbackMessage(for: localization, fallback: fallback)
+        case .some(.loaded(let screenshots)):
+            if screenshots.isEmpty {
+                fallbackMessage(for: localization, fallback: fallback)
+            } else {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(screenshots, id: \.id) { screenshot in
+                            AsyncImage(url: screenshotThumbnailURL(screenshot.imageAsset?.templateUrl, maxDimension: 200)) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                case .failure:
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(AppTheme.secondaryBackground)
+                                        .overlay { Image(systemName: "photo").foregroundColor(.secondary) }
+                                default:
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(AppTheme.secondaryBackground)
+                                        .overlay { ProgressView().controlSize(.mini) }
+                                }
+                            }
+                            .frame(width: 96, height: 96)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .border(AppTheme.border, width: 1)
+                            .help(screenshot.fileName ?? "Screenshot")
+                        }
+                    }
+                }
+                .frame(height: 104)
+            }
+        case .some(.idle):
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private func fallbackMessage(for localization: AppStoreVersionLocalizationsModel,
+                                             fallback: String?) -> some View {
+        let locale = localization.locale ?? "this locale"
+        VStack(alignment: .leading, spacing: 4) {
+            if let fallback {
+                Text("No \(locale) screenshots uploaded. The App Store is using the \(fallback) screenshots for this locale.")
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+                if isEditable {
+                    Text("Use Manage to upload \(locale) screenshots and replace the \(fallback) images.")
+                        .font(.appCaption2)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Text(isEditable ? "No screenshots uploaded yet." : "No screenshots uploaded.")
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    @State private var sheetTarget: ScreenshotSheetTarget?
+}
+
 struct ScreenshotsSheet: View {
     let localizationId: String
     let locale: String
     @ObservedObject var viewModel: DetailViewModel
+    var isEditable: Bool = true
+    var primaryLocale: String?
     @Environment(\.dismiss) private var dismiss
     @State private var newSetType: ScreenshotDisplayType = .iPhone67
     @State private var creatingSet = false
@@ -80,9 +285,15 @@ struct ScreenshotsSheet: View {
         InfoCard(title: "Screenshot Sets", systemImage: "photo.stack") {
             VStack(alignment: .leading, spacing: 10) {
                 if viewModel.screenshotSets.isEmpty {
-                    Text("No sets yet — create one for a device size first.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if let primaryLocale, primaryLocale != locale {
+                        Text("No sets for \(locale) — the App Store is using the \(primaryLocale) screenshots for this locale.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("No sets yet — create one for a device size first.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 } else {
                     ForEach(viewModel.screenshotSets, id: \.id) { set in
                         HStack {
@@ -106,38 +317,44 @@ struct ScreenshotsSheet: View {
                         if set.id != viewModel.screenshotSets.last?.id { Divider() }
                     }
                 }
-                HStack {
-                    Picker("Display type", selection: $newSetType) {
-                        ForEach(ScreenshotDisplayType.allCases, id: \.self) { type in
-                            Text(type.displayName).tag(type)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 200)
-                    Spacer()
-                    if creatingSet {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("New Set") {
-                            creatingSet = true
-                            Task {
-                                defer { creatingSet = false }
-                                switch await viewModel.createScreenshotSet(
-                                    localizationId: localizationId, displayType: newSetType) {
-                                case .success:
-                                    if let setId = viewModel.selectedScreenshotSetId {
-                                        await viewModel.loadScreenshots(setId: setId)
-                                    }
-                                case .failure(let message):
-                                    viewModel.screenshotError = message
-                                case .ignored:
-                                    break
-                                }
+                if isEditable {
+                    HStack {
+                        Picker("Display type", selection: $newSetType) {
+                            ForEach(ScreenshotDisplayType.allCases, id: \.self) { type in
+                                Text(type.displayName).tag(type)
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 200)
+                        Spacer()
+                        if creatingSet {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button("New Set") {
+                                creatingSet = true
+                                Task {
+                                    defer { creatingSet = false }
+                                    switch await viewModel.createScreenshotSet(
+                                        localizationId: localizationId, displayType: newSetType) {
+                                    case .success:
+                                        if let setId = viewModel.selectedScreenshotSetId {
+                                            await viewModel.loadScreenshots(setId: setId)
+                                        }
+                                    case .failure(let message):
+                                        viewModel.screenshotError = message
+                                    case .ignored:
+                                        break
+                                    }
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
                     }
+                } else {
+                    Text("Read-only: uploaded screenshots are shown, but new sets and uploads are disabled.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -174,7 +391,9 @@ struct ScreenshotsSheet: View {
                             }
                         }
                     }
-                    uploadRow
+                    if isEditable {
+                        uploadRow
+                    }
                 }
                 if let error = viewModel.screenshotError {
                     Text(error)
@@ -237,18 +456,20 @@ struct ScreenshotsSheet: View {
             HStack(spacing: 6) {
                 StateChip(text: (screenshot.uploaded ?? false) ? "UPLOADED" : "PENDING")
                 Spacer()
-                if viewModel.deletingScreenshotIds.contains(screenshot.id) {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Button {
-                        screenshotToDelete = screenshot
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.caption2)
-                            .foregroundColor(.red)
+                if isEditable {
+                    if viewModel.deletingScreenshotIds.contains(screenshot.id) {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Button {
+                            screenshotToDelete = screenshot
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Delete screenshot")
                     }
-                    .buttonStyle(.plain)
-                    .help("Delete screenshot")
                 }
             }
         }
@@ -307,14 +528,7 @@ struct ScreenshotsSheet: View {
     /// Same template resolution as the sidebar app icons
     /// ({w}x{h}bb / {w}x{h} / {w} / {h} placeholders, {f} → png).
     private func thumbnailURL(_ template: String?) -> URL? {
-        guard var template, !template.isEmpty else { return nil }
-        let size = 400
-        template = template.replacingOccurrences(of: "{w}x{h}bb", with: "\(size)x\(size)bb")
-        template = template.replacingOccurrences(of: "{w}x{h}", with: "\(size)x\(size)")
-        template = template.replacingOccurrences(of: "{w}", with: "\(size)")
-        template = template.replacingOccurrences(of: "{h}", with: "\(size)")
-        template = template.replacingOccurrences(of: "{f}", with: "png")
-        return URL(string: template)
+        screenshotThumbnailURL(template)
     }
 }
 

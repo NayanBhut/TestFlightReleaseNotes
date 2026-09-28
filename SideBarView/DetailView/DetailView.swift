@@ -119,6 +119,13 @@ struct DetailView: View {
                 reportsViewModel.reset()
             }
         }
+        .onChange(of: viewModel.currentTeam?.key) { _, _ in
+            reviewsViewModel.resetForTeamSwitch()
+            reportsViewModel.reset()
+            if let app = viewModel.selectedApp {
+                reviewsViewModel.load(app: app)
+            }
+        }
     }
 
     @ViewBuilder private func loadVersion() -> some View {
@@ -279,6 +286,7 @@ struct DetailView: View {
                 case .appInfo:
                     AppInfoView(
                         viewModel: viewModel,
+                        reviewsViewModel: reviewsViewModel,
                         selectedApp: viewModel.selectedApp
                     )
                 case .reviews:

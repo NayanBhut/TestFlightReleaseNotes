@@ -24,6 +24,7 @@ class DetailViewModel: ObservableObject {
         // A stuck network call must not keep the VM alive.
         appInfoFetchTask?.cancel()
         versionLocalizationsFetchTask?.cancel()
+        liveVersionLocalizationsFetchTask?.cancel()
         exportComplianceFetchTask?.cancel()
         appEventsFetchTask?.cancel()
         webhooksFetchTask?.cancel()
@@ -38,6 +39,7 @@ class DetailViewModel: ObservableObject {
     // MARK: Batch C1 — App Info (read-only)
     @Published var appInfoState: ViewState<[AppInfoModel]> = .idle
     @Published var versionLocalizationsState: ViewState<[AppStoreVersionLocalizationsModel]> = .idle
+    @Published var liveVersionLocalizationsState: ViewState<[AppStoreVersionLocalizationsModel]> = .idle
     @Published var exportComplianceState: ViewState<[AppEncryptionDeclarationModel]> = .idle
     @Published var appEventsState: ViewState<[AppEventModel]> = .idle
     @Published var webhooksState: ViewState<[WebhookModel]> = .idle
@@ -51,6 +53,8 @@ class DetailViewModel: ObservableObject {
     /// in the extension below): extensions must not contain stored
     /// properties.
     @Published private(set) var savingVersionLocalizationIds: Set<String> = []
+    @Published private(set) var creatingVersionLocalization = false
+    @Published var createVersionLocalizationError: String?
 
     @Published var nextPageCursor: String?
     @Published var meta: Meta?
@@ -102,6 +106,8 @@ class DetailViewModel: ObservableObject {
     /// others, and each runs in parallel naturally.
     private var appInfoFetchTask: Task<Void, Never>?
     private var versionLocalizationsFetchTask: Task<Void, Never>?
+    private var liveVersionLocalizationsFetchTask: Task<Void, Never>?
+    private var screenshotPreviewTasks: [String: Task<Void, Never>] = [:]
     private var exportComplianceFetchTask: Task<Void, Never>?
     private var appEventsFetchTask: Task<Void, Never>?
     private var webhooksFetchTask: Task<Void, Never>?
@@ -110,6 +116,10 @@ class DetailViewModel: ObservableObject {
     /// BetaViewModel.currentAppId.
     private(set) var appInfoLoadedAppId: String?
     private(set) var versionLocalizationsLoadedVersionId: String?
+    private(set) var liveVersionLocalizationsLoadedVersionId: String?
+    private var liveVersionLocalizationsGeneration = 0
+    private var versionLocalizationsGeneration = 0
+    private var versionLocalizationWriteGeneration = 0
     private(set) var exportComplianceLoadedAppId: String?
     private(set) var appEventsLoadedAppId: String?
     private(set) var webhooksLoadedAppId: String?
@@ -129,6 +139,9 @@ class DetailViewModel: ObservableObject {
     @Published var screenshotUploadProgress: Double?
     @Published var screenshotError: String?
     @Published var deletingScreenshotIds: Set<String> = []
+    /// Inline previews shown on the main App Info view, keyed by version
+    /// localization id. Read-only thumbnails; mutations stay in the sheet.
+    @Published var localizationScreenshotPreviews: [String: ViewState<[AppScreenshotModel]>] = [:]
 
     // MARK: - Convenience accessors for views
 
@@ -155,6 +168,7 @@ class DetailViewModel: ObservableObject {
     init(sidebarViewModel: SideBarViewModel, pasteboard: PasteboardWriting = NSPasteboard.general) {
         self.sidebarViewModel = sidebarViewModel
         self.pasteboard = pasteboard
+        self.currentTeam = CredentialStorage.shared.selectedTeam
         sidebarViewModel.$versionsState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] versionsState in
@@ -190,6 +204,15 @@ class DetailViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        sidebarViewModel.$isTeamChanged
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] changed in
+                guard changed, let self else { return }
+                self.currentTeam = CredentialStorage.shared.selectedTeam
+                self.resetAppInfoState()
+            }
+            .store(in: &cancellables)
+
         sidebarViewModel.$selectedApp
             .receive(on: DispatchQueue.main)
             .sink { [weak self] selectedApp in
@@ -212,26 +235,36 @@ class DetailViewModel: ObservableObject {
                 // Saved-notes baselines belong to the previous app's
                 // builds; the next fetch re-captures them.
                 self.savedNotes.removeAll()
-                // Batch C1: app switch clears the App Info panel cleanly —
-                // the App Info tab refetches on appear for the new app.
-                self.appInfoFetchTask?.cancel()
-                self.versionLocalizationsFetchTask?.cancel()
-                self.exportComplianceFetchTask?.cancel()
-                self.appEventsFetchTask?.cancel()
-                self.webhooksFetchTask?.cancel()
-                self.appInfoState = .idle
-                self.versionLocalizationsState = .idle
-                self.exportComplianceState = .idle
-                self.appEventsState = .idle
-                self.webhooksState = .idle
-                self.appInfoLoadedAppId = nil
-                self.versionLocalizationsLoadedVersionId = nil
-                self.exportComplianceLoadedAppId = nil
-                self.appEventsLoadedAppId = nil
-                self.webhooksLoadedAppId = nil
-                self.resetScreenshotState()
+                self.resetAppInfoState()
             }
             .store(in: &cancellables)
+    }
+
+    private func resetAppInfoState() {
+        appInfoFetchTask?.cancel()
+        versionLocalizationsFetchTask?.cancel()
+        liveVersionLocalizationsFetchTask?.cancel()
+        exportComplianceFetchTask?.cancel()
+        appEventsFetchTask?.cancel()
+        webhooksFetchTask?.cancel()
+        appInfoState = .idle
+        versionLocalizationsState = .idle
+        liveVersionLocalizationsState = .idle
+        exportComplianceState = .idle
+        appEventsState = .idle
+        webhooksState = .idle
+        appInfoLoadedAppId = nil
+        versionLocalizationsLoadedVersionId = nil
+        liveVersionLocalizationsLoadedVersionId = nil
+        versionLocalizationsGeneration += 1
+        liveVersionLocalizationsGeneration += 1
+        versionLocalizationWriteGeneration += 1
+        creatingVersionLocalization = false
+        createVersionLocalizationError = nil
+        exportComplianceLoadedAppId = nil
+        appEventsLoadedAppId = nil
+        webhooksLoadedAppId = nil
+        resetScreenshotState()
     }
 }
 
@@ -382,10 +415,6 @@ extension DetailViewModel {
             appInfoFetchTask?.cancel()
             appInfoFetchTask = Task { await fetchAppInfos(appId: app.id) }
         }
-        if force || versionLocalizationsLoadedVersionId != app.currentLiveVersion.0 {
-            versionLocalizationsFetchTask?.cancel()
-            versionLocalizationsFetchTask = Task { await fetchVersionLocalizations(versionId: app.currentLiveVersion.0) }
-        }
         if force || exportComplianceLoadedAppId != app.id {
             exportComplianceFetchTask?.cancel()
             exportComplianceFetchTask = Task { await fetchExportCompliance(appId: app.id) }
@@ -414,9 +443,41 @@ extension DetailViewModel {
     }
 
     func retryVersionLocalizations() {
-        guard let app = selectedApp else { return }
+        guard selectedApp != nil else { return }
+        let versionId = versionLocalizationsLoadedVersionId ?? selectedApp?.currentLiveVersion.0 ?? ""
         versionLocalizationsFetchTask?.cancel()
-        versionLocalizationsFetchTask = Task { await fetchVersionLocalizations(versionId: app.currentLiveVersion.0) }
+        versionLocalizationsGeneration += 1
+        versionLocalizationWriteGeneration += 1
+        let generation = versionLocalizationsGeneration
+        versionLocalizationsFetchTask = Task { await fetchVersionLocalizations(versionId: versionId, generation: generation) }
+    }
+
+    func loadVersionLocalizations(versionId: String, force: Bool = false) {
+        guard selectedApp != nil else { return }
+        guard force || versionLocalizationsLoadedVersionId != versionId else { return }
+        versionLocalizationsFetchTask?.cancel()
+        versionLocalizationsGeneration += 1
+        versionLocalizationWriteGeneration += 1
+        creatingVersionLocalization = false
+        createVersionLocalizationError = nil
+        let generation = versionLocalizationsGeneration
+        versionLocalizationsFetchTask = Task { await fetchVersionLocalizations(versionId: versionId, generation: generation) }
+    }
+
+    func loadLiveVersionLocalizations(versionId: String?, force: Bool = false) {
+        guard selectedApp != nil else { return }
+        let resolvedId = versionId ?? ""
+        guard force || liveVersionLocalizationsLoadedVersionId != resolvedId else { return }
+        liveVersionLocalizationsFetchTask?.cancel()
+        liveVersionLocalizationsGeneration += 1
+        let generation = liveVersionLocalizationsGeneration
+        liveVersionLocalizationsFetchTask = Task { await fetchLiveVersionLocalizations(versionId: resolvedId, generation: generation) }
+    }
+
+    func retryLiveVersionLocalizations() {
+        loadLiveVersionLocalizations(
+            versionId: liveVersionLocalizationsLoadedVersionId ?? "",
+            force: true)
     }
 
     func retryExportCompliance() {
@@ -476,8 +537,8 @@ extension DetailViewModel {
     /// GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations for the
     /// app's current live version. limit=200 (the endpoint maximum) so all
     /// locales arrive in one page.
-    func fetchVersionLocalizations(versionId: String) async {
-        guard !Task.isCancelled else { return }
+    func fetchVersionLocalizations(versionId: String, generation: Int) async {
+        guard !Task.isCancelled, generation == versionLocalizationsGeneration else { return }
         guard !versionId.isEmpty else {
             // Terminal state (no live version) — record it so we don't
             // re-evaluate on every appear.
@@ -496,15 +557,44 @@ extension DetailViewModel {
 
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, generation == versionLocalizationsGeneration else { return }
             let model = try getDecoder().decode(AppStoreVersionLocalizationsDocument.self, from: data)
             // Staleness id only on success (see fetchAppInfos).
             versionLocalizationsLoadedVersionId = versionId
             versionLocalizationsState = model.data.isEmpty ? .empty : .loaded(model.data)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, generation == versionLocalizationsGeneration else { return }
             detailLogger.error("Failed to load version localizations: \(error.localizedDescription)")
             versionLocalizationsState = .error(appInfoErrorMessage(for: error))
+        }
+    }
+
+    func fetchLiveVersionLocalizations(versionId: String, generation: Int) async {
+        guard !Task.isCancelled, generation == liveVersionLocalizationsGeneration else { return }
+        guard !versionId.isEmpty else {
+            liveVersionLocalizationsLoadedVersionId = versionId
+            liveVersionLocalizationsState = .empty
+            return
+        }
+        liveVersionLocalizationsState = .loading
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAppStoreVersions, queryParams: ["limit": "200"], path: "\(versionId)/appStoreVersionLocalizations"),
+            apiVersion: .v1) else {
+            liveVersionLocalizationsState = .error("No team selected. Add a team to load version info.")
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled, generation == liveVersionLocalizationsGeneration else { return }
+            let model = try getDecoder().decode(AppStoreVersionLocalizationsDocument.self, from: data)
+            liveVersionLocalizationsLoadedVersionId = versionId
+            liveVersionLocalizationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+        } catch {
+            guard !Task.isCancelled, generation == liveVersionLocalizationsGeneration else { return }
+            detailLogger.error("Failed to load live version localizations: \(error.localizedDescription)")
+            liveVersionLocalizationsState = .error(appInfoErrorMessage(for: error))
         }
     }
 
@@ -823,6 +913,9 @@ extension DetailViewModel {
     /// Clears sheet state on app switch (called from the selection sink
     /// alongside the other App Info resets).
     func resetScreenshotState() {
+        screenshotPreviewTasks.values.forEach { $0.cancel() }
+        screenshotPreviewTasks = [:]
+        localizationScreenshotPreviews = [:]
         screenshotSets = []
         screenshots = []
         selectedScreenshotSetId = nil
@@ -830,6 +923,51 @@ extension DetailViewModel {
         screenshotUploadProgress = nil
         screenshotError = nil
         deletingScreenshotIds = []
+    }
+
+    /// GET appScreenshotSets for the localization, then appScreenshots for
+    /// its first set. Cached per localization so the inline preview on the
+    /// main view loads once.
+    func loadLocalizationScreenshotPreview(localizationId: String) {
+        guard !localizationId.isEmpty else { return }
+        if case .loaded = localizationScreenshotPreviews[localizationId] { return }
+        if case .loading = localizationScreenshotPreviews[localizationId] { return }
+        screenshotPreviewTasks[localizationId]?.cancel()
+        localizationScreenshotPreviews[localizationId] = .loading
+        let appId = selectedApp?.id
+        screenshotPreviewTasks[localizationId] = Task { [weak self] in
+            guard let self else { return }
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: .appStoreVersionLocalizations, path: "\(localizationId)/appScreenshotSets"),
+                apiVersion: .v1) else {
+                localizationScreenshotPreviews[localizationId] = .empty
+                return
+            }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled, selectedApp?.id == appId else { return }
+                let sets = try getDecoder().decode(AppScreenshotSetsDocument.self, from: data)
+                guard let setId = sets.data.first?.id else {
+                    localizationScreenshotPreviews[localizationId] = .empty
+                    return
+                }
+                guard let screenshotRequest = APIClient.shared.getRequest(
+                    api: .get(name: .appScreenshotSets, path: "\(setId)/appScreenshots"),
+                    apiVersion: .v1) else {
+                    localizationScreenshotPreviews[localizationId] = .empty
+                    return
+                }
+                let screenshotData = try await APIClient.shared.callAPI(with: screenshotRequest)
+                guard !Task.isCancelled, selectedApp?.id == appId else { return }
+                let model = try getDecoder().decode(AppScreenshotsDocument.self, from: screenshotData)
+                localizationScreenshotPreviews[localizationId] =
+                    model.data.isEmpty ? .empty : .loaded(model.data)
+            } catch {
+                guard !Task.isCancelled, selectedApp?.id == appId else { return }
+                localizationScreenshotPreviews[localizationId] = .error(appInfoErrorMessage(for: error))
+            }
+            screenshotPreviewTasks[localizationId] = nil
+        }
     }
 
     // MARK: - App Info writes (Batch G #10)
@@ -978,6 +1116,78 @@ extension DetailViewModel {
     // PATCH /v1/appStoreVersionLocalizations/{id} for description,
     // keywords, promotionalText, whatsNew, marketingUrl, supportUrl.
     // Same save contract as the Batch G app info editor.
+
+    func createVersionLocalization(versionId: String, locale: String) async -> Bool {
+        let normalizedLocale = locale.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedLocale.isEmpty else {
+            createVersionLocalizationError = "Enter a locale."
+            return false
+        }
+        guard versionLocalizationsLoadedVersionId == versionId else {
+            createVersionLocalizationError = "The selected version changed. Refresh and try again."
+            return false
+        }
+        if case .loaded(let localizations) = versionLocalizationsState,
+           localizations.contains(where: { $0.locale?.caseInsensitiveCompare(normalizedLocale) == .orderedSame }) {
+            createVersionLocalizationError = "This version already has the \(normalizedLocale) localization."
+            return false
+        }
+        guard !creatingVersionLocalization else { return false }
+        versionLocalizationsFetchTask?.cancel()
+        versionLocalizationWriteGeneration += 1
+        let generation = versionLocalizationWriteGeneration
+        creatingVersionLocalization = true
+        createVersionLocalizationError = nil
+        defer {
+            if generation == versionLocalizationWriteGeneration { creatingVersionLocalization = false }
+        }
+
+        let body = VersionLocalizationCreateRequest(
+            data: VersionLocalizationCreateData(
+                attributes: VersionLocalizationCreateAttributes(
+                    locale: normalizedLocale,
+                    descriptionData: nil,
+                    keywords: nil,
+                    marketingUrl: nil,
+                    promotionalText: nil,
+                    supportUrl: nil,
+                    whatsNew: nil),
+                relationships: VersionLocalizationCreateRelationships(
+                    appStoreVersion: VersionLocalizationVersionLinkage(
+                        data: AppStoreVersionCreateRef(id: versionId)))))
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .appStoreVersionLocalizations, body: data),
+                apiVersion: .v1) else {
+            createVersionLocalizationError = "Couldn't build the localization request."
+            return false
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  generation == versionLocalizationWriteGeneration,
+                  versionLocalizationsLoadedVersionId == versionId else { return false }
+            let model = try getDecoder().decode(AppStoreVersionLocalizationsModel.self, from: responseData)
+            if case .loaded(var localizations) = versionLocalizationsState {
+                localizations.removeAll { $0.id == model.id }
+                localizations.append(model)
+                versionLocalizationsState = .loaded(localizations.sorted {
+                    ($0.locale ?? "") < ($1.locale ?? "")
+                })
+            } else if case .empty = versionLocalizationsState {
+                versionLocalizationsState = .loaded([model])
+            }
+            return true
+        } catch {
+            guard !Task.isCancelled,
+                  generation == versionLocalizationWriteGeneration,
+                  versionLocalizationsLoadedVersionId == versionId else { return false }
+            detailLogger.error("Failed to create version localization: \(error.localizedDescription)")
+            createVersionLocalizationError = appInfoWriteErrorMessage(for: error)
+            return false
+        }
+    }
 
     /// Outcome of a version localization save (same contract as
     /// AppInfoSaveResult — separate type so call sites read unambiguously).
