@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+	<!-- Keychain Sharing: required for a sandboxed app so its keychain items
+	     persist with a stable identity across launches/updates instead of
+	     looking like a different app each time (which forces re-login).
+	     Without this, sandboxed keychain access is unreliable. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.demos.App-Store</string>
+	</array>
+</dict>
 </plist>
