@@ -99,17 +99,22 @@ final class CredentialStorage: ObservableObject {
                 UserDefaults.standard.set(true, forKey: Self.legacyMigrationDoneKey)
                 return
             }
-            // The user denied the prompt (or interaction isn't allowed):
-            // mark done and stop pestering. Re-scanning every launch would
-            // re-prompt every launch. Legacy items stay put — the user can
-            // re-add the team, which writes a proper scoped item.
-            if scanStatus == errSecAuthFailed || scanStatus == errSecInteractionNotAllowed {
+            // The user denied the prompt: mark done and stop pestering.
+            // Re-scanning every launch would re-prompt every launch. Legacy
+            // items stay put — the user can re-add the team, which writes a
+            // proper scoped item.
+            // errSecUserCanceled is the canonical macOS "Deny" result;
+            // errSecAuthFailed covers a locked keychain / refused access.
+            // errSecInteractionNotAllowed is deliberately NOT here: it's
+            // transient (early boot / no UI yet) and retrying is safe (no
+            // prompt can appear when interaction isn't allowed).
+            if scanStatus == errSecAuthFailed || scanStatus == errSecUserCanceled {
                 keychainLogger.error("Migration scan denied (OSStatus \(scanStatus)); skipping future scans")
                 UserDefaults.standard.set(true, forKey: Self.legacyMigrationDoneKey)
                 return
             }
-            // Any other status is transient: don't set the flag so the next
-            // launch retries.
+            // Any other status (incl. errSecInteractionNotAllowed) is
+            // transient: don't set the flag so the next launch retries.
             return
         }
         let legacyAccounts = items.compactMap { item -> String? in
@@ -153,7 +158,7 @@ final class CredentialStorage: ObservableObject {
                 kSecAttrAccount as String: account
             ] as CFDictionary)
 
-            var add = Self.baseQuery(forKey: teamName)
+            var add = Self.addAttributes(forKey: teamName)
             add[kSecValueData as String] = winner
             add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
             if SecItemAdd(add as CFDictionary, nil) != errSecSuccess {
@@ -216,7 +221,7 @@ final class CredentialStorage: ObservableObject {
                 UserDefaults.standard.removeObject(forKey: Self.selectedTeamNameKey)
                 return
             }
-            selectedTeam = cachedOrFetchedCredential(key: name)
+            selectedTeam = getCredential(key: name)
             if selectedTeam != nil {
                 UserDefaults.standard.set(name, forKey: Self.selectedTeamNameKey)
             }
@@ -252,7 +257,7 @@ final class CredentialStorage: ObservableObject {
 
     /// Add, or update in place when the scoped item already exists.
     private func upsert(key: String, data: Data) -> OSStatus {
-        var addQuery = Self.baseQuery(forKey: key)
+        var addQuery = Self.addAttributes(forKey: key)
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
         let status = SecItemAdd(addQuery as CFDictionary, nil)
@@ -279,7 +284,7 @@ final class CredentialStorage: ObservableObject {
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else {
-            if status == errSecAuthFailed || status == errSecInteractionNotAllowed {
+            if status == errSecAuthFailed || status == errSecUserCanceled {
                 keychainLogger.error("Keychain read denied for '\(key, privacy: .public)' (OSStatus \(status)); won't retry this session")
             }
             unreadableTeams.insert(key)
@@ -294,12 +299,6 @@ final class CredentialStorage: ObservableObject {
             unreadableTeams.insert(key)
             return nil
         }
-    }
-
-    /// Cache-first read used by selection changes so switching accounts
-    /// doesn't prompt the keychain when the credential is already known.
-    private func cachedOrFetchedCredential(key: String) -> Credential? {
-        credentialCache[key] ?? getCredential(key: key)
     }
 
     @discardableResult
@@ -322,15 +321,24 @@ final class CredentialStorage: ObservableObject {
         return deleted
     }
 
-    /// Restores the last-used team when it still exists, otherwise the first
-    /// (sorted) team. Persists the outcome so the next launch agrees.
+    /// Restores the last-used team when it still exists and is readable,
+    /// otherwise falls back to the first (sorted) team. Persists the
+    /// outcome so the next launch agrees. Falls back at most once so a
+    /// denied/locked saved team doesn't leave the app with no active
+    /// credential, while avoiding prompting for every team at launch.
     @discardableResult
     func restoreDefaultTeam() -> Bool {
-        let teams = getTeams
         guard !teams.isEmpty else { return false }
         let saved = UserDefaults.standard.string(forKey: Self.selectedTeamNameKey)
-        let pick = (saved.flatMap { name in teams.contains(name) ? name : nil }) ?? teams.first!
-        changeTeam = pick
+        if let saved, teams.contains(saved) {
+            changeTeam = saved
+            if selectedTeam != nil { return true }
+        }
+        // Saved team missing or unreadable — fall back to the first *other*
+        // team (avoids re-prompting for the same unreadable saved team).
+        if let fallback = teams.first(where: { $0 != saved }) {
+            changeTeam = fallback
+        }
         return selectedTeam != nil
     }
 }
@@ -338,14 +346,26 @@ final class CredentialStorage: ObservableObject {
 extension CredentialStorage {
     /// Every query is scoped by kSecAttrService + kSecAttrAccount —
     /// no global dump, only this service's items are ever touched.
-    /// synchronizable=false keeps API secrets off iCloud Keychain.
+    /// Reads/deletes/listing use kSecAttrSynchronizableAny so items
+    /// written by older app versions (without an explicit synchronizable
+    /// attribute) still match; only SecItemAdd pins synchronizable=false
+    /// to keep API secrets off iCloud Keychain.
     private static func baseQuery(forKey key: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: accountPrefix + key,
-            kSecAttrSynchronizable as String: false
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
         ]
+    }
+
+    /// Attributes for SecItemAdd. Same scope as baseQuery but pins
+    /// synchronizable=false so the new item is local-only (never synced
+    /// to iCloud Keychain).
+    private static func addAttributes(forKey key: String) -> [String: Any] {
+        var q = baseQuery(forKey: key)
+        q[kSecAttrSynchronizable as String] = false
+        return q
     }
 
     private func getAllKeysFromKeychain() -> [String] {
