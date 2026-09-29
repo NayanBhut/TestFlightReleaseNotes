@@ -113,7 +113,7 @@ class OnBoardingViewModel: ObservableObject {
             case .failure(let failure):
                 // Log the real cause (401 vs 429 vs network) — the UI keeps
                 // the generic copy so server details never leak to the form.
-                detailOnboardingLogger.debug("Team validation failed: \(failure.details, privacy: .public)")
+                detailOnboardingLogger.debug("Team validation failed: \(failure.details, privacy: .private)")
                 self.errorMessage = "Authentication failed. Please check your credentials."
                 completion(false)
             }

@@ -71,7 +71,7 @@ final class ValidationTests: XCTestCase {
 
     func testCSRFileErrorsAreUserFacing() {
         // Shown verbatim in the form — must never be empty or technical.
-        for error in [CSRFileLoadError.unreadable, CSRFileLoadError.invalidFormat] {
+        for error in [CSRFileLoadError.unreadable, .invalidFormat, .tooLarge] {
             let message = error.errorDescription ?? ""
             XCTAssertFalse(message.isEmpty)
             XCTAssertTrue(message.contains("CSR") || message.contains("file"))
