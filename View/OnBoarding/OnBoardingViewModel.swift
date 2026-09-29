@@ -6,7 +6,10 @@
 //
 
 import SwiftUI
+import OSLog
 import UniformTypeIdentifiers
+
+private let detailOnboardingLogger = Logger(subsystem: "com.appstore.release-notes", category: "Onboarding")
 
 @MainActor
 class OnBoardingViewModel: ObservableObject {
@@ -101,6 +104,9 @@ class OnBoardingViewModel: ObservableObject {
                     completion(false)
                 }
             case .failure(let failure):
+                // Log the real cause (401 vs 429 vs network) — the UI keeps
+                // the generic copy so server details never leak to the form.
+                detailOnboardingLogger.debug("Team validation failed: \(failure.details, privacy: .public)")
                 self.errorMessage = "Authentication failed. Please check your credentials."
                 completion(false)
             }

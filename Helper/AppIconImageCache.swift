@@ -116,14 +116,17 @@ struct CachedAppIcon: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
                     .cornerRadius(6)
+                    .accessibilityHidden(true)
             } else if failed {
                 Image(systemName: "app.fill")
                     .font(.system(size: size - 4, weight: .medium))
                     .foregroundColor(.gray)
                     .frame(width: size, height: size)
+                    .accessibilityLabel("App icon unavailable")
             } else {
                 ProgressView()
                     .frame(width: size, height: size)
+                    .accessibilityLabel("Loading app icon")
             }
         }
         // Keyed by URL: Row reuse with a different URL cancels the stale

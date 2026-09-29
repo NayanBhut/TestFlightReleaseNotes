@@ -1367,7 +1367,7 @@ extension DetailViewModel {
   /// Used by the Locales popover in BuildDetailsView.
   func localeCompleteness() -> [(locale: String, builds: [(buildId: String, hasNotes: Bool)])] {
     guard case .loaded(let builds) = buildsState else { return [] }
-    guard let version = selectedVersion else { return [] }
+    guard selectedVersion != nil else { return [] }
     let buildIds = builds.map { $0.id }
     var result: [(String, [(String, Bool)])] = []
     for locale in BetaLocalizationLocales.supported {
@@ -1421,7 +1421,9 @@ extension DetailViewModel {
             return
         }
         updatingSaveKeys.insert(saveKey)
-        Task {
+        // @MainActor: the callee hops back here anyway — isolate up front
+        // instead of bouncing through the executor (same rule as BuildRowView).
+        Task { @MainActor in
             await deleteBuildLocalization(buildId: buildId, localizationId: localization.id, locale: locale)
         }
     }
@@ -1580,7 +1582,7 @@ extension DetailViewModel {
         }
         updatingSaveKeys.insert(saveKey)
 
-        Task {
+        Task { @MainActor in
             if buildLocalization.id.hasPrefix(Self.tempLocalizationPrefix) {
                 await createBuildLocalization(buildId: buildId, buildLocalization: buildLocalization, localization: localization, locale: locale)
             } else {
@@ -1718,7 +1720,7 @@ extension DetailViewModel {
             return
         }
 
-        Task {
+        Task { @MainActor in
             defer { expireTogglingBuildId = nil }
             do {
                 let responseData = try await APIClient.shared.callAPI(with: request)
