@@ -28,13 +28,20 @@ class OnBoardingViewModel: ObservableObject {
     /// key on every keystroke — only when an input actually changes.
     private var jwtValidationCache: (inputs: String, isValid: Bool)?
     
+    /// Normalized private key: PEM armor + all whitespace stripped, so
+    /// pasted keys (with or without BEGIN/END lines) match file-imported
+    /// keys. Single source of truth for validation, headers and saving.
+    var normalizedPrivateKey: String {
+        JWT.normalizePrivateKey(privateKey)
+    }
+
     var isJWTValid: Bool {
         guard !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              !normalizedPrivateKey.isEmpty else {
             return false
         }
-        let inputs = "\(keyId)|\(issuerID)|\(privateKey)"
+        let inputs = "\(keyId)|\(issuerID)|\(normalizedPrivateKey)"
         if let cache = jwtValidationCache, cache.inputs == inputs {
             return cache.isValid
         }
@@ -44,7 +51,7 @@ class OnBoardingViewModel: ObservableObject {
             keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
             issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
             expireDuration: JWTLimits.expiryInterval
-        ).signedToken(using: privateKey.trimmingCharacters(in: .whitespacesAndNewlines))) != nil
+        ).signedToken(using: normalizedPrivateKey)) != nil
         jwtValidationCache = (inputs, isValid)
         return isValid
     }
@@ -111,7 +118,7 @@ class OnBoardingViewModel: ObservableObject {
         var requestHeader = ["Content-Type": "application/json"]
         if let token = try? JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
                                 issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-                                expireDuration: JWTLimits.expiryInterval).signedToken(using: privateKey.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                                expireDuration: JWTLimits.expiryInterval).signedToken(using: normalizedPrivateKey) {
             requestHeader["Authorization"] = "Bearer " + token
         }
         return requestHeader
@@ -124,7 +131,7 @@ class OnBoardingViewModel: ObservableObject {
     @discardableResult
     func saveLoginState() -> Bool {
         let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines), keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName) else {
+        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: normalizedPrivateKey, keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName) else {
             errorMessage = "Couldn't save the team to the Keychain. Please try again."
             return false
         }
@@ -136,13 +143,7 @@ class OnBoardingViewModel: ObservableObject {
     
     func getPrivateKey(filePath: URL?) {
         if let filePath = filePath, let data = try? Data(contentsOf: filePath) {
-            let strData = String(decoding: data, as: UTF8.self)
-                .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
-                .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
-                .replacingOccurrences(of: "\n", with: "")
-                .replacingOccurrences(of: "\r", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            privateKey = strData
+            privateKey = JWT.normalizePrivateKey(String(decoding: data, as: UTF8.self))
         }
     }
     
