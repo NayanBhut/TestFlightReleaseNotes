@@ -489,36 +489,41 @@ struct ToastView: View {
 // consistent and testable.
 
 enum BuildDisplayHelper {
-    private static let iso8601Formatter = ISO8601DateFormatter()
+    // Formatters are created per call: DateFormatter/ISO8601/Relative are
+    // not Sendable and shared lets trigger Swift 6 warnings. Build/menu
+    // lists are small (tens of rows), so the cost is negligible.
+    private static func makeISO8601Formatter() -> ISO8601DateFormatter {
+        ISO8601DateFormatter()
+    }
 
-    private static let displayFormatter: DateFormatter = {
+    private static func makeDisplayFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.timeZone = .current
         formatter.dateFormat = "MMM d, h:mm a"
         return formatter
-    }()
+    }
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
+    private static func makeRelativeFormatter() -> RelativeDateTimeFormatter {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         return formatter
-    }()
+    }
 
     static func uploadedDate(from dateString: String?) -> Date? {
         guard let dateString = dateString, !dateString.isEmpty else { return nil }
-        return iso8601Formatter.date(from: dateString)
+        return makeISO8601Formatter().date(from: dateString)
     }
 
     /// Single absolute date format used across build rows.
     static func formattedUploadedDate(_ dateString: String?) -> String {
         guard let date = uploadedDate(from: dateString) else { return "" }
-        return displayFormatter.string(from: date)
+        return makeDisplayFormatter().string(from: date)
     }
 
     /// Relative time ("3 days ago") shown next to the absolute date.
     static func relativeUploadedTime(_ dateString: String?) -> String? {
         guard let date = uploadedDate(from: dateString) else { return nil }
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+        return makeRelativeFormatter().localizedString(for: date, relativeTo: Date())
     }
 
     static func buildStatus(processingState: String, isExpired: Bool) -> (String, Color) {

@@ -20,7 +20,10 @@ extension View {
 }
 
 private struct SizePreferenceKey: PreferenceKey {
-  static var defaultValue: CGSize = .zero
+  // Protocol-required mutable static; CGSize is a value type only ever
+  // read/written on main. nonisolated(unsafe) silences the Swift 6
+  // global-state warning without changing SwiftUI semantics.
+  nonisolated(unsafe) static var defaultValue: CGSize = .zero
   static func reduce(value: inout CGSize, nextValue: () -> CGSize) {}
 }
 
@@ -37,6 +40,6 @@ extension View {
 }
 
 private struct PositionPreferenceKey: PreferenceKey {
-    static var defaultValue: CGPoint = .zero
+    nonisolated(unsafe) static var defaultValue: CGPoint = .zero
     static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {}
 }

@@ -13,6 +13,7 @@ import Combine
 /// "isLoggedIn" flag anymore — a wiped keychain can never leave a stale
 /// logged-in state behind, and adding/removing the last team flips this
 /// automatically.
+@MainActor
 class NavigationManager: ObservableObject {
     @Published private(set) var isLoggedIn: Bool = !CredentialStorage.shared.teams.isEmpty
 

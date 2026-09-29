@@ -19,8 +19,9 @@ struct Credential: Codable {
     let keyID: String
 }
 
+@MainActor
 final class CredentialStorage: ObservableObject {
-    static var shared: CredentialStorage = .init()
+    static let shared: CredentialStorage = .init()
 
     /// Scopes every keychain item to this service so credentials from
     /// other services are never read, written, or listed.
