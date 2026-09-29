@@ -17,7 +17,10 @@ enum JWTLimits {
     static let expiryInterval: TimeInterval = 60 * 20
 }
 
-final class APIClient {
+// Mutable jwtCache is guarded by jwtCacheQueue (concurrent + barrier
+// writes); session is Sendable. @unchecked Sendable documents that
+// discipline for Swift 6 instead of claiming full Sendable synthesis.
+final class APIClient: @unchecked Sendable {
     typealias JSONTaskCompletionHandler = (Data?, APIError?) -> Void
     
     static let shared = APIClient()
@@ -311,7 +314,10 @@ final class APIClient {
         task.resume()
     }
     
-    func getRequest(api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
+    /// Reads the active team (a @MainActor property), so it must run on
+    /// main. All callers are @MainActor view models / the @MainActor
+    /// monitor, so this is a static isolation match, not a hop.
+    @MainActor func getRequest(api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
         guard let team = CredentialStorage.shared.selectedTeam else { return nil }
         guard let token = try? signingToken(for: team) else {
             // Distinguish 'bad private key' from 'no team selected' in logs.

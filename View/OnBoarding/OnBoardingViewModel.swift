@@ -8,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 class OnBoardingViewModel: ObservableObject {
     @Published var teamName: String = ""
     @Published var issuerID: String = ""

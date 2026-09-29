@@ -13,11 +13,10 @@ private let iconLogger = Logger(subsystem: "com.appstore.release-notes", categor
 
 /// Memory + disk cache for App Store Connect icon artwork.
 ///
-/// SwiftUI's AsyncImage defers to URLCache, which honors the CDN's HTTP
-/// cache headers — Apple's icon responses revalidate aggressively, so
-/// every scroll and every launch re-downloaded the same artwork.
-/// This cache keys by resolved URL with our own TTL instead.
-final class AppIconImageCache: Sendable {
+/// Actor-isolated so Swift 6 treats all bookkeeping as race-free.
+/// Disk + network I/O stays in nonisolated helpers / detached tasks so
+/// a slow download never blocks other cache lookups.
+actor AppIconImageCache {
     static let shared = AppIconImageCache()
 
     /// Icons change only when the app's artwork changes (new upload);
@@ -29,7 +28,6 @@ final class AppIconImageCache: Sendable {
     private static let failureTTL: TimeInterval = 10 * 60
 
     private let memory = NSCache<NSURL, NSImage>()
-    private let lock = NSLock()
     private var inFlight: [URL: Task<NSImage?, Never>] = [:]
     private var lastFailure: [URL: Date] = [:]
     private let diskDirectory: URL = FileManager.default
@@ -38,33 +36,24 @@ final class AppIconImageCache: Sendable {
         ?? FileManager.default.temporaryDirectory.appendingPathComponent("AppIcons", isDirectory: true)
 
     func image(for url: URL) async -> NSImage? {
-        lock.lock()
         if let cached = memory.object(forKey: url as NSURL) {
-            lock.unlock()
             return cached
         }
         // Negative cache: skip refetching a recently-failing URL.
         if let failedAt = lastFailure[url],
            Date().timeIntervalSince(failedAt) < Self.failureTTL {
-            lock.unlock()
             return nil
         }
         // Coalesce concurrent requests for the same URL (e.g. the row
         // re-rendering mid-download) into a single network fetch.
-        let task: Task<NSImage?, Never>
+        // Actor isolation makes the check-and-insert atomic without a lock,
+        // and nothing here suspends while bookkeeping is half-done.
         if let existing = inFlight[url] {
-            task = existing
-        } else {
-            task = Task { await Self.load(url: url, diskDirectory: diskDirectory) }
-            inFlight[url] = task
+            return await existing.value
         }
-        lock.unlock()
-
+        let task = Task { await Self.load(url: url, diskDirectory: diskDirectory) }
+        inFlight[url] = task
         let image = await task.value
-        // Single lock section for the completion mutations: clearing
-        // inFlight and caching must be atomic so a caller arriving between
-        // them can't slip past into a duplicate network fetch.
-        lock.lock()
         inFlight[url] = nil
         if let image {
             memory.setObject(image, forKey: url as NSURL)
@@ -72,7 +61,6 @@ final class AppIconImageCache: Sendable {
         } else {
             lastFailure[url] = Date()
         }
-        lock.unlock()
         return image
     }
 

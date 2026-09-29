@@ -82,7 +82,7 @@ struct JWT: Codable, JWTCreatable {
     typealias Token = String
     typealias P8PrivateKey = String
 
-    typealias DateProvider = () -> Date
+    typealias DateProvider = @Sendable () -> Date
     static let defaultDateProvider: DateProvider = {
         Date()
     }
