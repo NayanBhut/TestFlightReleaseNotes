@@ -737,19 +737,13 @@ private struct CreateCertificateForm: View {
             openPanel.allowedContentTypes = csrTypes
         }
         guard openPanel.runModal() == .OK, let url = openPanel.url else { return }
-        guard let data = try? Data(contentsOf: url) else {
-            errorMessage = "Couldn't read that file. Try selecting it again."
-            return
+        do {
+            csrContent = try ProvisioningWriteValidation.loadCSR(from: url)
+            csrFileName = url.lastPathComponent
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        let content = String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard ProvisioningWriteValidation.isValidCSR(content) else {
-            errorMessage = "That file doesn't look like a CSR — expected a PEM file with \"-----BEGIN CERTIFICATE REQUEST-----\" markers."
-            return
-        }
-        csrContent = content
-        csrFileName = url.lastPathComponent
-        errorMessage = nil
     }
 }
 
