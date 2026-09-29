@@ -39,7 +39,8 @@ private struct Payload: Codable {
     let issuerIdentifier: String
 
     /// The token's expiration time, in Unix epoch time; tokens that expire more than 20 minutes in the future are not valid (Ex: 1528408800)
-    let expirationTime: TimeInterval
+    /// Integer seconds: Apple expects a JSON number without fractions.
+    let expirationTime: Int
 
     /// The required audience which is set to the App Store Connect version.
     let audience: String = "appstoreconnect-v1"
@@ -82,7 +83,7 @@ struct JWT: Codable, JWTCreatable {
     typealias Token = String
     typealias P8PrivateKey = String
 
-    typealias DateProvider = () -> Date
+    typealias DateProvider = @Sendable () -> Date
     static let defaultDateProvider: DateProvider = {
         Date()
     }
@@ -110,10 +111,24 @@ struct JWT: Codable, JWTCreatable {
 
     /// Combine the header and the payload as a digest for signing.
     private func digest(dateProvider: DateProvider) throws -> String {
-        let payload = Payload(issuerIdentifier: issuerIdentifier, expirationTime: dateProvider().addingTimeInterval(expireDuration).timeIntervalSince1970)
+        let payload = Payload(issuerIdentifier: issuerIdentifier, expirationTime: Int(dateProvider().addingTimeInterval(expireDuration).timeIntervalSince1970))
         let headerString = try JSONEncoder().encode(header.self).base64URLEncoded()
         let payloadString = try JSONEncoder().encode(payload.self).base64URLEncoded()
         return "\(headerString).\(payloadString)"
+    }
+
+    /// Normalizes user-supplied private key text: strips PEM armor
+    /// (BEGIN/END lines), all whitespace and newlines. The file picker
+    /// already did this; pasted text must go through the same path or
+    /// base64 decoding fails with "invalid .p8" despite a valid key.
+    static func normalizePrivateKey(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\t", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Creates a signed JWT Token which can be used as a Bearer Authentication header value for signing App Store Connect API Requests.

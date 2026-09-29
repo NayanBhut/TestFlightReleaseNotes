@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 enum AppAppearance {
     private static let key = "appAppearanceOverride"
 

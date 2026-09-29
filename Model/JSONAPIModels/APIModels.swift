@@ -196,7 +196,7 @@ struct AppStoreVersionCreateRequest: Codable {
 }
 
 struct AppStoreVersionCreateData: Codable {
-    let type: String = "appStoreVersions"
+    var type: String = "appStoreVersions"
     let attributes: AppStoreVersionCreateAttributes
     let relationships: AppStoreVersionCreateRelationships
 }
@@ -230,7 +230,7 @@ struct AppStoreVersionAppLinkage: Codable {
 }
 
 struct AppStoreVersionAppRef: Codable {
-    let type: String = "apps"
+    var type: String = "apps"
     let id: String
 }
 
@@ -243,7 +243,7 @@ struct AppStoreVersionUpdateRequest: Encodable {
 }
 
 struct AppStoreVersionUpdateData: Encodable {
-    let type: String = "appStoreVersions"
+    var type: String = "appStoreVersions"
     let id: String
     let attributes: AppStoreVersionUpdateAttributes
 }
@@ -284,7 +284,7 @@ struct AppStoreVersionUpdateAttributes: Encodable {
 }
 
 struct AppStoreVersionBuildRef: Codable {
-    let type: String = "builds"
+    var type: String = "builds"
     let id: String
 }
 
@@ -293,7 +293,7 @@ struct VersionLocalizationCreateRequest: Encodable {
 }
 
 struct VersionLocalizationCreateData: Encodable {
-    let type: String = "appStoreVersionLocalizations"
+    var type: String = "appStoreVersionLocalizations"
     let attributes: VersionLocalizationCreateAttributes
     let relationships: VersionLocalizationCreateRelationships
 }
@@ -323,7 +323,7 @@ struct VersionLocalizationVersionLinkage: Encodable {
 }
 
 struct AppStoreVersionCreateRef: Encodable {
-    let type: String = "appStoreVersions"
+    var type: String = "appStoreVersions"
     let id: String
 }
 
@@ -332,7 +332,7 @@ struct AppStoreVersionReleaseRequest: Encodable {
 }
 
 struct AppStoreVersionReleaseRequestData: Encodable {
-    let type: String = "appStoreVersionReleaseRequests"
+    var type: String = "appStoreVersionReleaseRequests"
     let relationships: AppStoreVersionReleaseRequestRelationships
 }
 
@@ -713,7 +713,7 @@ struct ScreenshotSetCreateRequest: Codable {
 }
 
 struct ScreenshotSetCreateData: Codable {
-    let type: String = "appScreenshotSets"
+    var type: String = "appScreenshotSets"
     let attributes: ScreenshotSetCreateAttributes
     let relationships: ScreenshotSetLocalizationLinkage
 }
@@ -731,7 +731,7 @@ struct ScreenshotSetLocalizationRef: Codable {
 }
 
 struct ScreenshotSetLocalizationRefData: Codable {
-    let type: String = "appStoreVersionLocalizations"
+    var type: String = "appStoreVersionLocalizations"
     let id: String
 }
 
@@ -742,7 +742,7 @@ struct ScreenshotCreateRequest: Codable {
 }
 
 struct ScreenshotCreateData: Codable {
-    let type: String = "appScreenshots"
+    var type: String = "appScreenshots"
     let attributes: ScreenshotCreateAttributes
     let relationships: ScreenshotSetLinkage
 }
@@ -761,7 +761,7 @@ struct ScreenshotSetRef: Codable {
 }
 
 struct ScreenshotSetRefData: Codable {
-    let type: String = "appScreenshotSets"
+    var type: String = "appScreenshotSets"
     let id: String
 }
 
@@ -772,7 +772,7 @@ struct ScreenshotUpdateRequest: Codable {
 }
 
 struct ScreenshotUpdateData: Codable {
-    let type: String = "appScreenshots"
+    var type: String = "appScreenshots"
     let id: String
     let attributes: ScreenshotUpdateAttributes
 }

@@ -19,8 +19,9 @@ struct Credential: Codable {
     let keyID: String
 }
 
+@MainActor
 final class CredentialStorage: ObservableObject {
-    static var shared: CredentialStorage = .init()
+    static let shared: CredentialStorage = .init()
 
     /// Scopes every keychain item to this service so credentials from
     /// other services are never read, written, or listed.
@@ -371,9 +372,13 @@ extension CredentialStorage {
     private func getAllKeysFromKeychain() -> [String] {
         // Scoped by kSecAttrService — only items belonging to this
         // service are returned, never a global keychain dump.
+        // kSecAttrSynchronizableAny matches baseQuery so items written
+        // by older versions (without an explicit synchronizable attr)
+        // are listed exactly as getCredential/delete can find them.
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: false

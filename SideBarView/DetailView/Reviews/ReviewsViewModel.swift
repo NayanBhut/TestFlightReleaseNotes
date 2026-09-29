@@ -1697,7 +1697,7 @@ struct CustomerReviewResponseRequest: Codable {
 }
 
 struct CustomerReviewResponseData: Codable {
-    let type: String = "customerReviewResponses"
+    var type: String = "customerReviewResponses"
     let attributes: CustomerReviewResponseAttributes
     let relationships: CustomerReviewResponseRelationships
 }
@@ -1715,7 +1715,7 @@ struct ReviewLinkage: Codable {
 }
 
 struct ReviewLinkageData: Codable {
-    let type: String = "customerReviews"
+    var type: String = "customerReviews"
     let id: String
 }
 
