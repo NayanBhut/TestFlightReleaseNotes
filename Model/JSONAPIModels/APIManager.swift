@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 import JSONAPI
 import OSLog
 
@@ -38,11 +39,14 @@ final class APIClient: @unchecked Sendable {
         self.session = session
     }
 
-    /// Cache key includes a hash of the private key so re-adding a
+    /// Cache key includes a stable hash of the private key so re-adding a
     /// credential with the same Key ID + Issuer ID but a new .p8 never
-    /// reuses tokens signed with the old key.
+    /// reuses tokens signed with the old key. SHA-256 hex: String.hashValue
+    /// is per-process randomized and must never be used as a cache key.
     private func cacheKey(for credential: Credential) -> String {
-        "\(credential.keyID)-\(credential.issuerID)-\(credential.privateKey.hashValue)"
+        let digest = SHA256.hash(data: Data(credential.privateKey.utf8))
+        let keyHash = digest.map { String(format: "%02x", $0) }.joined()
+        return "\(credential.keyID)-\(credential.issuerID)-\(keyHash)"
     }
 
     private func cachedJWTToken(for credential: Credential) -> String? {
@@ -197,8 +201,10 @@ final class APIClient: @unchecked Sendable {
             if let items = components?.queryItems {
                 components?.queryItems = items.map { item in
                     var redacted = item
-                    redacted.value = (item.value ?? "").removingPercentEncoding
-                        .map { redactingPII(in: $0) } ?? item.value
+                    // removingPercentEncoding returns nil on malformed '%':
+                    // redact the raw value then, never fall back to unredacted.
+                    let decoded = (item.value ?? "").removingPercentEncoding ?? (item.value ?? "")
+                    redacted.value = redactingPII(in: decoded)
                     return redacted
                 }
             }
