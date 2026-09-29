@@ -74,7 +74,7 @@ struct ReviewSubmissionCreateRequest: Codable {
 }
 
 struct ReviewSubmissionCreateData: Codable {
-    let type: String = "reviewSubmissions"
+    var type: String = "reviewSubmissions"
     let attributes: ReviewSubmissionCreateAttributes?
     let relationships: ReviewSubmissionAppLinkage
 }
@@ -92,7 +92,7 @@ struct ReviewSubmissionAppRef: Codable {
 }
 
 struct ReviewSubmissionAppRefData: Codable {
-    let type: String = "apps"
+    var type: String = "apps"
     let id: String
 }
 
@@ -106,7 +106,7 @@ struct ReviewSubmissionUpdateRequest: Codable {
 }
 
 struct ReviewSubmissionUpdateData: Codable {
-    let type: String = "reviewSubmissions"
+    var type: String = "reviewSubmissions"
     let id: String
     let attributes: ReviewSubmissionUpdateAttributes
 }
@@ -126,7 +126,7 @@ struct ReviewSubmissionItemCreateRequest: Codable {
 }
 
 struct ReviewSubmissionItemCreateData: Codable {
-    let type: String = "reviewSubmissionItems"
+    var type: String = "reviewSubmissionItems"
     let relationships: ReviewSubmissionItemRelationships
 }
 
@@ -140,7 +140,7 @@ struct ReviewSubmissionItemRef: Codable {
 }
 
 struct ReviewSubmissionItemRefData: Codable {
-    let type: String = "reviewSubmissions"
+    var type: String = "reviewSubmissions"
     let id: String
 }
 
@@ -149,7 +149,7 @@ struct ReviewSubmissionItemVersionRef: Codable {
 }
 
 struct ReviewSubmissionItemVersionRefData: Codable {
-    let type: String = "appStoreVersions"
+    var type: String = "appStoreVersions"
     let id: String
 }
 
@@ -176,7 +176,7 @@ struct PhasedReleaseCreateRequest: Codable {
 }
 
 struct PhasedReleaseCreateData: Codable {
-    let type: String = "appStoreVersionPhasedReleases"
+    var type: String = "appStoreVersionPhasedReleases"
     let relationships: PhasedReleaseVersionLinkage
 }
 
@@ -189,7 +189,7 @@ struct PhasedReleaseVersionRef: Codable {
 }
 
 struct PhasedReleaseVersionRefData: Codable {
-    let type: String = "appStoreVersions"
+    var type: String = "appStoreVersions"
     let id: String
 }
 
@@ -200,7 +200,7 @@ struct PhasedReleaseUpdateRequest: Codable {
 }
 
 struct PhasedReleaseUpdateData: Codable {
-    let type: String = "appStoreVersionPhasedReleases"
+    var type: String = "appStoreVersionPhasedReleases"
     let id: String
     let attributes: PhasedReleaseUpdateAttributes
 }
