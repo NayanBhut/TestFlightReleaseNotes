@@ -86,19 +86,10 @@ final class APIClient: @unchecked Sendable {
 
     /// Single error-mapping helper for every HTTP path (legacy
     /// completion shim + async callAPI). Parses errors[] detail/title,
-    /// then maps 401/429/500 with the same copy everywhere.
-    private static func apiError(statusCode: Int, data: Data?, headers: [AnyHashable: Any]?) -> APIError {
-        func headerValue(_ name: String) -> String {
-            // Case-insensitive like HTTPURLResponse.value(forHTTPHeaderField:):
-            // allHeaderFields preserves server casing.
-            for (key, value) in headers ?? [:] {
-                if String(describing: key).lowercased() == name.lowercased(),
-                   let string = value as? String, !string.isEmpty {
-                    return string
-                }
-            }
-            return ""
-        }
+    /// then maps 401/429/500 with the same copy everywhere. Pass the
+    /// HTTPURLResponse so Retry-After uses the framework's case-insensitive
+    /// header lookup instead of a manual reimplementation.
+    private static func apiError(statusCode: Int, data: Data?, response: HTTPURLResponse?) -> APIError {
         var errorMessage = ""
         if let data = data,
            let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
@@ -111,9 +102,9 @@ final class APIClient: @unchecked Sendable {
         case 429:
             // Only mention Retry-After when the header is present —
             // otherwise the message ends with a dangling "Retry after ".
-            let retryAfter = headerValue("Retry-After")
+            let retryAfter = response?.value(forHTTPHeaderField: "Retry-After") ?? ""
             if !retryAfter.isEmpty {
-                errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
+                errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)s" : "\(errorMessage). Retry after \(retryAfter)s"
             } else if errorMessage.isEmpty {
                 errorMessage = "Rate limited"
             }
@@ -158,7 +149,7 @@ final class APIClient: @unchecked Sendable {
                 if httpResponse.statusCode == 401 {
                     self.clearAllJWTTokens()
                 }
-                completion(nil, Self.apiError(statusCode: httpResponse.statusCode, data: data, headers: httpResponse.allHeaderFields))
+                completion(nil, Self.apiError(statusCode: httpResponse.statusCode, data: data, response: httpResponse))
                 return
             }
             
@@ -260,7 +251,7 @@ final class APIClient: @unchecked Sendable {
                 if httpResponse.statusCode == 401 {
                     clearAllJWTTokens()
                 }
-                throw Self.apiError(statusCode: httpResponse.statusCode, data: data, headers: httpResponse.allHeaderFields)
+                throw Self.apiError(statusCode: httpResponse.statusCode, data: data, response: httpResponse)
             }
             return data
         } catch let apiError as APIError {

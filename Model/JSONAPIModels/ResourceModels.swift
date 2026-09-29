@@ -212,10 +212,21 @@ enum ProvisioningWriteValidation {
             && content.contains("-----END CERTIFICATE REQUEST-----")
     }
 
-    /// Loads CSR content from a user-picked file: reads, trims, validates
-    /// PEM markers. Throws user-facing errors so the form just displays
-    /// `errorDescription` — the raw CSR text never surfaces in the UI.
+    /// Maximum CSR file size accepted (64 KB). A real CSR is ~1 KB; this
+    /// stops a huge/missing file on a slow volume from freezing the UI or
+    /// spiking memory before content validation even runs.
+    private static let maxCSRFileSize = 64 * 1024
+
+    /// Loads CSR content from a user-picked file: checks size, reads,
+    /// trims, validates PEM markers. Throws user-facing errors so the
+    /// form just displays `errorDescription` — the raw CSR text never
+    /// surfaces in the UI.
     static func loadCSR(from url: URL) throws -> String {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        guard fileSize > 0, fileSize <= maxCSRFileSize else {
+            throw CSRFileLoadError.tooLarge
+        }
         guard let data = try? Data(contentsOf: url) else {
             throw CSRFileLoadError.unreadable
         }
@@ -233,6 +244,7 @@ enum ProvisioningWriteValidation {
 enum CSRFileLoadError: Error, LocalizedError, Equatable {
     case unreadable
     case invalidFormat
+    case tooLarge
 
     var errorDescription: String? {
         switch self {
@@ -240,6 +252,8 @@ enum CSRFileLoadError: Error, LocalizedError, Equatable {
             return "Couldn't read that file. Try selecting it again."
         case .invalidFormat:
             return "That file doesn't look like a CSR — expected a PEM file with \"-----BEGIN CERTIFICATE REQUEST-----\" markers."
+        case .tooLarge:
+            return "That file is too large to be a CSR. Pick the .csr file from Keychain Access or openssl."
         }
     }
 }

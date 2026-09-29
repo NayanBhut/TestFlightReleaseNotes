@@ -10,6 +10,15 @@ import OSLog
 
 private let buildRowLogger = Logger(subsystem: "com.appstore.release-notes", category: "BuildRow")
 
+/// Build row with value-based `Equatable` for `.equatable()`.
+///
+/// **Invariant:** closures (`onLocaleChange`, `onUpdate`, etc.) are
+/// intentionally excluded from `==`. This is safe only because they
+/// capture stable references (viewModel, selectedLocales) whose identity
+/// is constant for a given `buildId`. If a future call site passes a
+/// closure that captures transient/per-row state, `.equatable()` will
+/// silently serve the stale closure with no compile error. Re-review
+/// this file whenever a row call site changes.
 struct BuildRowView: View, Equatable {
     /// Value-based identity for hot build rows: closures are excluded —
     /// they capture stable references (viewModel, selectedLocales) plus

@@ -490,41 +490,39 @@ struct ToastView: View {
 // consistent and testable.
 
 enum BuildDisplayHelper {
-    // Formatters are created per call: DateFormatter/ISO8601/Relative are
-    // not Sendable and shared lets trigger Swift 6 warnings. Build/menu
-    // lists are small (tens of rows), so the cost is negligible.
-    private static func makeISO8601Formatter() -> ISO8601DateFormatter {
-        ISO8601DateFormatter()
-    }
+    // nonisolated(unsafe): formatters are not Sendable, but every caller
+    // is a SwiftUI view body or @MainActor monitor — never concurrent.
+    // This avoids per-render allocation while satisfying Swift 6.
+    private nonisolated(unsafe) static let iso8601Formatter = ISO8601DateFormatter()
 
-    private static func makeDisplayFormatter() -> DateFormatter {
+    private nonisolated(unsafe) static let displayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeZone = .current
         formatter.dateFormat = "MMM d, h:mm a"
         return formatter
-    }
+    }()
 
-    private static func makeRelativeFormatter() -> RelativeDateTimeFormatter {
+    private nonisolated(unsafe) static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         return formatter
-    }
+    }()
 
     static func uploadedDate(from dateString: String?) -> Date? {
         guard let dateString = dateString, !dateString.isEmpty else { return nil }
-        return makeISO8601Formatter().date(from: dateString)
+        return iso8601Formatter.date(from: dateString)
     }
 
     /// Single absolute date format used across build rows.
     static func formattedUploadedDate(_ dateString: String?) -> String {
         guard let date = uploadedDate(from: dateString) else { return "" }
-        return makeDisplayFormatter().string(from: date)
+        return displayFormatter.string(from: date)
     }
 
     /// Relative time ("3 days ago") shown next to the absolute date.
     static func relativeUploadedTime(_ dateString: String?) -> String? {
         guard let date = uploadedDate(from: dateString) else { return nil }
-        return makeRelativeFormatter().localizedString(for: date, relativeTo: Date())
+        return relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     static func buildStatus(processingState: String, isExpired: Bool) -> (String, Color) {
