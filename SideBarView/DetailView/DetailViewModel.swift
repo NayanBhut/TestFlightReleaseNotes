@@ -366,7 +366,10 @@ extension DetailViewModel {
 
             let merged: [BuildsModel]
             if isPaginating, let existing = buildsState.loadedValue {
-                merged = existing + model.data
+                // Deduplicate by id so a double-fired cursor can never append
+                // the same rows twice (same rule as apps/versions pagination).
+                let existingIDs = Set(existing.map(\.id))
+                merged = existing + model.data.filter { !existingIDs.contains($0.id) }
             } else {
                 merged = model.data
             }
@@ -534,68 +537,78 @@ extension DetailViewModel {
         }
     }
 
-    /// GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations for the
-    /// app's current live version. limit=200 (the endpoint maximum) so all
-    /// locales arrive in one page.
-    func fetchVersionLocalizations(versionId: String, generation: Int) async {
-        guard !Task.isCancelled, generation == versionLocalizationsGeneration else { return }
+    /// GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations.
+    /// limit=200 (the endpoint maximum) so all locales arrive in one page.
+    /// Shared core for the editable-draft list and the live-version list,
+    /// which differ only in which state/generation they publish to.
+    private func fetchLocalizations(
+        versionId: String,
+        generation: Int,
+        expectedGeneration: () -> Int,
+        setLoading: () -> Void,
+        setEmpty: (String) -> Void,
+        setLoaded: (String, [AppStoreVersionLocalizationsModel]) -> Void,
+        setError: (String) -> Void,
+        logLabel: String
+    ) async {
+        guard !Task.isCancelled, generation == expectedGeneration() else { return }
         guard !versionId.isEmpty else {
             // Terminal state (no live version) — record it so we don't
             // re-evaluate on every appear.
-            versionLocalizationsLoadedVersionId = versionId
-            versionLocalizationsState = .empty
+            setEmpty(versionId)
             return
         }
-        versionLocalizationsState = .loading
+        setLoading()
 
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .getAppStoreVersions, queryParams: ["limit": "200"], path: "\(versionId)/appStoreVersionLocalizations"),
             apiVersion: .v1) else {
-            versionLocalizationsState = .error("No team selected. Add a team to load version info.")
+            setError("No team selected. Add a team to load version info.")
             return
         }
 
         do {
             let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled, generation == versionLocalizationsGeneration else { return }
+            guard !Task.isCancelled, generation == expectedGeneration() else { return }
             let model = try getDecoder().decode(AppStoreVersionLocalizationsDocument.self, from: data)
-            // Staleness id only on success (see fetchAppInfos).
-            versionLocalizationsLoadedVersionId = versionId
-            versionLocalizationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            // Staleness id only on success (see fetchAppInfos): recording it
+            // before the fetch would mark a failed load as "loaded".
+            if model.data.isEmpty {
+                setEmpty(versionId)
+            } else {
+                setLoaded(versionId, model.data)
+            }
         } catch {
-            guard !Task.isCancelled, generation == versionLocalizationsGeneration else { return }
-            detailLogger.error("Failed to load version localizations: \(error.localizedDescription)")
-            versionLocalizationsState = .error(appInfoErrorMessage(for: error))
+            guard !Task.isCancelled, generation == expectedGeneration() else { return }
+            detailLogger.error("Failed to load \(logLabel): \(error.localizedDescription)")
+            setError(appInfoErrorMessage(for: error))
         }
     }
 
+    func fetchVersionLocalizations(versionId: String, generation: Int) async {
+        await fetchLocalizations(
+            versionId: versionId,
+            generation: generation,
+            expectedGeneration: { self.versionLocalizationsGeneration },
+            setLoading: { self.versionLocalizationsState = .loading },
+            setEmpty: { self.versionLocalizationsLoadedVersionId = $0; self.versionLocalizationsState = .empty },
+            setLoaded: { self.versionLocalizationsLoadedVersionId = $0; self.versionLocalizationsState = .loaded($1) },
+            setError: { self.versionLocalizationsState = .error($0) },
+            logLabel: "version localizations"
+        )
+    }
+
     func fetchLiveVersionLocalizations(versionId: String, generation: Int) async {
-        guard !Task.isCancelled, generation == liveVersionLocalizationsGeneration else { return }
-        guard !versionId.isEmpty else {
-            liveVersionLocalizationsLoadedVersionId = versionId
-            liveVersionLocalizationsState = .empty
-            return
-        }
-        liveVersionLocalizationsState = .loading
-
-        guard let request = APIClient.shared.getRequest(
-            api: .get(name: .getAppStoreVersions, queryParams: ["limit": "200"], path: "\(versionId)/appStoreVersionLocalizations"),
-            apiVersion: .v1) else {
-            liveVersionLocalizationsState = .error("No team selected. Add a team to load version info.")
-            return
-        }
-
-        do {
-            let data = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled, generation == liveVersionLocalizationsGeneration else { return }
-            let model = try getDecoder().decode(AppStoreVersionLocalizationsDocument.self, from: data)
-            liveVersionLocalizationsLoadedVersionId = versionId
-            liveVersionLocalizationsState = model.data.isEmpty ? .empty : .loaded(model.data)
-        } catch {
-            guard !Task.isCancelled, generation == liveVersionLocalizationsGeneration else { return }
-            detailLogger.error("Failed to load live version localizations: \(error.localizedDescription)")
-            liveVersionLocalizationsState = .error(appInfoErrorMessage(for: error))
-        }
+        await fetchLocalizations(
+            versionId: versionId,
+            generation: generation,
+            expectedGeneration: { self.liveVersionLocalizationsGeneration },
+            setLoading: { self.liveVersionLocalizationsState = .loading },
+            setEmpty: { self.liveVersionLocalizationsLoadedVersionId = $0; self.liveVersionLocalizationsState = .empty },
+            setLoaded: { self.liveVersionLocalizationsLoadedVersionId = $0; self.liveVersionLocalizationsState = .loaded($1) },
+            setError: { self.liveVersionLocalizationsState = .error($0) },
+            logLabel: "live version localizations"
+        )
     }
 
     /// GET /v1/appEncryptionDeclarations?filter[app]={id} — export

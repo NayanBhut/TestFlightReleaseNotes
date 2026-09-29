@@ -84,6 +84,47 @@ final class APIClient: @unchecked Sendable {
         return token
     }
 
+    /// Single error-mapping helper for every HTTP path (legacy
+    /// completion shim + async callAPI). Parses errors[] detail/title,
+    /// then maps 401/429/500 with the same copy everywhere.
+    private static func apiError(statusCode: Int, data: Data?, headers: [AnyHashable: Any]?) -> APIError {
+        func headerValue(_ name: String) -> String {
+            // Case-insensitive like HTTPURLResponse.value(forHTTPHeaderField:):
+            // allHeaderFields preserves server casing.
+            for (key, value) in headers ?? [:] {
+                if String(describing: key).lowercased() == name.lowercased(),
+                   let string = value as? String, !string.isEmpty {
+                    return string
+                }
+            }
+            return ""
+        }
+        var errorMessage = ""
+        if let data = data,
+           let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+           let errors = json["errors"] as? [[String: Any]] {
+            errorMessage = errors.compactMap { $0["detail"] as? String ?? $0["title"] as? String }.joined(separator: "; ")
+        }
+        switch statusCode {
+        case 401:
+            errorMessage = errorMessage.isEmpty ? "Invalid credentials" : errorMessage
+        case 429:
+            // Only mention Retry-After when the header is present —
+            // otherwise the message ends with a dangling "Retry after ".
+            let retryAfter = headerValue("Retry-After")
+            if !retryAfter.isEmpty {
+                errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
+            } else if errorMessage.isEmpty {
+                errorMessage = "Rate limited"
+            }
+        case 500:
+            errorMessage = errorMessage.isEmpty ? "Server error" : errorMessage
+        default:
+            errorMessage = errorMessage.isEmpty ? HTTPURLResponse.localizedString(forStatusCode: statusCode) : errorMessage
+        }
+        return .apiErrorWithCode(error: errorMessage, statusCode)
+    }
+
     private func decodingTask(with request: URLRequest, completionHandler completion: @escaping JSONTaskCompletionHandler) -> URLSessionDataTask {
         let task = session.dataTask(with: request) { data, response, error in
             if let error = error {
@@ -117,31 +158,7 @@ final class APIClient: @unchecked Sendable {
                 if httpResponse.statusCode == 401 {
                     self.clearAllJWTTokens()
                 }
-                var errorMessage = ""
-                if let data = data {
-                    if let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                       let errors = json["errors"] as? [[String: Any]] {
-                        errorMessage = errors.compactMap { $0["detail"] as? String ?? $0["title"] as? String }.joined(separator: "; ")
-                    }
-                }
-                switch httpResponse.statusCode {
-                case 401:
-                    errorMessage = errorMessage.isEmpty ? "Invalid credentials" : errorMessage
-                case 429:
-                    // Only mention Retry-After when the header is present —
-                    // otherwise the message ends with a dangling "Retry after ".
-                    let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? ""
-                    if !retryAfter.isEmpty {
-                        errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
-                    } else if errorMessage.isEmpty {
-                        errorMessage = "Rate limited"
-                    }
-                case 500:
-                    errorMessage = errorMessage.isEmpty ? "Server error" : errorMessage
-                default:
-                    errorMessage = errorMessage.isEmpty ? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode) : errorMessage
-                }
-                completion(nil, .apiErrorWithCode(error: errorMessage, httpResponse.statusCode))
+                completion(nil, Self.apiError(statusCode: httpResponse.statusCode, data: data, headers: httpResponse.allHeaderFields))
                 return
             }
             
@@ -243,26 +260,7 @@ final class APIClient: @unchecked Sendable {
                 if httpResponse.statusCode == 401 {
                     clearAllJWTTokens()
                 }
-                // Parse errors[] detail/title from response body for actionable messages.
-                var errorMessage = ""
-                if let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let errors = json["errors"] as? [[String: Any]] {
-                    errorMessage = errors.compactMap { $0["detail"] as? String ?? $0["title"] as? String }.joined(separator: "; ")
-                }
-                switch httpResponse.statusCode {
-                case 401:
-                    errorMessage = errorMessage.isEmpty ? "Invalid credentials" : errorMessage
-                case 429:
-                    let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? ""
-                    if !retryAfter.isEmpty {
-                        errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)" : "\(errorMessage). Retry after \(retryAfter)"
-                    } else if errorMessage.isEmpty {
-                        errorMessage = "Rate limited"
-                    }
-                default:
-                    errorMessage = errorMessage.isEmpty ? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode) : errorMessage
-                }
-                throw APIError.apiErrorWithCode(error: errorMessage, httpResponse.statusCode)
+                throw Self.apiError(statusCode: httpResponse.statusCode, data: data, headers: httpResponse.allHeaderFields)
             }
             return data
         } catch let apiError as APIError {
@@ -451,7 +449,7 @@ enum APIError: Error {
         case .jsonConversionFailure:
             return "JSON Conversion Failure"
         case .apiErrorWithCode(let error, _, _):
-            return error.localizedLowercase
+            return error
         case .apiError(let error):
             return error
         case .httpError(let statusCode):
@@ -461,7 +459,7 @@ enum APIError: Error {
         case .otherResponse(let statusCode):
             return statusCode
         case .statusResponse(let error):
-            return error.localizedLowercase
+            return error
         }
     }
 
