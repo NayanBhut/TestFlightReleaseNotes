@@ -211,6 +211,37 @@ enum ProvisioningWriteValidation {
         content.contains("-----BEGIN CERTIFICATE REQUEST-----")
             && content.contains("-----END CERTIFICATE REQUEST-----")
     }
+
+    /// Loads CSR content from a user-picked file: reads, trims, validates
+    /// PEM markers. Throws user-facing errors so the form just displays
+    /// `errorDescription` — the raw CSR text never surfaces in the UI.
+    static func loadCSR(from url: URL) throws -> String {
+        guard let data = try? Data(contentsOf: url) else {
+            throw CSRFileLoadError.unreadable
+        }
+        let content = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isValidCSR(content) else {
+            throw CSRFileLoadError.invalidFormat
+        }
+        return content
+    }
+}
+
+/// File-picker failures for CSR upload. Messages are shown verbatim in
+/// the create-certificate form.
+enum CSRFileLoadError: Error, LocalizedError, Equatable {
+    case unreadable
+    case invalidFormat
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable:
+            return "Couldn't read that file. Try selecting it again."
+        case .invalidFormat:
+            return "That file doesn't look like a CSR — expected a PEM file with \"-----BEGIN CERTIFICATE REQUEST-----\" markers."
+        }
+    }
 }
 
 struct CertificateCreateRequest: Encodable {

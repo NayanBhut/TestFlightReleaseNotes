@@ -32,6 +32,59 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(ProvisioningWriteValidation.isValidCSR("-----BEGIN CERTIFICATE REQUEST-----\nMIIB"))
     }
 
+    // MARK: - CSR file upload (replaces pasted CSR text)
+
+    func testLoadCSRFromValidFile() throws {
+        let url = try writeTempCSR("  \n-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n")
+        defer { try? FileManager.default.removeItem(at: url) }
+        // Trims surrounding whitespace; inner PEM newlines are preserved
+        // for the server.
+        XCTAssertEqual(
+            try ProvisioningWriteValidation.loadCSR(from: url),
+            "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----"
+        )
+    }
+
+    func testLoadCSRRejectsNonCSRFile() throws {
+        let url = try writeTempCSR("just some text, not a CSR")
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try ProvisioningWriteValidation.loadCSR(from: url)) { error in
+            XCTAssertEqual(error as? CSRFileLoadError, .invalidFormat)
+        }
+    }
+
+    func testLoadCSRRejectsEmptyFile() throws {
+        let url = try writeTempCSR("   \n  ")
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try ProvisioningWriteValidation.loadCSR(from: url)) { error in
+            XCTAssertEqual(error as? CSRFileLoadError, .invalidFormat)
+        }
+    }
+
+    func testLoadCSRMissingFile() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nonexistent-\(UUID().uuidString).csr")
+        XCTAssertThrowsError(try ProvisioningWriteValidation.loadCSR(from: missing)) { error in
+            XCTAssertEqual(error as? CSRFileLoadError, .unreadable)
+        }
+    }
+
+    func testCSRFileErrorsAreUserFacing() {
+        // Shown verbatim in the form — must never be empty or technical.
+        for error in [CSRFileLoadError.unreadable, CSRFileLoadError.invalidFormat] {
+            let message = error.errorDescription ?? ""
+            XCTAssertFalse(message.isEmpty)
+            XCTAssertTrue(message.contains("CSR") || message.contains("file"))
+        }
+    }
+
+    private func writeTempCSR(_ content: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-\(UUID().uuidString).csr")
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
     // MARK: - EmailValidator (Beta)
 
     func testEmailValidation() {
