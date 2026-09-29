@@ -18,7 +18,7 @@ struct DetailView: View {
     /// Opens the Add Team flow. The overlay lives in ContentView, so it
     /// injects this; previews omit it and the button simply hides.
     var onAddTeam: (() -> Void)? = nil
-    @State private var selectedTab: DetailTab = .builds
+    @State private var selectedTab: DetailTab = .appInfo
     /// Namespace for the version-chip selection pill: the accent
     /// background slides between chips instead of blinking in place.
     @Namespace private var versionSelectionNamespace
