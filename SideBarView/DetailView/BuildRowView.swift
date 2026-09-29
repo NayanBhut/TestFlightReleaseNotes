@@ -10,7 +10,28 @@ import OSLog
 
 private let buildRowLogger = Logger(subsystem: "com.appstore.release-notes", category: "BuildRow")
 
-struct BuildRowView: View {
+struct BuildRowView: View, Equatable {
+    /// Value-based identity for hot build rows: closures are excluded —
+    /// they capture stable references (viewModel, selectedLocales) plus
+    /// buildId, which IS compared. Lets `.equatable()` skip re-renders
+    /// when a sibling row's @Published bump rebuilds the list.
+    static func == (lhs: BuildRowView, rhs: BuildRowView) -> Bool {
+        lhs.buildId == rhs.buildId
+            && lhs.version == rhs.version
+            && lhs.uploadedDate == rhs.uploadedDate
+            && lhs.processingState == rhs.processingState
+            && lhs.isExpired == rhs.isExpired
+            && lhs.selectedVersionString == rhs.selectedVersionString
+            && lhs.whatsNew == rhs.whatsNew
+            && lhs.savedWhatsNew == rhs.savedWhatsNew
+            && lhs.selectedLocale == rhs.selectedLocale
+            && lhs.locales == rhs.locales
+            && lhs.dirtyLocaleCount == rhs.dirtyLocaleCount
+            && lhs.isUpdating == rhs.isUpdating
+            && lhs.isExpireToggling == rhs.isExpireToggling
+            && lhs.entranceOffset == rhs.entranceOffset
+    }
+
     let buildId: String
     let version: String
     let uploadedDate: String
@@ -47,6 +68,8 @@ struct BuildRowView: View {
     /// Stagger delay (seconds) for the entrance animation, supplied by
     /// the parent list based on row index. Defaults to 0 so previews
     /// and other call sites don't need to pass it.
+    /// Stays `var`: flipping to `let` breaks the memberwise init visible
+    /// to BuildDetailsView (extra-argument error); == already covers it.
     var entranceOffset: Double = 0
 
     @State private var appeared = false

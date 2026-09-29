@@ -399,6 +399,7 @@ struct BuildDetailsView: View {
             isExpireToggling: viewModel.expireTogglingBuildId == build.id,
             entranceOffset: entranceOffset
         )
+        .equatable()
         .padding(.vertical, 4)
     }
 

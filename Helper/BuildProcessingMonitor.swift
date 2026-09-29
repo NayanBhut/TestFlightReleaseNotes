@@ -151,7 +151,10 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
     /// One-shot per build id: build ids are unique per upload and a terminal
     /// build never re-enters PROCESSING, so eviction only risks a re-notify
     /// for an ancient build re-uploaded under the same id — not possible.
-    private var notifiedBuildIds: Set<String> = []
+    /// Ordered (oldest-first) so the cap evicts the stalest ids instead of
+    /// dropping the whole window at once. Linear contains is fine at this
+    /// scale (a few hundred ids, checked once per poll).
+    private var notifiedBuildIds: [String] = []
     private static let notifiedBuildIdsCap = 500
     /// Consecutive failed follow-ups per disappeared id. A deleted build 404s
     /// forever, so misses are capped instead of retried indefinitely.
@@ -286,12 +289,13 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
                         continue
                     }
                     notifier.postTransitionNotification(build: terminal)
-                    notifiedBuildIds.insert(id)
+                    if !notifiedBuildIds.contains(id) {
+                        notifiedBuildIds.append(id)
+                    }
                     if notifiedBuildIds.count > Self.notifiedBuildIdsCap {
-                        // One-shot per unique build id (see property note):
-                        // clearing can only ever re-notify an id that can't
-                        // re-enter PROCESSING.
-                        notifiedBuildIds.removeAll()
+                        // Evict oldest-first: bursty accounts keep recent
+                        // history instead of losing the whole dedup window.
+                        notifiedBuildIds.removeFirst(notifiedBuildIds.count - Self.notifiedBuildIdsCap)
                     }
                     followUpMisses.removeValue(forKey: id)
                 } catch {
