@@ -633,12 +633,12 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
-    /// POST /v1/certificates — create from a CSR. The caller pastes CSR
-    /// content (Keychain Access → Request a Certificate, or
-    /// `openssl req -new`); generating the key pair in-app is out of scope.
+    /// POST /v1/certificates — create from a CSR file's content (loaded
+    /// via the form's file picker; generating the key pair in-app is out
+    /// of scope).
     func createCertificate(certificateType: CertificateTypeOption, csrContent: String) async -> WriteResult {
         let trimmedCSR = csrContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedCSR.isEmpty else { return .failure("Paste the CSR content.") }
+        guard !trimmedCSR.isEmpty else { return .failure("Select a CSR file first.") }
         guard ProvisioningWriteValidation.isValidCSR(trimmedCSR) else {
             return .failure("That doesn't look like a CSR — expected PEM content with \"-----BEGIN CERTIFICATE REQUEST-----\" and \"-----END CERTIFICATE REQUEST-----\" markers.")
         }

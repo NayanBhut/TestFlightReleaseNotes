@@ -23,6 +23,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Sidebar section listing the five team-scoped resource kinds.
 struct ResourcesSectionView: View {
@@ -618,13 +619,17 @@ private struct RegisterDeviceForm: View {
     }
 }
 
-/// POST /v1/certificates — certificate type plus pasted CSR content
-/// (Keychain Access → Request a Certificate, or `openssl req -new`).
+/// POST /v1/certificates — certificate type plus a CSR file
+/// (Keychain Access → Certificate Assistant → Request a Certificate,
+/// or `openssl req -new`). File upload only: raw CSR text is never
+/// shown or pasted — users pick the file the same way as the .p8 key.
 private struct CreateCertificateForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
     @State private var certificateType: CertificateTypeOption = .IOS_DEVELOPMENT
+    /// Loaded CSR content (never displayed — file name is shown instead).
     @State private var csrContent = ""
+    @State private var csrFileName: String?
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -640,13 +645,37 @@ private struct CreateCertificateForm: View {
             }
             .pickerStyle(.menu)
             .disabled(isSaving)
-            TextEditor(text: $csrContent)
-                .font(.system(size: 11, design: .monospaced))
-                .frame(minHeight: 70, maxHeight: 120)
-                .border(AppTheme.border, width: 1)
-                .accessibilityLabel("Certificate signing request content")
-                .disabled(isSaving)
-            Text("Paste the CSR content. Needs an API key with the Admin role.")
+            HStack(spacing: 8) {
+                Button("Select CSR File…") { selectCSRFile() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isSaving)
+                    .accessibilityLabel("Select certificate signing request file")
+                if let fileName = csrFileName {
+                    Text(fileName)
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(fileName)
+                    Button {
+                        csrContent = ""
+                        csrFileName = nil
+                        errorMessage = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSaving)
+                    .accessibilityLabel("Remove selected CSR file")
+                } else {
+                    Text("No file selected")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            Text("Pick the .csr file from Keychain Access or openssl. Needs an API key with the Admin role.")
                 .font(.appCaption2)
                 .foregroundColor(.secondary)
             if let errorMessage {
@@ -689,6 +718,38 @@ private struct CreateCertificateForm: View {
         }
         .padding(12)
         .background(AppTheme.windowBackground)
+    }
+
+    /// File picker for the CSR (same pattern as the .p8 key import).
+    /// Accepts Keychain Access (.certSigningRequest), openssl (.csr/.pem)
+    /// outputs; anything else is rejected by content validation, not by
+    /// extension, so an oddly-named but valid CSR still loads.
+    private func selectCSRFile() {
+        let openPanel = NSOpenPanel()
+        openPanel.prompt = "Choose"
+        openPanel.canChooseFiles = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canCreateDirectories = false
+        openPanel.title = "Select your certificate signing request"
+        let csrTypes = ["certSigningRequest", "csr", "pem"].compactMap { UTType(filenameExtension: $0) }
+        if !csrTypes.isEmpty {
+            openPanel.allowedContentTypes = csrTypes
+        }
+        guard openPanel.runModal() == .OK, let url = openPanel.url else { return }
+        guard let data = try? Data(contentsOf: url) else {
+            errorMessage = "Couldn't read that file. Try selecting it again."
+            return
+        }
+        let content = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ProvisioningWriteValidation.isValidCSR(content) else {
+            errorMessage = "That file doesn't look like a CSR — expected a PEM file with \"-----BEGIN CERTIFICATE REQUEST-----\" markers."
+            return
+        }
+        csrContent = content
+        csrFileName = url.lastPathComponent
+        errorMessage = nil
     }
 }
 
