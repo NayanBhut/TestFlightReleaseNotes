@@ -109,6 +109,11 @@ func getVersionCaseState(versions: [AppStoreVersionsModel]) -> AppStoreVersionCa
 }
 
 func getStatusLabel(appStoreState: String?) -> String {
+    appStoreSidebarStatusLabel(appStoreState: appStoreState)
+}
+
+/// Short status line beside the version in the ASC-style sidebar.
+func appStoreSidebarStatusLabel(appStoreState: String?) -> String {
     switch appStoreState {
     case "PREPARE_FOR_SUBMISSION": return "Draft"
     case "WAITING_FOR_REVIEW": return "Waiting for Review"
@@ -119,7 +124,8 @@ func getStatusLabel(appStoreState: String?) -> String {
     case "INVALID_BINARY": return "Invalid Binary – Needs New Build"
     case "PENDING_CONTRACT": return "Pending Contract"
     case "PROCESSING_FOR_DISTRIBUTION": return "Processing"
-    case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE": return "Live"
+    case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION": return "Ready for Distribution"
+    case "PENDING_APPLE_RELEASE": return "Pending Apple Release"
     default: return appStoreState?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Unknown"
     }
 }
@@ -193,6 +199,8 @@ final class ReviewsViewModel: ObservableObject {
     private var deleteVersionGeneration = 0
     private var cancelSubmissionGeneration = 0
     private var selectedAppStoreVersionSnapshot: AppStoreVersionsModel?
+    /// Links pending version id → open review submission id (list API cannot include appStoreVersion).
+    private var submissionIdByAppStoreVersionId: [String: String] = [:]
 
 
     /// The app whose lists are in flight / last requested (loadMore target).
@@ -320,6 +328,7 @@ final class ReviewsViewModel: ObservableObject {
             deletingVersionId = nil
             workflowMessage = nil
             requestedBuildNumber = nil
+            submissionIdByAppStoreVersionId.removeAll()
         }
         currentAppId = app.id
         if appStoreVersionsInFlightAppId != app.id, appStoreVersionsState.loadedValue == nil {
@@ -371,6 +380,7 @@ final class ReviewsViewModel: ObservableObject {
         releaseSettingsGeneration += 1
         deleteVersionGeneration += 1
         cancelSubmissionGeneration += 1
+        submissionIdByAppStoreVersionId.removeAll()
         reviewsState = .idle
         submissionsState = .idle
         appStoreVersionsState = .idle
@@ -527,15 +537,17 @@ final class ReviewsViewModel: ObservableObject {
         return nil
     }
 
+    /// Version highlighted in the App Store Versions sidebar / detail pane.
     var displayedAppStoreVersion: AppStoreVersionsModel? {
-        if let version = versionCaseState.pendingVersion ?? versionCaseState.liveVersion {
-            return version
+        if let id = selectedAppStoreVersionId {
+            if let match = platformFilteredAppStoreVersions.first(where: { $0.id == id }) {
+                return match
+            }
+            if let snapshot = selectedAppStoreVersionSnapshot, snapshot.id == id {
+                return snapshot
+            }
         }
-        if let snapshot = selectedAppStoreVersionSnapshot,
-           snapshot.id == selectedAppStoreVersionId {
-            return snapshot
-        }
-        return nil
+        return Self.preferredAppStoreVersion(platformFilteredAppStoreVersions)
     }
 
     var liveAppStoreVersion: AppStoreVersionsModel? {
@@ -546,10 +558,11 @@ final class ReviewsViewModel: ObservableObject {
         versionCaseState.pendingVersion
     }
 
+    /// Sidebar rows: newest pipeline version first, then live (max two).
     var displayedAppStoreVersions: [AppStoreVersionsModel] {
         switch versionCaseState.case {
         case .both:
-            return [versionCaseState.liveVersion, versionCaseState.pendingVersion].compactMap { $0 }
+            return [versionCaseState.pendingVersion, versionCaseState.liveVersion].compactMap { $0 }
         case .liveOnly:
             return versionCaseState.liveVersion.map { [$0] } ?? []
         case .pendingOnly:
@@ -584,6 +597,67 @@ final class ReviewsViewModel: ObservableObject {
         return version.build != nil
     }
 
+    /// Open review submission (not COMPLETE / CANCELING).
+    var hasOpenReviewSubmission: Bool {
+        guard let submissions = submissionsState.loadedValue else { return false }
+        return submissions.contains { submission in
+            guard let state = submission.state else { return false }
+            return !["COMPLETE", "CANCELING"].contains(state)
+        }
+    }
+
+    /// Cancellable submission for the pending version, if any.
+    func cancellableSubmission(matchingVersionId: String) -> ReviewSubmissionModel? {
+        guard let submissions = submissionsState.loadedValue else { return nil }
+        let cancellable = submissions.filter {
+            Self.cancellableSubmissionStates.contains($0.state ?? "")
+        }
+        if let cachedSubmissionId = submissionIdByAppStoreVersionId[matchingVersionId],
+           let match = cancellable.first(where: { $0.id == cachedSubmissionId }) {
+            return match
+        }
+        if let match = cancellable.first(where: { $0.appStoreVersion?.id == matchingVersionId }) {
+            return match
+        }
+        if cancellable.count == 1 {
+            return cancellable.first
+        }
+        return nil
+    }
+
+    /// Pulls the version out of App Review (PATCH submission canceled). Matches App Store Connect.
+    func removeVersionFromReview(versionId: String) async -> Bool {
+        guard let submission = cancellableSubmission(matchingVersionId: versionId) else {
+            writeError = "No cancellable review submission found for this version. Try Refresh."
+            return false
+        }
+        return await cancelSubmission(submission)
+    }
+
+    private func reconcileSubmissionVersionLinks() {
+        guard let submissions = submissionsState.loadedValue,
+              let versions = appStoreVersionsState.loadedValue else { return }
+        let cancellable = submissions.filter {
+            Self.cancellableSubmissionStates.contains($0.state ?? "")
+        }
+        let waitingVersions = versions.filter {
+            let state = $0.appStoreState ?? $0.appVersionState
+            return state == "WAITING_FOR_REVIEW" || state == "PREPARE_FOR_SUBMISSION"
+        }
+        if cancellable.count == 1, let onlySubmission = cancellable.first {
+            if waitingVersions.count == 1 {
+                submissionIdByAppStoreVersionId[waitingVersions[0].id] = onlySubmission.id
+            } else if let pending = pendingAppStoreVersion {
+                submissionIdByAppStoreVersionId[pending.id] = onlySubmission.id
+            }
+        }
+        for submission in cancellable {
+            if let versionId = submission.appStoreVersion?.id {
+                submissionIdByAppStoreVersionId[versionId] = submission.id
+            }
+        }
+    }
+
     func selectAppStoreVersionPlatform(_ platform: String) {
         guard appStoreVersionPlatforms.contains(platform),
               platform != selectedAppStoreVersionPlatform else { return }
@@ -607,7 +681,7 @@ final class ReviewsViewModel: ObservableObject {
     }
 
     func selectAppStoreVersion(_ version: AppStoreVersionsModel) {
-        guard Self.isPendingApprovalVersion(version) else { return }
+        guard displayedAppStoreVersions.contains(where: { $0.id == version.id }) else { return }
         if selectedAppStoreVersionId != version.id {
             requestedBuildNumber = nil
             eligibleBuildsNextCursor = nil
@@ -622,7 +696,16 @@ final class ReviewsViewModel: ObservableObject {
         attachBuildError = nil
         releaseSettingsError = nil
         workflowMessage = nil
-        loadEligibleBuilds(for: version)
+        if Self.isPendingApprovalVersion(version) {
+            loadEligibleBuilds(for: version)
+        } else if liveAppStoreVersion?.id == version.id {
+            Task { await loadPhasedRelease(versionId: version.id) }
+        }
+    }
+
+    static func isLiveAppStoreVersion(_ version: AppStoreVersionsModel) -> Bool {
+        let state = version.appStoreState ?? version.appVersionState
+        return liveAppStoreVersionStates.contains(state ?? "")
     }
 
     func load(appId: String, force: Bool = false) {
@@ -732,6 +815,7 @@ final class ReviewsViewModel: ObservableObject {
                Self.isPendingApprovalVersion(displayedVersion) {
                 loadEligibleBuilds(for: displayedVersion)
             }
+            reconcileSubmissionVersionLinks()
         } catch {
             guard !Task.isCancelled,
                   Self.responseIsCurrent(generation: generation, current: versionWorkflowGeneration),
@@ -1295,6 +1379,9 @@ final class ReviewsViewModel: ObservableObject {
             submissionsGeneration += 1
             let fetchGeneration = submissionsGeneration
             submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: fetchGeneration) }
+            submissionIdByAppStoreVersionId[versionId] = submission.id
+            workflowMessage = "Submitted \(version.versionString ?? versionId) for App Review."
+            load(appId: appId, force: true)
             return true
         } catch {
             guard !Task.isCancelled,
@@ -1345,6 +1432,9 @@ final class ReviewsViewModel: ObservableObject {
             submissionsGeneration += 1
             let generation = submissionsGeneration
             submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: generation) }
+            submissionIdByAppStoreVersionId = submissionIdByAppStoreVersionId.filter { $0.value != submission.id }
+            workflowMessage = "Removed this version from review."
+            load(appId: appId, force: true)
             return true
         } catch {
             guard !Task.isCancelled,
@@ -1662,6 +1752,7 @@ final class ReviewsViewModel: ObservableObject {
             submissionsLoadedAppId = appId
             submissionsNextCursor = model.meta.paging.nextCursor
             submissionsState = merged.isEmpty ? .empty : .loaded(merged)
+            reconcileSubmissionVersionLinks()
         } catch {
             guard !Task.isCancelled,
                   generation == submissionsGeneration,

@@ -241,7 +241,7 @@ final class ValidationTests: XCTestCase {
         let vm = ReviewsViewModel()
         vm.appStoreVersionsState = .loaded([ignored, live, pending])
         XCTAssertEqual(vm.appStoreVersionDisplayState, .both)
-        XCTAssertEqual(vm.displayedAppStoreVersions.map(\.id), ["live", "pending"])
+        XCTAssertEqual(vm.displayedAppStoreVersions.map(\.id), ["pending", "live"])
         XCTAssertFalse(vm.canCreateAppStoreVersion)
         XCTAssertEqual(vm.submissionVersion?.id, "pending")
 

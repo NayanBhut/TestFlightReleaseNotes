@@ -25,6 +25,8 @@ struct AppInfoView: View {
     @State private var confirmingCompletePhased = false
     @State private var confirmingReleaseVersionId: String?
     @State private var confirmingDeleteVersionId: String?
+    @State private var confirmingSubmitForReview = false
+    @State private var versionIdToRemoveFromReview: String?
 
     var body: some View {
         Group {
@@ -35,12 +37,7 @@ struct AppInfoView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             generalSection(app: app)
-                            versionWorkflowSection()
-                            if displayedAppStoreVersion != nil {
-                                versionLocalizationsSection()
-                            }
-                            liveVersionLocalizationsSection
-                            screenshotsSection
+                            versionWorkflowSection(app: app)
                             appInfosSection
                             appInfoLocalizationsSection
                             exportComplianceSection
@@ -96,24 +93,27 @@ struct AppInfoView: View {
         reviewsViewModel.displayedAppStoreVersion
     }
 
-    private var isStoreVersionEditable: Bool {
-        guard let version = reviewsViewModel.pendingAppStoreVersion else { return false }
+    private var isSelectedVersionEditable: Bool {
+        guard let version = reviewsViewModel.displayedAppStoreVersion else { return false }
         return isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState)
     }
 
+    private var isAppInfoLocalizationEditable: Bool {
+        guard let pending = reviewsViewModel.pendingAppStoreVersion else { return false }
+        return isVersionEditable(appStoreState: pending.appStoreState ?? pending.appVersionState)
+    }
+
     private func loadSelectedVersionResources() {
-        guard let version = displayedAppStoreVersion,
-              reviewsViewModel.selectedAppStoreVersionId == version.id else {
+        guard let version = reviewsViewModel.displayedAppStoreVersion else {
             viewModel.loadLiveVersionLocalizations(versionId: nil)
             return
         }
         viewModel.loadVersionLocalizations(versionId: version.id)
-        Task { await reviewsViewModel.loadPhasedRelease(versionId: version.id) }
-        if reviewsViewModel.appStoreVersionDisplayState == .both,
-           let live = reviewsViewModel.liveAppStoreVersion {
-            viewModel.loadLiveVersionLocalizations(versionId: live.id)
-        } else {
-            viewModel.loadLiveVersionLocalizations(versionId: nil)
+        viewModel.loadLiveVersionLocalizations(versionId: nil)
+        if ReviewsViewModel.isLiveAppStoreVersion(version) {
+            Task { await reviewsViewModel.loadPhasedRelease(versionId: version.id) }
+        } else if let live = reviewsViewModel.liveAppStoreVersion {
+            Task { await reviewsViewModel.loadPhasedRelease(versionId: live.id) }
         }
     }
 
@@ -141,10 +141,6 @@ struct AppInfoView: View {
                 if let version = displayedAppStoreVersion {
                     viewModel.loadVersionLocalizations(versionId: version.id, force: true)
                 }
-                if reviewsViewModel.appStoreVersionDisplayState == .both,
-                   let live = reviewsViewModel.liveAppStoreVersion {
-                    viewModel.loadLiveVersionLocalizations(versionId: live.id, force: true)
-                }
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
                     .font(.appCaption)
@@ -171,8 +167,16 @@ struct AppInfoView: View {
             InfoRow(label: "Primary Locale", value: app.primaryLocale)
             InfoRow(label: "Content Rights", value: contentRightsLabel(app.contentRightsDeclaration))
             InfoRow(label: "Made for Kids", value: kidsLabel(app.isOrEverWasMadeForKids))
-            InfoRow(label: "Live Version", value: app.currentLiveVersion.1.isEmpty ? nil : app.currentLiveVersion.1)
+            InfoRow(label: "Live Version", value: liveVersionLabel(app: app))
         }
+    }
+
+    private func liveVersionLabel(app: AppsData) -> String? {
+        if let live = reviewsViewModel.liveAppStoreVersion?.versionString, !live.isEmpty {
+            return live
+        }
+        let fromSidebar = app.currentLiveVersion.1
+        return fromSidebar.isEmpty ? nil : fromSidebar
     }
 
     private func contentRightsLabel(_ raw: String?) -> String? {
@@ -191,7 +195,7 @@ struct AppInfoView: View {
         }
     }
 
-    @ViewBuilder private func versionWorkflowSection() -> some View {
+    @ViewBuilder private func versionWorkflowSection(app: AppsData) -> some View {
         InfoCard(title: "App Store Versions", systemImage: "shippingbox") {
             if reviewsViewModel.appStoreVersionPlatforms.count > 1 {
                 Picker("Platform", selection: Binding(
@@ -205,27 +209,74 @@ struct AppInfoView: View {
             }
             if reviewsViewModel.canCreateAppStoreVersion {
                 HStack {
-                    Text("Create a new App Store version and attach its build.")
-                        .font(.appCaption)
-                        .foregroundColor(.secondary)
                     Spacer()
                     Button {
                         showingNewVersion = true
                     } label: {
                         Label("Create New Version", systemImage: "plus")
-                            .font(.appCaption)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                     .disabled(reviewsViewModel.creatingVersion)
                 }
             }
-            appStoreVersionRows
-            if let version = reviewsViewModel.pendingAppStoreVersion,
-               displayedAppStoreVersion?.id == version.id {
+            HStack(alignment: .top, spacing: 0) {
+                appStoreVersionSidebar
                 Divider()
-                releaseSettingsSection(version)
-                phasedReleaseSection(version)
+                ScrollView {
+                    appStoreVersionDetailPane(app: app)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 16)
+                        .padding(.vertical, 4)
+                }
+                .frame(maxWidth: .infinity, minHeight: 360, maxHeight: 720)
             }
+            if let message = reviewsViewModel.workflowMessage {
+                Text(message)
+                    .font(.appCaption)
+                    .foregroundColor(.green)
+            }
+            if let error = reviewsViewModel.appStoreVersionsError {
+                Text(error)
+                    .font(.appCaption)
+                    .foregroundColor(.red)
+            }
+            if let error = reviewsViewModel.writeError {
+                Text(error)
+                    .font(.appCaption)
+                    .foregroundColor(.red)
+            }
+        }
+        .confirmationDialog(
+            "Remove from Review?",
+            isPresented: Binding(
+                get: { versionIdToRemoveFromReview != nil },
+                set: { if !$0 { versionIdToRemoveFromReview = nil } }),
+            titleVisibility: .visible,
+            presenting: versionIdToRemoveFromReview
+        ) { versionId in
+            Button("Remove from Review", role: .destructive) {
+                Task { _ = await reviewsViewModel.removeVersionFromReview(versionId: versionId) }
+            }
+        } message: { _ in
+            Text("You can edit metadata and attach a new build after this version is removed from review.")
+        }
+        .confirmationDialog(
+            "Submit for App Review?",
+            isPresented: $confirmingSubmitForReview,
+            titleVisibility: .visible
+        ) {
+            Button("Submit") {
+                guard let version = reviewsViewModel.submissionVersion else { return }
+                Task {
+                    _ = await reviewsViewModel.submitForReview(appId: app.id, versionId: version.id)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let name = app.name ?? "the app"
+            let versionString = reviewsViewModel.submissionVersion?.versionString ?? ""
+            Text("This submits \(name) \(versionString) to App Store review.")
         }
     }
 
@@ -237,7 +288,7 @@ struct AppInfoView: View {
                 AppStoreVersionReleaseSettingsEditor(version: version, reviewsViewModel: reviewsViewModel)
                     .id(version.id)
             } else {
-                Text("Release settings are locked for this released version.")
+                Text(releaseSettingsLockedMessage(for: version))
                     .font(.appCaption)
                     .foregroundColor(.secondary)
             }
@@ -332,37 +383,43 @@ struct AppInfoView: View {
             } else {
                 ProgressView().controlSize(.small)
             }
-            if let error = reviewsViewModel.writeError {
-                Text(error)
-                    .font(.appCaption)
-                    .foregroundColor(.red)
-            }
         }
     }
 
-    @ViewBuilder private var appStoreVersionRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var appStorePlatformTitle: String {
+        let raw = reviewsViewModel.selectedAppStoreVersionPlatform ?? "IOS"
+        return raw.replacingOccurrences(of: "_", with: " ").capitalized + " App"
+    }
+
+    @ViewBuilder private var appStoreVersionSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(appStorePlatformTitle)
+                .font(.appCaption)
+                .fontWeight(.semibold)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
             switch reviewsViewModel.appStoreVersionsState {
             case .idle, .loading:
-                HStack {
-                    Spacer()
-                    ProgressView().controlSize(.small)
-                    Spacer()
-                }
+                ProgressView().controlSize(.small)
+                    .frame(maxWidth: .infinity)
+                    .padding()
             case .empty:
                 emptyVersionState
+                    .padding(.horizontal, 10)
             case .loaded:
                 if reviewsViewModel.displayedAppStoreVersions.isEmpty {
                     emptyVersionState
+                        .padding(.horizontal, 10)
                 } else {
                     ForEach(reviewsViewModel.displayedAppStoreVersions, id: \.id) { version in
-                        appStoreVersionRow(version)
+                        appStoreVersionSidebarRow(version)
                     }
                 }
             case .error(let message):
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(message)
-                        .font(.appCaption)
+                        .font(.appCaption2)
                         .foregroundColor(.red)
                     Button("Retry") {
                         reviewsViewModel.retryAppStoreVersions()
@@ -370,49 +427,210 @@ struct AppInfoView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
+                .padding(.horizontal, 10)
             }
-            if let message = reviewsViewModel.workflowMessage {
-                Text(message)
+        }
+        .frame(width: 200, alignment: .leading)
+        .padding(.vertical, 4)
+    }
+
+    private func appStoreVersionSidebarRow(_ version: AppStoreVersionsModel) -> some View {
+        let state = version.appStoreState ?? version.appVersionState
+        let isSelected = reviewsViewModel.selectedAppStoreVersionId == version.id
+            || (reviewsViewModel.selectedAppStoreVersionId == nil
+                && reviewsViewModel.displayedAppStoreVersion?.id == version.id)
+        return Button {
+            reviewsViewModel.selectAppStoreVersion(version)
+            loadSelectedVersionResources()
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                versionStatusIcon(appStoreState: state)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(version.versionString ?? version.id)
+                        .font(Font.appBody)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                    Text(appStoreSidebarStatusLabel(appStoreState: state))
+                        .font(Font.appCaption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(isSelected ? AppTheme.accent.opacity(0.12) : Color.clear)
+            .cornerRadius(6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func versionStatusIcon(appStoreState: String?) -> some View {
+        let icon = versionStatusIconDescriptor(appStoreState: appStoreState)
+        return Image(systemName: icon.symbol)
+            .font(.system(size: 14))
+            .foregroundColor(icon.color)
+            .frame(width: 18, alignment: .center)
+    }
+
+    private func versionStatusIconDescriptor(appStoreState: String?) -> (symbol: String, color: Color) {
+        switch appStoreState {
+        case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE":
+            return ("checkmark.circle.fill", AppTheme.readyForSale)
+        case "WAITING_FOR_REVIEW":
+            return ("clock.fill", .yellow)
+        case "IN_REVIEW":
+            return ("eye.fill", AppTheme.accent)
+        case "PREPARE_FOR_SUBMISSION":
+            return ("pencil.circle.fill", .secondary)
+        case "REJECTED", "DEVELOPER_REJECTED", "METADATA_REJECTED", "INVALID_BINARY":
+            return ("xmark.circle.fill", AppTheme.negative)
+        default:
+            return ("circle.fill", .secondary)
+        }
+    }
+
+    @ViewBuilder private func appStoreVersionDetailPane(app: AppsData) -> some View {
+        switch reviewsViewModel.appStoreVersionsState {
+        case .idle, .loading:
+            ProgressView().controlSize(.small)
+        case .empty, .error:
+            emptyVersionState
+        case .loaded:
+            if let version = reviewsViewModel.displayedAppStoreVersion {
+                appStoreVersionDetailContent(version: version, app: app)
+            } else {
+                emptyVersionState
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func appStoreVersionDetailContent(version: AppStoreVersionsModel, app: AppsData) -> some View {
+        let state = version.appStoreState ?? version.appVersionState
+        let isLive = ReviewsViewModel.isLiveAppStoreVersion(version)
+        let isEditable = !isLive && isVersionEditable(appStoreState: state)
+        VStack(alignment: .leading, spacing: 16) {
+            Text("\(appStorePlatformTitle) Version \(version.versionString ?? version.id)")
+                .font(.appLargeTitle)
+                .fontWeight(.bold)
+            if state == "WAITING_FOR_REVIEW" {
+                waitingForReviewBanner(version: version)
+            } else if isLive {
+                liveVersionReadOnlyBanner
+            } else if isEditable {
+                Text("The assets and metadata below appear on your app's product page when you release this version.")
                     .font(.appCaption)
-                    .foregroundColor(.green)
+                    .foregroundColor(.secondary)
             }
-            if let error = reviewsViewModel.appStoreVersionsError {
-                Text(error)
+            appStoreVersionRow(version, app: app)
+            if !isLive {
+                releaseSettingsSection(version)
+            }
+            if isLive {
+                phasedReleaseSection(version)
+            }
+            versionMetadataSection(version: version, isEditable: isEditable)
+            versionScreenshotsSection(version: version, isEditable: isEditable)
+        }
+    }
+
+    private func waitingForReviewBanner(version: AppStoreVersionsModel) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .foregroundColor(AppTheme.accent)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("You can edit some information while your version is waiting for review. To submit a new build, you must remove this version from review.")
                     .font(.appCaption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.primary)
+                if reviewsViewModel.cancellableSubmission(matchingVersionId: version.id) != nil {
+                    Button("Remove this version from review") {
+                        versionIdToRemoveFromReview = version.id
+                    }
+                    .buttonStyle(.link)
+                    .font(.appCaption)
+                }
             }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.accent.opacity(0.1))
+        .cornerRadius(8)
+    }
+
+    private var liveVersionReadOnlyBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.fill")
+                .foregroundColor(.secondary)
+            Text("This version is live on the App Store. Metadata and screenshots are read-only here.")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.secondaryBackground)
+        .cornerRadius(8)
+    }
+
+    @ViewBuilder
+    private func versionMetadataSection(version: AppStoreVersionsModel, isEditable: Bool) -> some View {
+        section(state: viewModel.versionLocalizationsState,
+                title: "Version Metadata",
+                systemImage: "doc.plaintext",
+                retry: { viewModel.loadVersionLocalizations(versionId: version.id) }) { localizations in
+            VStack(alignment: .leading, spacing: 12) {
+                if isEditable {
+                    versionLocalizationAddButton
+                }
+                ForEach(localizations, id: \.id) { loc in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if loc.id != localizations.first?.id { Divider() }
+                        VersionLocalizationRow(localization: loc,
+                                               viewModel: viewModel,
+                                               isEditable: isEditable)
+                    }
+                }
+                Text(isEditable
+                     ? "Editing needs an API key with the App Manager role or higher."
+                     : "Read-only for this version's state.")
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func versionScreenshotsSection(version: AppStoreVersionsModel, isEditable: Bool) -> some View {
+        InfoCard(title: "Screenshots", systemImage: "photo.on.rectangle") {
+            ScreenshotsGroupView(
+                title: "Version \(version.versionString ?? version.id)",
+                viewModel: viewModel,
+                state: viewModel.versionLocalizationsState,
+                isEditable: isEditable,
+                primaryLocale: selectedApp?.primaryLocale,
+                retry: { viewModel.loadVersionLocalizations(versionId: version.id, force: true) })
         }
     }
 
     private var emptyVersionState: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("No App Store Version")
-                .font(.appBody)
+                .font(Font.appBody)
                 .fontWeight(.medium)
             Text("No live or pending version exists. Create the first version directly in App Store Connect.")
-                .font(.appCaption)
+                .font(Font.appCaption)
                 .foregroundColor(.secondary)
         }
     }
 
-    private func appStoreVersionRow(_ version: AppStoreVersionsModel) -> some View {
+    private func appStoreVersionRow(_ version: AppStoreVersionsModel, app: AppsData) -> some View {
         let state = version.appStoreState ?? version.appVersionState
-        let isSelected = reviewsViewModel.selectedAppStoreVersionId == version.id
+        let isLive = ReviewsViewModel.isLiveAppStoreVersion(version)
         let isPending = reviewsViewModel.pendingAppStoreVersion?.id == version.id
-        let isLive = reviewsViewModel.liveAppStoreVersion?.id == version.id
         let isEditable = isPending && isVersionEditable(appStoreState: state)
         return VStack(alignment: .leading, spacing: 6) {
-            if isPending {
-                Button {
-                    reviewsViewModel.selectAppStoreVersion(version)
-                } label: {
-                    appStoreVersionHeader(version, state: state, isSelected: isSelected)
-                }
-                .buttonStyle(.plain)
-            } else {
-                appStoreVersionHeader(version, state: state, isSelected: isSelected)
-            }
-            if isSelected || isLive {
+            if isPending || isLive {
                 if let build = version.build {
                     buildSummary(build, attached: true)
                     if isEditable && replacingVersionId != version.id {
@@ -432,6 +650,9 @@ struct AppInfoView: View {
                         .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
+            }
+            if isPending {
+                versionWorkflowActionBar(version: version, appStoreState: state)
             }
             if isEditable {
                 Button("Delete Pending Version", role: .destructive) {
@@ -461,32 +682,79 @@ struct AppInfoView: View {
         .padding(.vertical, 2)
     }
 
-    private func appStoreVersionHeader(_ version: AppStoreVersionsModel,
-                                       state: String?,
-                                       isSelected: Bool) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(version.versionString ?? version.id)
-                    .font(.appBody)
-                    .fontWeight(.medium)
-                if let platform = version.platform {
-                    Text(platform.replacingOccurrences(of: "_", with: " ").capitalized)
+    @ViewBuilder
+    private func versionWorkflowActionBar(version: AppStoreVersionsModel,
+                                          appStoreState: String?) -> some View {
+        let normalized = appStoreState ?? ""
+        HStack(spacing: 8) {
+            switch normalized {
+            case "PREPARE_FOR_SUBMISSION", "REJECTED", "DEVELOPER_REJECTED",
+                 "METADATA_REJECTED", "INVALID_BINARY":
+                if reviewsViewModel.submittingReview {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Submit for Review") {
+                        confirmingSubmitForReview = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(reviewsViewModel.hasOpenReviewSubmission || !reviewsViewModel.canSubmitForReview)
+                    .help(reviewsViewModel.submissionVersion?.build == nil
+                          ? "Attach an eligible build before submitting"
+                          : (reviewsViewModel.hasOpenReviewSubmission
+                             ? "An open review submission already exists"
+                             : "Send this version to App Review"))
+                }
+            case "WAITING_FOR_REVIEW":
+                EmptyView()
+            case "IN_REVIEW":
+                Text("In review — Apple does not allow canceling after review starts.")
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+            case "PENDING_DEVELOPER_RELEASE":
+                if version.releaseType == AppStoreVersionReleaseType.manual.rawValue {
+                    Text("Approved — use Release This Version below when ready.")
+                        .font(.appCaption2)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("Approved — releases automatically per your release settings.")
                         .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
+            case "PENDING_CONTRACT":
+                Text("Complete agreements in App Store Connect before this version can ship.")
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+            case "PROCESSING_FOR_DISTRIBUTION":
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Processing for distribution…")
+                        .font(.appCaption2)
+                        .foregroundColor(.secondary)
+                }
+            default:
+                EmptyView()
             }
-            Spacer()
-            StateChip(text: getStatusLabel(appStoreState: state))
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(AppTheme.accent)
-            }
+            Spacer(minLength: 0)
         }
-        .contentShape(Rectangle())
     }
 
     private static func canEditBuild(for version: AppStoreVersionsModel) -> Bool {
         isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState)
+    }
+
+    private func releaseSettingsLockedMessage(for version: AppStoreVersionsModel) -> String {
+        let state = version.appStoreState ?? version.appVersionState ?? ""
+        switch state {
+        case "WAITING_FOR_REVIEW", "IN_REVIEW":
+            return "Release settings are locked while this version is in review."
+        case "PENDING_DEVELOPER_RELEASE":
+            return "Release settings are locked for an approved version."
+        case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE":
+            return "Release settings are locked for the live version."
+        default:
+            return "Release settings are locked in this state."
+        }
     }
 
     @ViewBuilder private func eligibleBuildPicker(for version: AppStoreVersionsModel) -> some View {
@@ -648,123 +916,15 @@ struct AppInfoView: View {
                         if loc.id != localizations.first?.id { Divider() }
                         AppInfoLocalizationRow(localization: loc,
                                                viewModel: viewModel,
-                                               isEditable: isStoreVersionEditable)
+                                               isEditable: isAppInfoLocalizationEditable)
                         }
                     }
                 }
-                Text(isStoreVersionEditable
+                Text(isAppInfoLocalizationEditable
                      ? "Editing needs an API key with the App Manager role or higher — a TestFlight-only key is rejected (403)."
-                     : "Read-only: the live version cannot be edited. Editable states are Draft, Rejected, Developer Rejected, Metadata Rejected, and Invalid Binary.")
+                     : "Read-only until you have a draft or rejected App Store version in the pipeline.")
                     .font(.appCaption2)
                     .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Version Localizations (already decoded, never shown before)
-
-    @ViewBuilder private func versionLocalizationsSection() -> some View {
-        if let version = displayedAppStoreVersion {
-            section(state: viewModel.versionLocalizationsState,
-                    title: "Version Localizations",
-                    systemImage: "doc.plaintext",
-                    retry: {
-                        viewModel.loadVersionLocalizations(versionId: version.id)
-                    }) { localizations in
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Version \(version.versionString ?? version.id)")
-                        .font(.appCaption)
-                        .foregroundColor(.secondary)
-                    versionLocalizationAddButton
-                    ForEach(localizations, id: \.id) { loc in
-                        VStack(alignment: .leading, spacing: 8) {
-                            if loc.id != localizations.first?.id { Divider() }
-                            VersionLocalizationRow(localization: loc,
-                                                   viewModel: viewModel,
-                                                   isEditable: isStoreVersionEditable)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var liveVersionLocalizationsSection: some View {
-        if reviewsViewModel.appStoreVersionDisplayState == .both,
-           let live = reviewsViewModel.liveAppStoreVersion {
-            section(state: viewModel.liveVersionLocalizationsState,
-                    title: "Live Version Localizations",
-                    systemImage: "lock.shield",
-                    retry: { viewModel.retryLiveVersionLocalizations() }) { localizations in
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Live version \(live.versionString ?? live.id) — read-only, including screenshots")
-                        .font(.appCaption)
-                        .foregroundColor(.secondary)
-                    ForEach(localizations, id: \.id) { loc in
-                        VStack(alignment: .leading, spacing: 8) {
-                            if loc.id != localizations.first?.id { Divider() }
-                            VersionLocalizationRow(localization: loc,
-                                                   viewModel: viewModel,
-                                                   isEditable: false)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var screenshotsSection: some View {
-        InfoCard(title: "Screenshots", systemImage: "photo.on.rectangle") {
-            VStack(alignment: .leading, spacing: 16) {
-                switch reviewsViewModel.appStoreVersionsState {
-                case .idle, .loading:
-                    HStack {
-                        Spacer()
-                        ProgressView().controlSize(.small)
-                        Spacer()
-                    }
-                case .error(let message):
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(message)
-                            .font(.appCaption)
-                            .foregroundColor(.red)
-                        Button("Retry") {
-                            reviewsViewModel.retryAppStoreVersions()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                case .empty:
-                    Text("No App Store version to show screenshots for.")
-                        .font(.appCaption)
-                        .foregroundColor(.secondary)
-                case .loaded:
-                    if let version = displayedAppStoreVersion {
-                        if reviewsViewModel.appStoreVersionDisplayState == .both,
-                           let live = reviewsViewModel.liveAppStoreVersion {
-                            ScreenshotsGroupView(
-                                title: "Live version \(live.versionString ?? live.id) — read-only",
-                                viewModel: viewModel,
-                                state: viewModel.liveVersionLocalizationsState,
-                                isEditable: false,
-                                primaryLocale: selectedApp?.primaryLocale,
-                                retry: { viewModel.retryLiveVersionLocalizations() })
-                        }
-                        ScreenshotsGroupView(
-                            title: "Version \(version.versionString ?? version.id)",
-                            viewModel: viewModel,
-                            state: viewModel.versionLocalizationsState,
-                            isEditable: isStoreVersionEditable,
-                            primaryLocale: selectedApp?.primaryLocale,
-                            retry: { viewModel.retryVersionLocalizations() })
-                    } else {
-                        HStack {
-                            Spacer()
-                            ProgressView().controlSize(.small)
-                            Spacer()
-                        }
-                    }
-                }
             }
         }
     }
@@ -835,7 +995,7 @@ struct AppInfoView: View {
     }
 
     @ViewBuilder private var versionLocalizationAddButton: some View {
-        if isStoreVersionEditable {
+        if isSelectedVersionEditable {
             Button {
                 showingNewLocalization = true
             } label: {

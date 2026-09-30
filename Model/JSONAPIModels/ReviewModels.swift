@@ -55,7 +55,8 @@ struct ReviewSubmissionModel: Equatable {
     /// CANCELING, COMPLETING, COMPLETE.
     @ResourceAttribute var state: String?
     @ResourceAttribute var submittedDate: String?
-    /// Included via include=appStoreVersion; nil when not requested.
+    /// Populated when a detail response includes the version; the list
+    /// endpoint rejects include=appStoreVersion (use submission↔version cache in VM).
     @ResourceRelationship var appStoreVersion: AppStoreVersionsModel?
     /// Included via include=submittedByActor (verified against a recorded
     /// GET /v1/reviewSubmissions/{id} response); nil when not requested.
