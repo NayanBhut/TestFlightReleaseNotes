@@ -19,6 +19,18 @@ class OnBoardingViewModel: ObservableObject {
     @Published var privateKey: String = ""
     @Published var isShowSpinner = false
     @Published var errorMessage: String?
+    /// Apps returned by the last verification request. Set by getAllApps on
+    /// success (drives the Launch Assistant validation step's "Apps found"
+    /// count) and cleared whenever a new request starts or fails.
+    @Published var verifiedAppCount: Int?
+    
+    /// Step-2 gating: Team Name, Issuer ID and Key ID are present. The .p8
+    /// key (and therefore full JWT validity) arrives in step 3.
+    var credentialsValid: Bool {
+        !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     
     var isFormValid: Bool {
         !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -88,6 +100,7 @@ class OnBoardingViewModel: ObservableObject {
         
         isShowSpinner = true
         errorMessage = nil
+        verifiedAppCount = nil
         
         APIClient.shared.callAPI(with: request) { [weak self] result in
             guard let self = self else { return }
@@ -104,6 +117,7 @@ class OnBoardingViewModel: ObservableObject {
                         completion(false)
                     } else {
                         self.errorMessage = nil
+                        self.verifiedAppCount = model.count
                         completion(true)
                     }
                 } catch {

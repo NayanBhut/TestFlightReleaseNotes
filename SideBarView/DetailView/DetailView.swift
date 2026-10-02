@@ -307,6 +307,12 @@ struct DetailView: View {
             .id(effectiveTab)
             .transition(.opacity.combined(with: .move(edge: .trailing)))
             .animation(.easeInOut(duration: 0.22), value: effectiveTab)
+        } else if credentialStorage.teams.isEmpty {
+            // First-launch starting page (Figma first-launch-light/dark):
+            // full-bleed "No Teams Connected" card whose primary button
+            // opens the Launch Assistant via the injected onAddTeam.
+            FirstLaunchView(onAddKey: { onAddTeam?() })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "app.badge")
@@ -316,23 +322,10 @@ struct DetailView: View {
                 Text("No App Selected")
                     .font(.subheader)
                     .fontWeight(.medium)
-                if credentialStorage.teams.isEmpty {
-                    // Instructional text alone strands the user — offer the
-                    // same Add Team entry point the sidebar has.
-                    Text("Add a team to get started")
-                        .font(.appBody)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                    if let onAddTeam {
-                        Button("Add Team", action: onAddTeam)
-                            .buttonStyle(.borderedProminent)
-                    }
-                } else {
-                    Text("Select an app from the sidebar to view versions and builds")
-                        .font(.appBody)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
+                Text("Select an app from the sidebar to view versions and builds")
+                    .font(.appBody)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)

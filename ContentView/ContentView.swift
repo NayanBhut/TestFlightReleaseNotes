@@ -13,6 +13,9 @@ struct ContentView: View {
     @EnvironmentObject var navigationManager: NavigationManager
     @State var showAlertView: Bool = false
     @State var isNewAccountAdded: Bool = false
+    /// Observed so the layout flips between the full-window starting page
+    /// and the split view the moment the first/last team is added/removed.
+    @ObservedObject private var credentialStorage = CredentialStorage.shared
 
     init(viewModel: SideBarViewModel) {
         self.viewModel = viewModel
@@ -21,14 +24,20 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            NavigationSplitView {
-                SideBarView(viewModel: viewModel, isAddNewTeam: $showAlertView, isNewAccountAdded: $isNewAccountAdded)
-                    .environmentObject(navigationManager)
-            } detail: {
-                VStack(alignment: .center){
-                    DetailView(viewModel: detailViewModel, onAddTeam: { showAlertView = true })
+            if credentialStorage.teams.isEmpty {
+                // No team yet: full-window starting page, no sidebar —
+                // matches the Figma first-launch frames.
+                FirstLaunchView(onAddKey: { showAlertView = true })
+            } else {
+                NavigationSplitView {
+                    SideBarView(viewModel: viewModel, isAddNewTeam: $showAlertView, isNewAccountAdded: $isNewAccountAdded)
+                        .environmentObject(navigationManager)
+                } detail: {
+                    VStack(alignment: .center){
+                        DetailView(viewModel: detailViewModel, onAddTeam: { showAlertView = true })
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             if showAlertView {
@@ -38,11 +47,7 @@ struct ContentView: View {
                         showAlertView = false
                     }
 
-                OnBoardingView(isLoggedIn: $isNewAccountAdded, isShowing: $showAlertView)
-                    .frame(width: 500)
-                    .background(Color.clear)
-                    .cornerRadius(10)
-                    .shadow(radius: 10)
+                LaunchAssistantSheet(isShowing: $showAlertView, isLoggedIn: $isNewAccountAdded)
                     .onChange(of: isNewAccountAdded) { oldValue, newValue in
                         if newValue {
                             showAlertView = false
