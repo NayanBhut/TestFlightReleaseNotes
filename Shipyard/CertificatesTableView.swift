@@ -23,12 +23,6 @@ struct CertificatesTableView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            if showCreateForm {
-                CreateCertificateForm(viewModel: viewModel) {
-                    showCreateForm = false
-                }
-                Divider()
-            }
             if let bannerError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -57,25 +51,29 @@ struct CertificatesTableView: View {
         .onAppear {
             viewModel.load(.certificates)
         }
-        .confirmationDialog(
-            "Revoke this certificate? Provisioning profiles using it stop working.",
-            isPresented: Binding(
-                get: { revoking != nil },
-                set: { if !$0 { revoking = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Revoke Certificate", role: .destructive) {
-                guard let certificate = revoking else { return }
-                Task { @MainActor in
-                    if case .failure(let message) = await viewModel.revokeCertificate(id: certificate.id) {
-                        bannerError = message
-                    }
-                    revoking = nil
-                }
+        .sheet(isPresented: $showCreateForm) {
+            CreateCertificateForm(viewModel: viewModel) {
+                showCreateForm = false
             }
-            Button("Cancel", role: .cancel) {
-                revoking = nil
+        }
+        .sheet(isPresented: Binding(
+            get: { revoking != nil },
+            set: { if !$0 { revoking = nil } }
+        )) {
+            if let certificate = revoking {
+                RevokeCertificateDialog(
+                    certificateName: certificate.displayName ?? certificate.name ?? "certificate",
+                    onCancel: { revoking = nil },
+                    onRevoke: {
+                        let target = certificate
+                        revoking = nil
+                        Task { @MainActor in
+                            if case .failure(let message) = await viewModel.revokeCertificate(id: target.id) {
+                                bannerError = message
+                            }
+                        }
+                    }
+                )
             }
         }
     }
@@ -297,7 +295,8 @@ private func certificateStatus(_ certificate: CertificateModel) -> CertificateSt
 }
 
 /// "Sep 28, 2026"; unparseable values pass through untouched.
-private func certificateExpiryDisplay(_ raw: String?) -> String {
+/// Shared with the profile wizard (same module).
+func certificateExpiryDisplay(_ raw: String?) -> String {
     guard let raw, !raw.isEmpty else { return "—" }
     if let date = sharedCertificateExpiryDate(raw) {
         let formatter = DateFormatter()
@@ -329,7 +328,8 @@ private func sharedCertificateExpiryDate(_ raw: String?) -> Date? {
 
 /// Full type names ("IOS_DEVELOPMENT" → "iOS Development"); unknown codes
 /// are prettified with the same iOS/ID/NFC fixes as the picker.
-private func certificateTypeDisplayName(_ raw: String?) -> String {
+/// Shared with the profile wizard (same module).
+func certificateTypeDisplayName(_ raw: String?) -> String {
     guard let raw, !raw.isEmpty else { return "—" }
     if let option = CertificateTypeOption(rawValue: raw) {
         return option.displayName

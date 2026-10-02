@@ -555,44 +555,77 @@ struct RegisterDeviceForm: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Register Device")
-                .font(.appBody)
-                .fontWeight(.medium)
-            TextField("Device name", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .font(.appBody)
-                .disabled(isSaving)
-            HStack {
-                Picker("Platform", selection: $platform) {
-                    ForEach(DevicePlatform.allCases, id: \.self) { option in
-                        Text(option.displayName).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 260)
-                .disabled(isSaving)
-                Spacer()
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Register Device")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text("Add a new hardware device to provision testing and ad-hoc profiles.")
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.body)
             }
-            TextField("UDID (40 hex characters, or 8-8-9 hex groups with dashes)", text: $udid)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12, design: .monospaced))
-                .disabled(isSaving)
+
+            VStack(alignment: .leading, spacing: 14) {
+                sheetField(label: "Device Name", text: $name, prompt: "John's iPhone 16 Pro", mono: false)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Platform")
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    Menu {
+                        ForEach(DevicePlatform.allCases, id: \.self) { option in
+                            Button(option.displayName) {
+                                platform = option
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(platform.displayName)
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.title)
+                            Spacer()
+                            ShipyardIcon(name: "ShipyardChevron", size: 10)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(LaunchTheme.field)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(LaunchTheme.border, lineWidth: 1)
+                        )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .disabled(isSaving)
+                    .accessibilityLabel("Select platform")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("UDID")
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    sheetField(label: "", text: $udid, prompt: "00008101-001C25D40C28001E", mono: true)
+                    Text("40-character hex UDID for older devices, or 25-character formatted for Apple Silicon/newer iPhones.")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+            }
+
             Text("Needs an API key with the Admin role. Verify with a throwaway device first — registrations count against the yearly device limit.")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
                 .fixedSize(horizontal: false, vertical: true)
+
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.appCaption)
+                    .font(.system(size: 12))
                     .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
             HStack {
                 Button("Cancel") { onDone() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.secondary)
+                    .buttonStyle(.launchSecondary)
                     .disabled(isSaving)
                 Spacer()
                 if isSaving {
@@ -614,15 +647,37 @@ struct RegisterDeviceForm: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.launchPrimary)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                               || udid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .padding(.top, 12)
         }
-        .padding(12)
-        .background(AppTheme.windowBackground)
+        .padding(24)
+        .frame(width: 480)
+    }
+
+    private func sheetField(label: String, text: Binding<String>, prompt: String, mono: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.title)
+            }
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(mono ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(LaunchTheme.field)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .disabled(isSaving)
+        }
     }
 }
 
@@ -642,63 +697,109 @@ struct CreateCertificateForm: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("New Certificate")
-                .font(.appBody)
-                .fontWeight(.medium)
-            Picker("Type", selection: $certificateType) {
-                ForEach(CertificateTypeOption.allCases, id: \.self) { option in
-                    Text(option.displayName).tag(option)
-                }
-            }
-            .pickerStyle(.menu)
-            .disabled(isSaving)
-            HStack(spacing: 8) {
-                Button("Select CSR File…") { selectCSRFile() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isSaving)
-                    .accessibilityLabel("Select certificate signing request file")
-                if let fileName = csrFileName {
-                    Text(fileName)
-                        .font(.appCaption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(fileName)
-                    Button {
-                        csrContent = ""
-                        csrFileName = nil
-                        errorMessage = nil
+        VStack(spacing: 0) {
+            Text("Create Certificate")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(ShipyardTheme.title)
+                .frame(maxWidth: .infinity)
+                .padding(16)
+                .background(ShipyardTheme.sidebarBackground)
+                .overlay(
+                    ShipyardTheme.rowDivider.frame(height: 1),
+                    alignment: .bottom
+                )
+
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CERTIFICATE TYPE")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ShipyardTheme.body)
+                    Menu {
+                        ForEach(CertificateTypeOption.allCases, id: \.self) { option in
+                            Button(option.displayName) {
+                                certificateType = option
+                            }
+                        }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
+                        HStack {
+                            Text(certificateType.displayName)
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.title)
+                            Spacer()
+                            ShipyardIcon(name: "ShipyardChevron", size: 10)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(LaunchTheme.field)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(LaunchTheme.border, lineWidth: 1)
+                        )
                     }
-                    .buttonStyle(.plain)
+                    .menuStyle(.borderlessButton)
                     .disabled(isSaving)
-                    .accessibilityLabel("Remove selected CSR file")
-                } else {
-                    Text("No file selected")
-                        .font(.appCaption)
-                        .foregroundColor(.secondary)
+                    .accessibilityLabel("Select certificate type")
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CERTIFICATE SIGNING REQUEST (CSR)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ShipyardTheme.body)
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 0)
+                        Button("Choose File…") { selectCSRFile() }
+                            .buttonStyle(.launchSecondary)
+                            .disabled(isSaving)
+                            .accessibilityLabel("Select certificate signing request file")
+                        Text(csrFileName ?? "No file selected")
+                            .font(.system(size: 11))
+                            .foregroundColor(ShipyardTheme.body)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(csrFileName ?? "")
+                        if csrFileName != nil {
+                            Button {
+                                csrContent = ""
+                                csrFileName = nil
+                                errorMessage = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isSaving)
+                            .accessibilityLabel("Remove selected CSR file")
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(16)
+                    .background(LaunchTheme.page)
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                    )
+                    Text("A Certificate Signing Request (CSR) can be generated from Keychain Access on your Mac.")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.negative)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("Pick the .csr file from Keychain Access or openssl. Needs an API key with the Admin role.")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.appCaption)
-                    .foregroundColor(AppTheme.negative)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .padding(24)
+
             HStack {
-                Button("Cancel") { onDone() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.secondary)
-                    .disabled(isSaving)
                 Spacer()
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(isSaving)
                 if isSaving {
                     ProgressView()
                         .scaleEffect(0.7)
@@ -718,14 +819,18 @@ struct CreateCertificateForm: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.launchPrimary)
                     .disabled(csrContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .padding(16)
+            .background(ShipyardTheme.sidebarBackground)
+            .overlay(
+                ShipyardTheme.rowDivider.frame(height: 1),
+                alignment: .top
+            )
         }
-        .padding(12)
-        .background(AppTheme.windowBackground)
+        .frame(width: 560)
     }
 
     /// File picker for the CSR (same pattern as the .p8 key import).
@@ -765,49 +870,81 @@ struct CreateBundleIdForm: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("New Bundle ID")
-                .font(.appBody)
-                .fontWeight(.medium)
-            TextField("Name", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .font(.appBody)
-                .disabled(isSaving)
-            TextField("Bundle identifier (e.g. com.example.app)", text: $identifier)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12, design: .monospaced))
-                .disabled(isSaving)
-            HStack {
-                Picker("Platform", selection: $platform) {
-                    ForEach(BundleIdPlatformOption.allCases, id: \.self) { option in
-                        Text(option.displayName).tag(option)
+        VStack(spacing: 0) {
+            Text("Create Bundle ID")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(ShipyardTheme.title)
+                .frame(maxWidth: .infinity)
+                .padding(16)
+                .background(ShipyardTheme.sidebarBackground)
+                .overlay(
+                    ShipyardTheme.rowDivider.frame(height: 1),
+                    alignment: .bottom
+                )
+
+            VStack(alignment: .leading, spacing: 20) {
+                sheetField(label: "NAME", text: $name, prompt: "My App", mono: false)
+                sheetField(
+                    label: "IDENTIFIER",
+                    text: $identifier,
+                    prompt: "com.example.app",
+                    mono: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("PLATFORM")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ShipyardTheme.body)
+                    Menu {
+                        ForEach(BundleIdPlatformOption.allCases, id: \.self) { option in
+                            Button(option.displayName) {
+                                platform = option
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(platform.displayName)
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.title)
+                            Spacer()
+                            ShipyardIcon(name: "ShipyardChevron", size: 10)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(LaunchTheme.field)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(LaunchTheme.border, lineWidth: 1)
+                        )
                     }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
-                .disabled(isSaving)
-                Spacer()
-            }
-            TextField("Seed ID (optional)", text: $seedId)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12, design: .monospaced))
-                .disabled(isSaving)
-            Text("Test on a throwaway identifier first. Needs an API key with the Admin role.")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.appCaption)
-                    .foregroundColor(AppTheme.negative)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Button("Cancel") { onDone() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.secondary)
+                    .menuStyle(.borderlessButton)
                     .disabled(isSaving)
+                    .accessibilityLabel("Select platform")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    sheetField(
+                        label: "SEED ID (OPTIONAL)",
+                        text: $seedId,
+                        prompt: "Team seed identifier",
+                        mono: true)
+                    Text("Leave blank unless Apple assigned a seed ID to this identifier.")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.negative)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(24)
+
+            HStack {
                 Spacer()
+                Button("Cancel") { onDone() }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(isSaving)
                 if isSaving {
                     ProgressView()
                         .scaleEffect(0.7)
@@ -830,15 +967,39 @@ struct CreateBundleIdForm: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.launchPrimary)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                               || identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .padding(16)
+            .background(ShipyardTheme.sidebarBackground)
+            .overlay(
+                ShipyardTheme.rowDivider.frame(height: 1),
+                alignment: .top
+            )
         }
-        .padding(12)
-        .background(AppTheme.windowBackground)
+        .frame(width: 560)
+    }
+
+    private func sheetField(label: String, text: Binding<String>, prompt: String, mono: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(ShipyardTheme.body)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(mono ? .system(size: 13, design: .monospaced) : .system(size: 13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(LaunchTheme.field)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .disabled(isSaving)
+        }
     }
 }
 
@@ -922,11 +1083,15 @@ struct InviteUserForm: View {
     @State private var selectedAppIds: Set<String> = []
     @State private var provisioningAllowed = false
     @State private var isSaving = false
-    @State private var isResending = false
     @State private var errorMessage: String?
     @State private var noticeMessage: String?
 
-    private var isBusy: Bool { isSaving || isResending }
+    /// The Figma sheet picks a single role; the API takes a set.
+    private var selectedRole: UserRoleOption {
+        roles.first ?? .DEVELOPER
+    }
+
+    private var isBusy: Bool { isSaving }
 
     /// App ids for the invite body: empty = all apps.
     private var visibleAppIds: [String] {
@@ -935,109 +1100,136 @@ struct InviteUserForm: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Invite User")
-                .font(.appBody)
-                .fontWeight(.medium)
-            TextField("Email", text: $email)
-                .textFieldStyle(.roundedBorder)
-                .font(.appBody)
-                .disabled(isBusy)
-            HStack(spacing: 8) {
-                TextField("First name", text: $firstName)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.appBody)
-                    .disabled(isBusy)
-                TextField("Last name", text: $lastName)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.appBody)
-                    .disabled(isBusy)
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Invite User")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text("Send an Apple Developer team invitation to grant immediate access.")
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.body)
             }
-            Text("Roles")
-                .font(.appCaption)
-                .foregroundColor(.secondary)
-            RoleDropdownMenu(selection: $roles)
-                .disabled(isBusy)
-            Toggle("All apps visible", isOn: $allAppsVisible)
-                .font(.appBody)
-                .disabled(isBusy)
-                .onChange(of: allAppsVisible) { _, newValue in
-                    // Turning all-apps back on drops the per-app picks so
-                    // stale ids can never leak into an all-apps invite.
-                    if newValue { selectedAppIds = [] }
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    inviteField(label: "First Name", text: $firstName, prompt: "Jane")
+                    inviteField(label: "Last Name", text: $lastName, prompt: "Doe")
                 }
-            if !allAppsVisible {
-                ChecklistDropdownMenu(
-                    title: "Apps",
-                    items: apps.map { app in
-                        let name = app.name ?? app.bundleId ?? app.id
-                        return ChecklistDropdownMenu.Item(
-                            id: app.id,
-                            title: name,
-                            subtitle: app.name == nil ? nil : app.bundleId
+
+                inviteField(label: "Email Address", text: $email, prompt: "jane.doe@acme.com")
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Role")
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    Menu {
+                        ForEach(UserRoleOption.allCases, id: \.self) { option in
+                            Button(option.displayName) {
+                                roles = [option]
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(selectedRole.displayName)
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.title)
+                            Spacer()
+                            ShipyardIcon(name: "ShipyardChevron", size: 10)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(LaunchTheme.field)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(LaunchTheme.border, lineWidth: 1)
                         )
-                    },
-                    selection: $selectedAppIds,
-                    emptyHint: "No apps loaded — open the sidebar app list first so the picker has something to offer.",
-                    allowsSelectAll: true
-                )
-                .disabled(isBusy)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .disabled(isBusy)
+                    .accessibilityLabel("Select role")
+                    Text(roleDescription(selectedRole))
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("App Access")
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("All Apps (Including New)", isOn: $allAppsVisible)
+                            .font(.system(size: 12))
+                            .toggleStyle(.checkbox)
+                            .disabled(isBusy)
+                            .onChange(of: allAppsVisible) { _, newValue in
+                                // Turning all-apps back on drops the per-app
+                                // picks so stale ids can never leak into an
+                                // all-apps invite.
+                                if newValue { selectedAppIds = [] }
+                            }
+                        ForEach(apps, id: \.id) { app in
+                            Toggle("\(app.name ?? app.bundleId ?? app.id) (\(app.bundleId ?? ""))", isOn: Binding(
+                                get: { selectedAppIds.contains(app.id) },
+                                set: { checked in
+                                    if checked { selectedAppIds.insert(app.id) }
+                                    else { selectedAppIds.remove(app.id) }
+                                }
+                            ))
+                            .font(.system(size: 12))
+                            .toggleStyle(.checkbox)
+                            .disabled(isBusy || allAppsVisible)
+                        }
+                        if apps.isEmpty {
+                            Text("No apps loaded — apps appear here once the Apps table loads.")
+                                .font(.system(size: 11))
+                                .foregroundColor(ShipyardTheme.body)
+                        }
+                    }
+                    .padding(12)
+                    .background(LaunchTheme.page)
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                    )
+                }
             }
-            Toggle("Provisioning allowed", isOn: $provisioningAllowed)
-                .font(.appBody)
-                .disabled(isBusy)
-            Text("Needs an API key with the Admin role. Invites count against the team member limit.")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
+
             if let noticeMessage {
                 Text(noticeMessage)
-                    .font(.appCaption)
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.appCaption)
+                    .font(.system(size: 12))
                     .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
             HStack {
                 Button("Cancel") { onDone() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.secondary)
+                    .buttonStyle(.launchSecondary)
                     .disabled(isBusy)
                 Spacer()
                 if isBusy {
                     ProgressView()
                         .scaleEffect(0.7)
                 } else {
-                    Button("Resend") {
+                    Button("Send Invitation") {
                         Task { @MainActor in
-                            await runInvite(mode: .resend)
+                            await runInvite()
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(!canSubmit)
-                    .help("Re-issue the pending invite for this email")
-                    Button("Send Invite") {
-                        Task { @MainActor in
-                            await runInvite(mode: .send)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.launchPrimary)
                     .disabled(!canSubmit)
                 }
             }
+            .padding(.top, 12)
         }
-        .padding(12)
-        .background(AppTheme.windowBackground)
-    }
-
-    private enum InviteMode {
-        case send
-        case resend
+        .padding(24)
+        .frame(minWidth: 480, idealWidth: 560, maxWidth: 640)
     }
 
     private var canSubmit: Bool {
@@ -1048,38 +1240,63 @@ struct InviteUserForm: View {
             && (allAppsVisible || !selectedAppIds.isEmpty)
     }
 
-    private func runInvite(mode: InviteMode) async {
-        if mode == .send { isSaving = true } else { isResending = true }
-        defer {
-            isSaving = false
-            isResending = false
-        }
+    private func runInvite() async {
+        isSaving = true
+        defer { isSaving = false }
         errorMessage = nil
         noticeMessage = nil
-        let result: ResourcesViewModel.WriteResult
-        switch mode {
-        case .send:
-            result = await viewModel.inviteUser(
-                email: email, firstName: firstName, lastName: lastName,
-                roles: roles, allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed,
-                visibleAppIds: visibleAppIds)
-        case .resend:
-            result = await viewModel.resendInvitation(
-                email: email, firstName: firstName, lastName: lastName,
-                roles: roles.map(\.rawValue), allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed)
-        }
+        let result = await viewModel.inviteUser(
+            email: email, firstName: firstName, lastName: lastName,
+            roles: roles, allAppsVisible: allAppsVisible,
+            provisioningAllowed: provisioningAllowed,
+            visibleAppIds: visibleAppIds)
         switch result {
         case .success:
             // .ignored: duplicate in flight / cancelled — keep the form
             // open, nothing was sent.
-            noticeMessage = mode == .send ? "Invitation sent." : "Invitation re-sent."
+            noticeMessage = "Invitation sent."
             onDone()
         case .failure(let message):
             errorMessage = message
         case .ignored:
             break
+        }
+    }
+
+    private func inviteField(label: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(LaunchTheme.field)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .disabled(isBusy)
+        }
+    }
+
+    /// One-line remit per role for the hint under the picker.
+    private func roleDescription(_ role: UserRoleOption) -> String {
+        switch role {
+        case .ADMIN: return "Admins manage everything: apps, users, certificates, and agreements."
+        case .ACCOUNT_HOLDER: return "The account holder has ultimate legal and financial responsibility."
+        case .APP_MANAGER: return "App Managers edit store listings, versions, and TestFlight details."
+        case .DEVELOPER: return "Developers have access to write code, create sandbox profiles, and download builds."
+        case .MARKETING: return "Marketing roles manage promotional artwork and store copy."
+        case .FINANCE: return "Finance roles access sales, payments, and tax reports."
+        case .SALES: return "Sales roles manage customers and pricing."
+        case .CUSTOMER_SUPPORT: return "Customer support roles reply to reviews and manage users."
+        case .TECHNICAL: return "Technical roles manage certificates, devices, and provisioning."
+        case .READ_ONLY: return "Read-only access to apps, builds, and reports."
+        case .ACCESS_TO_REPORTS: return "Access to sales and finance reports only."
         }
     }
 }
@@ -1105,119 +1322,114 @@ struct CreateProfileForm: View {
     private var certificates: [CertificateModel] { viewModel.certificatesState.loadedValue ?? [] }
     private var devices: [DeviceModel] { viewModel.devicesState.loadedValue ?? [] }
 
+    enum ProfileStep: Int, CaseIterable {
+        case type = 1, bundleID, certificates, devices, name, review
+
+        var title: String {
+            switch self {
+            case .type: return "Select Type"
+            case .bundleID: return "Select Bundle ID"
+            case .certificates: return "Select Certificates"
+            case .devices: return "Select Devices"
+            case .name: return "Name Profile"
+            case .review: return "Review Profile"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .type: return "Pick the provisioning profile type for this build."
+            case .bundleID: return "Pick the bundle ID this profile belongs to."
+            case .certificates: return "Select one or more certificates to include in this provisioning profile."
+            case .devices: return "Select test devices to include (development and ad-hoc only)."
+            case .name: return "Give the profile a recognizable name."
+            case .review: return "Confirm the details before creating the profile."
+            }
+        }
+
+        var shortLabel: String {
+            switch self {
+            case .type: return "Type"
+            case .bundleID: return "Bundle ID"
+            case .certificates: return "Certificates"
+            case .devices: return "Devices"
+            case .name: return "Name"
+            case .review: return "Review"
+            }
+        }
+    }
+
+    @State private var step: ProfileStep = .type
+
+    private var canContinue: Bool {
+        switch step {
+        case .bundleID: return bundleIdId != nil
+        case .certificates: return !certificateIds.isEmpty
+        case .name: return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .type, .devices, .review: return true
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("New Provisioning Profile")
-                .font(.appBody)
-                .fontWeight(.medium)
-            TextField("Profile name", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .font(.appBody)
-                .disabled(isSaving)
-            Picker("Type", selection: $profileType) {
-                ForEach(ProfileTypeOption.allCases, id: \.self) { option in
-                    Text(option.displayName).tag(option)
-                }
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(step.title)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text(step.subtitle)
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.body)
             }
-            .pickerStyle(.menu)
-            .disabled(isSaving)
-            Picker("Bundle ID", selection: $bundleIdId) {
-                Text("Select a bundle ID").tag(nil as String?)
-                ForEach(bundleIds, id: \.id) { bundleId in
-                    Text("\(bundleId.name ?? bundleId.identifier ?? bundleId.id) (\(bundleId.identifier ?? ""))")
-                        .tag(bundleId.id as String?)
-                }
-            }
-            .pickerStyle(.menu)
-            .disabled(isSaving || bundleIds.isEmpty)
-            if bundleIds.isEmpty {
-                Text("No bundle IDs loaded — open Resources → Bundle IDs first so the picker has something to offer.")
-                    .font(.appCaption2)
-                    .foregroundColor(.secondary)
-            }
-            Text("Certificates (\(certificateIds.count) selected)")
-                .font(.appCaption)
-                .foregroundColor(.secondary)
-            ChecklistDropdownMenu(
-                title: "Certificates",
-                items: certificates.map {
-                    ChecklistDropdownMenu.Item(
-                        id: $0.id,
-                        title: certificatePickerLabel($0),
-                        subtitle: nil
-                    )
-                },
-                selection: $certificateIds,
-                emptyHint: "No certificates loaded — open Resources → Certificates first.",
-                allowsSelectAll: true
-            )
-            .disabled(isSaving)
-            Text("Devices (\(deviceIds.count) selected, optional)")
-                .font(.appCaption)
-                .foregroundColor(.secondary)
-            ChecklistDropdownMenu(
-                title: "Devices",
-                items: devices.map {
-                    ChecklistDropdownMenu.Item(
-                        id: $0.id,
-                        title: "\($0.name ?? $0.id) (\($0.udid ?? ""))",
-                        subtitle: nil
-                    )
-                },
-                selection: $deviceIds,
-                emptyHint: "No devices loaded — open Resources → Devices first.",
-                allowsSelectAll: true
-            )
-            .disabled(isSaving)
-            Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
+
+            stepper
+
+            stepBody
+                .frame(minHeight: 220, alignment: .topLeading)
+
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.appCaption)
+                    .font(.system(size: 12))
                     .foregroundColor(AppTheme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
             HStack {
                 Button("Cancel") { onDone() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.secondary)
+                    .buttonStyle(.launchSecondary)
                     .disabled(isSaving)
                 Spacer()
+                if step != .type {
+                    Button("Back") {
+                        if let previous = ProfileStep(rawValue: step.rawValue - 1) {
+                            step = previous
+                        }
+                    }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(isSaving)
+                }
                 if isSaving {
                     ProgressView()
                         .scaleEffect(0.7)
-                } else {
+                } else if step == .review {
                     Button("Create") {
                         Task { @MainActor in
-                            isSaving = true
-                            defer { isSaving = false }
-                            let result = await viewModel.createProfile(
-                                name: name,
-                                profileType: profileType,
-                                bundleIdId: bundleIdId,
-                                certificateIds: certificateIds,
-                                deviceIds: deviceIds)
-                            if case .success = result {
-                                onDone()
-                            } else if case .failure(let message) = result {
-                                // .ignored: duplicate in flight / cancelled —
-                                // keep the form open, nothing was created.
-                                errorMessage = message
-                            }
+                            await create()
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              || bundleIdId == nil
-                              || certificateIds.isEmpty)
+                    .buttonStyle(.launchPrimary)
+                } else {
+                    Button("Continue") {
+                        step = ProfileStep(rawValue: step.rawValue + 1) ?? .review
+                    }
+                    .buttonStyle(.launchPrimary)
+                    .disabled(!canContinue)
+                    .keyboardShortcut(.defaultAction)
                 }
             }
+            .padding(.top, 12)
         }
-        .padding(12)
-        .background(AppTheme.windowBackground)
+        .padding(24)
+        .frame(width: 560)
         .onAppear {
             // Relationship pickers reuse the existing fetches — load() is a
             // no-op for kinds already loaded, so this never refetches.
@@ -1228,6 +1440,253 @@ struct CreateProfileForm: View {
             viewModel.loadAllPages(.bundleIds)
             viewModel.loadAllPages(.certificates)
             viewModel.loadAllPages(.devices)
+        }
+    }
+
+    private var stepper: some View {
+        HStack(spacing: 0) {
+            ForEach(ProfileStep.allCases, id: \.self) { item in
+                HStack(spacing: 4) {
+                    if item.rawValue < step.rawValue {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(ShipyardTheme.success)
+                            .accessibilityHidden(true)
+                    } else if item == step {
+                        Text("\(item.rawValue)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 16, height: 16)
+                            .background(Circle().fill(ShipyardTheme.accent))
+                            .accessibilityHidden(true)
+                    } else {
+                        Text("\(item.rawValue)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.body)
+                            .frame(width: 16, height: 16)
+                            .background(Circle().fill(Color.gray.opacity(0.2)))
+                            .accessibilityHidden(true)
+                    }
+                    Text(item.shortLabel)
+                        .font(.system(size: 11, weight: item == step ? .semibold : .regular))
+                        .foregroundColor(item == step ? ShipyardTheme.accent : ShipyardTheme.body)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .accessibilityLabel("Step \(step.rawValue) of 6: \(step.title)")
+    }
+
+    @ViewBuilder
+    private var stepBody: some View {
+        switch step {
+        case .type: typeStep
+        case .bundleID: bundleStep
+        case .certificates: certificatesStep
+        case .devices: devicesStep
+        case .name: nameStep
+        case .review: reviewStep
+        }
+    }
+
+    private var typeStep: some View {
+        VStack(alignment: .leading, spacing: 8) {
+                Text("PROFILE TYPE")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(ShipyardTheme.body)
+                Menu {
+                    ForEach(ProfileTypeOption.allCases, id: \.self) { option in
+                        Button(option.displayName) {
+                            profileType = option
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text(profileType.displayName)
+                            .font(.system(size: 13))
+                            .foregroundColor(ShipyardTheme.title)
+                        Spacer()
+                        ShipyardIcon(name: "ShipyardChevron", size: 10)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(LaunchTheme.field)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(isSaving)
+                .accessibilityLabel("Select profile type")
+            }
+    }
+
+    private var bundleStep: some View {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(bundleIds, id: \.id) { bundleId in
+                        pickRow(
+                            title: bundleId.name ?? bundleId.identifier ?? bundleId.id,
+                            subtitle: bundleId.identifier,
+                            isPicked: bundleIdId == bundleId.id
+                        ) {
+                            bundleIdId = bundleId.id
+                        }
+                        ShipyardTheme.rowDivider.frame(height: 1)
+                    }
+                }
+            }
+            .background(LaunchTheme.field)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(LaunchTheme.border, lineWidth: 1)
+            )
+    }
+
+    private var certificatesStep: some View {
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(certificates, id: \.id) { certificate in
+                        Toggle(isOn: Binding(
+                            get: { certificateIds.contains(certificate.id) },
+                            set: { checked in
+                                if checked { certificateIds.insert(certificate.id) }
+                                else { certificateIds.remove(certificate.id) }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(certificate.displayName ?? certificate.name ?? "Unknown certificate")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(ShipyardTheme.title)
+                                Text("\(certificateTypeDisplayName(certificate.certificateType)) • Expires \(certificateExpiryDisplay(certificate.expirationDate))")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(ShipyardTheme.body)
+                            }
+                        }
+                        .font(.system(size: 13))
+                        .toggleStyle(.checkbox)
+                        .disabled(isSaving)
+                    }
+                }
+                .padding(12)
+            }
+            .background(LaunchTheme.field)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(LaunchTheme.border, lineWidth: 1)
+            )
+    }
+
+    private var devicesStep: some View {
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(devices, id: \.id) { device in
+                        Toggle(isOn: Binding(
+                            get: { deviceIds.contains(device.id) },
+                            set: { checked in
+                                if checked { deviceIds.insert(device.id) }
+                                else { deviceIds.remove(device.id) }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(device.name ?? "Unknown device")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(ShipyardTheme.title)
+                                Text("\(devicePlatformDisplayName(device.platform ?? "")) • \(device.udid ?? "")")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(ShipyardTheme.body)
+                            }
+                        }
+                        .font(.system(size: 13))
+                        .toggleStyle(.checkbox)
+                        .disabled(isSaving)
+                    }
+                }
+                .padding(12)
+            }
+            .background(LaunchTheme.field)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(LaunchTheme.border, lineWidth: 1)
+            )
+    }
+
+    private var nameStep: some View {
+            LaunchField(label: "Profile Name", text: $name, prompt: "Acme Development")
+                .disabled(isSaving)
+    }
+
+    private var reviewStep: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                reviewRow("Type", profileType.displayName)
+                reviewRow("Bundle ID", bundleIds.first(where: { $0.id == bundleIdId }).map { "\($0.name ?? "") (\($0.identifier ?? ""))" } ?? "—")
+                reviewRow("Certificates", "\(certificateIds.count) selected")
+                reviewRow("Devices", deviceIds.isEmpty ? "None (distribution)" : "\(deviceIds.count) selected")
+                reviewRow("Name", name.isEmpty ? "—" : name)
+                Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+    }
+
+    private func pickRow(title: String, subtitle: String?, isPicked: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ShipyardIcon(name: isPicked ? "ShipyardCheckSm" : "ShipyardCircleSm", size: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSaving)
+    }
+
+    private func reviewRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(width: 120, alignment: .leading)
+            Text(value)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func create() async {
+        isSaving = true
+        defer { isSaving = false }
+        errorMessage = nil
+        let result = await viewModel.createProfile(
+            name: name,
+            profileType: profileType,
+            bundleIdId: bundleIdId,
+            certificateIds: certificateIds,
+            deviceIds: deviceIds)
+        if case .success = result {
+            onDone()
+        } else if case .failure(let message) = result {
+            // .ignored: duplicate in flight / cancelled —
+            // keep the form open, nothing was created.
+            errorMessage = message
         }
     }
 }

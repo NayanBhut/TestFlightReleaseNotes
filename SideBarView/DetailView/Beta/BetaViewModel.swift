@@ -362,6 +362,48 @@ final class BetaViewModel: ObservableObject {
         }
     }
 
+    /// Multi-group invite (Figma invite-tester sheet): one POST assigns
+    /// the tester to every checked group, then refreshes the selected
+    /// group's rows so the new tester appears without a manual reload.
+    func inviteTesterToGroups(email: String, firstName: String? = nil, lastName: String? = nil, groupIds: [String]) async {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard EmailValidator.isValid(trimmed) else {
+            presentMessage("Enter a valid tester email address.")
+            return
+        }
+        guard currentAppId != nil else {
+            presentMessage("Select an app first.")
+            return
+        }
+        guard !groupIds.isEmpty else {
+            presentMessage("Check at least one group.")
+            return
+        }
+        guard let body = BetaTesterInvitationBody.inviteToGroups(
+            email: trimmed, firstName: firstName, lastName: lastName,
+            betaGroupIds: groupIds) else {
+            presentMessage(APIError.jsonConversionFailure.details)
+            return
+        }
+        guard let request = APIClient.shared.getRequest(
+            api: .post(name: .getBetaTesters, body: body), apiVersion: .v1) else { return }
+
+        viewState = .betaAssignmentUpdating
+        let stateToken = viewState
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            if viewState == stateToken { viewState = ._none }
+            if let msg = serverMessage(from: data) {
+                presentMessage(msg)
+            } else if let groupId = selectedGroup?.id {
+                await fetchTesters(groupId: groupId)
+            }
+        } catch {
+            if viewState == stateToken { viewState = ._none }
+            presentError(error)
+        }
+    }
+
     func addTestersToGroup(testerIds: [String]) async {
         guard let groupId = selectedGroup?.id, !testerIds.isEmpty else { return }
         guard let body = BetaRelationshipBody.testerLinkage(ids: testerIds) else {

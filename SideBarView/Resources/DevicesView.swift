@@ -22,6 +22,7 @@ struct DevicesView: View {
     /// Raw platform value filter; nil is "All".
     @State private var platformFilter: String?
     @State private var bannerError: String?
+    @State private var pendingDisable: DeviceModel?
 
     private var searched: [DeviceModel] { viewModel.filteredDevices }
 
@@ -46,12 +47,6 @@ struct DevicesView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            if showRegisterForm {
-                RegisterDeviceForm(viewModel: viewModel) {
-                    showRegisterForm = false
-                }
-                Divider()
-            }
             if let bannerError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -81,6 +76,11 @@ struct DevicesView: View {
                minHeight: fixedSize ? 480 : 0, idealHeight: fixedSize ? 600 : nil, maxHeight: fixedSize ? maxSheetHeight : nil)
         .onAppear {
             viewModel.load(.devices)
+        }
+        .sheet(isPresented: $showRegisterForm) {
+            RegisterDeviceForm(viewModel: viewModel) {
+                showRegisterForm = false
+            }
         }
     }
 
@@ -313,16 +313,46 @@ struct DevicesView: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button(isDisabled ? "Enable" : "Disable") {
+                if isDisabled {
+                    Task { @MainActor in
+                        if case .failure(let message) = await viewModel.setDeviceEnabled(
+                            device, enabled: true) {
+                            bannerError = message
+                        } else {
+                            bannerError = nil
+                        }
+                    }
+                } else {
+                    // Disabling revokes the device (no API delete exists)
+                    // and still counts against the yearly limit — confirm.
+                    pendingDisable = device
+                }
+            }
+            .accessibilityLabel("\(isDisabled ? "Enable" : "Disable") \(device.name ?? "device")")
+        }
+        .confirmationDialog(
+            "Disable “\(pendingDisable?.name ?? "this device")”? It stops working for development installs and still counts against the yearly device limit.",
+            isPresented: Binding(
+                get: { pendingDisable != nil },
+                set: { if !$0 { pendingDisable = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Disable Device", role: .destructive) {
+                guard let target = pendingDisable else { return }
+                pendingDisable = nil
                 Task { @MainActor in
                     if case .failure(let message) = await viewModel.setDeviceEnabled(
-                        device, enabled: isDisabled) {
+                        target, enabled: false) {
                         bannerError = message
                     } else {
                         bannerError = nil
                     }
                 }
             }
-            .accessibilityLabel("\(isDisabled ? "Enable" : "Disable") \(device.name ?? "device")")
+            Button("Cancel", role: .cancel) {
+                pendingDisable = nil
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(device.name ?? "Unknown device"), \(deviceStatusDisplayName(device.status))")
@@ -369,7 +399,8 @@ struct DevicesView: View {
 // MARK: - Display helpers
 
 /// API platform codes to the Figma labels (unknown codes pass through).
-private func devicePlatformDisplayName(_ platform: String) -> String {
+/// Shared with the profile wizard (same module).
+func devicePlatformDisplayName(_ platform: String) -> String {
     switch platform.uppercased() {
     case "IOS": return "iOS"
     case "MAC_OS": return "macOS"

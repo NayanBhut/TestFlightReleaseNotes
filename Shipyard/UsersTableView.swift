@@ -25,12 +25,6 @@ struct UsersTableView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            if showInviteForm {
-                InviteUserForm(viewModel: viewModel, apps: apps) {
-                    showInviteForm = false
-                }
-                Divider()
-            }
             if let bannerError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -59,6 +53,11 @@ struct UsersTableView: View {
         .onAppear {
             viewModel.load(.users)
             viewModel.loadInvitations()
+        }
+        .sheet(isPresented: $showInviteForm) {
+            InviteUserForm(viewModel: viewModel, apps: apps) {
+                showInviteForm = false
+            }
         }
         .confirmationDialog(
             "Remove this user from the team? They lose access immediately.",
