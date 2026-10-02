@@ -220,6 +220,7 @@ final class BetaViewModel: ObservableObject {
                 let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
                 testers = model.data
                 testersMeta = model.meta
+                testersViaFilterEndpoint = false
             } catch {
                 // Reset loading state before falling back to the filter request.
                 testers = []
@@ -266,6 +267,7 @@ final class BetaViewModel: ObservableObject {
                 let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
                 testers = model.data
                 testersMeta = model.meta
+                testersViaFilterEndpoint = true
             } catch {
                 testers = []
                 presentMessage(serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
@@ -280,7 +282,46 @@ final class BetaViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Tester Assignments
+    /// Cursor-drains EVERY tester page so large groups list all testers,
+    /// not just the first 100. Page one goes through fetchTesters (keeps
+    /// the 404→filter fallback); the rest continue on whichever endpoint
+    /// served it, deduplicated by id. Stale mid-flight group switches and
+    /// cancellation abort the drain without touching the new group's rows.
+    func loadAllTesters(groupId: String) async {
+        await fetchTesters(groupId: groupId)
+        guard selectedGroup?.id == groupId else { return }
+        let useFilter = testersViaFilterEndpoint
+        while let cursor = testersMeta?.paging.nextCursor {
+            guard selectedGroup?.id == groupId else { return }
+            guard !Task.isCancelled else { return }
+            var queryParams = useFilter
+                ? ["filter[betaGroups]": groupId, "limit": "100"]
+                : ["limit": "100"]
+            queryParams["cursor"] = cursor
+            let path = useFilter ? "" : "\(groupId)/betaTesters"
+            let name: APIName = useFilter ? .getBetaTesters : .getBetaGroups
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: name, queryParams: queryParams, path: path),
+                apiVersion: .v1) else { return }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard selectedGroup?.id == groupId else { return }
+                guard !Task.isCancelled else { return }
+                let model = try getDecoder().decode(BetaTestersDocument.self, from: data)
+                let known = Set(testers.map(\.id))
+                testers += model.data.filter { !known.contains($0.id) }
+                testersMeta = model.meta
+            } catch {
+                guard selectedGroup?.id == groupId else { return }
+                presentError(error)
+                return
+            }
+        }
+    }
+
+    /// Which endpoint served page one of the current tester list (set by
+    /// fetchTesters and its filter fallback) so the drain continues there.
+    private var testersViaFilterEndpoint = false
 
     func inviteTester(email: String, firstName: String? = nil, lastName: String? = nil, buildIds: [String] = []) async {
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -41,6 +41,22 @@
 		B47A0019B47A0019001A9E19 /* ReviewsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0018B47A0018001A9E18 /* ReviewsView.swift */; };
 		B47A001BB47A001B001A9E1B /* ResourcesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */; };
 		B47A001DB47A001D001A9E1D /* ResourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A001CB47A001C001A9E1C /* ResourcesView.swift */; };
+		B47A002FB47A002F001A9E2F /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A002EB47A002E001A9E2E /* DevicesView.swift */; };
+		C47A0041C47A0041001A9E01 /* ShipyardTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0031C47A0031001A9E01 /* ShipyardTheme.swift */; };
+		C47A0042C47A0042001A9E02 /* ShipyardSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0032C47A0032001A9E02 /* ShipyardSidebar.swift */; };
+		C47A0043C47A0043001A9E03 /* ShipyardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0033C47A0033001A9E03 /* ShipyardShell.swift */; };
+		C47A0044C47A0044001A9E04 /* AppsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0034C47A0034001A9E04 /* AppsTableView.swift */; };
+		C47A0045C47A0045001A9E05 /* BuildsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0035C47A0035001A9E05 /* BuildsTableView.swift */; };
+		C47A0046C47A0046001A9E06 /* MonitoringView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0036C47A0036001A9E06 /* MonitoringView.swift */; };
+		C47A0047C47A0047001A9E07 /* CertificatesTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0037C47A0037001A9E07 /* CertificatesTableView.swift */; };
+		C47A0048C47A0048001A9E08 /* UsersTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0038C47A0038001A9E08 /* UsersTableView.swift */; };
+		C47A0049C47A0049001A9E09 /* BundleIDsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0039C47A0039001A9E09 /* BundleIDsTableView.swift */; };
+		C47A004AC47A004A001A9E0A /* ProfilesTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A003AC47A003A001A9E0A /* ProfilesTableView.swift */; };
+		C47A004BC47A004B001A9E0B /* BuildDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A003BC47A003B001A9E0B /* BuildDetailView.swift */; };
+		C47A004CC47A004C001A9E0C /* BetaGroupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A003CC47A003C001A9E0C /* BetaGroupsView.swift */; };
+		C47A004DC47A004D001A9E0D /* ReleaseNotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A003DC47A003D001A9E0D /* ReleaseNotesView.swift */; };
+		C47A004EC47A004E001A9E0E /* ShipyardAppInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A003EC47A003E001A9E0E /* ShipyardAppInfoView.swift */; };
+		C47A004FC47A004F001A9E0F /* AppDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A003FC47A003F001A9E0F /* AppDetailView.swift */; };
 		B47A0023B47A0023001A9E23 /* ReportsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */; };
 		B47A0025B47A0025001A9E25 /* ReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0024B47A0024001A9E24 /* ReportsView.swift */; };
 		B47A0029B47A0029001A9E29 /* ScreenshotsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */; };
@@ -108,6 +124,22 @@
 		B47A0018B47A0018001A9E18 /* ReviewsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsView.swift; sourceTree = "<group>"; };
 		B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourcesViewModel.swift; sourceTree = "<group>"; };
 		B47A001CB47A001C001A9E1C /* ResourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourcesView.swift; sourceTree = "<group>"; };
+		B47A002EB47A002E001A9E2E /* DevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesView.swift; sourceTree = "<group>"; };
+		C47A0031C47A0031001A9E01 /* ShipyardTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShipyardTheme.swift; sourceTree = "<group>"; };
+		C47A0032C47A0032001A9E02 /* ShipyardSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShipyardSidebar.swift; sourceTree = "<group>"; };
+		C47A0033C47A0033001A9E03 /* ShipyardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShipyardShell.swift; sourceTree = "<group>"; };
+		C47A0034C47A0034001A9E04 /* AppsTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsTableView.swift; sourceTree = "<group>"; };
+		C47A0035C47A0035001A9E05 /* BuildsTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildsTableView.swift; sourceTree = "<group>"; };
+		C47A0036C47A0036001A9E06 /* MonitoringView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringView.swift; sourceTree = "<group>"; };
+		C47A0037C47A0037001A9E07 /* CertificatesTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertificatesTableView.swift; sourceTree = "<group>"; };
+		C47A0038C47A0038001A9E08 /* UsersTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsersTableView.swift; sourceTree = "<group>"; };
+		C47A0039C47A0039001A9E09 /* BundleIDsTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleIDsTableView.swift; sourceTree = "<group>"; };
+		C47A003AC47A003A001A9E0A /* ProfilesTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesTableView.swift; sourceTree = "<group>"; };
+		C47A003BC47A003B001A9E0B /* BuildDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildDetailView.swift; sourceTree = "<group>"; };
+		C47A003CC47A003C001A9E0C /* BetaGroupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaGroupsView.swift; sourceTree = "<group>"; };
+		C47A003DC47A003D001A9E0D /* ReleaseNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesView.swift; sourceTree = "<group>"; };
+		C47A003EC47A003E001A9E0E /* ShipyardAppInfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShipyardAppInfoView.swift; sourceTree = "<group>"; };
+		C47A003FC47A003F001A9E0F /* AppDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDetailView.swift; sourceTree = "<group>"; };
 		B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsViewModel.swift; sourceTree = "<group>"; };
 		B47A0024B47A0024001A9E24 /* ReportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsView.swift; sourceTree = "<group>"; };
 		B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotsSheet.swift; sourceTree = "<group>"; };
@@ -218,6 +250,7 @@
 			children = (
 				B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */,
 				B47A001CB47A001C001A9E1C /* ResourcesView.swift */,
+				B47A002EB47A002E001A9E2E /* DevicesView.swift */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -231,6 +264,28 @@
 			path = Reports;
 			sourceTree = "<group>";
 		};
+		C47A0030C47A0030001A9E30 /* Shipyard */ = {
+			isa = PBXGroup;
+			children = (
+				C47A0031C47A0031001A9E01 /* ShipyardTheme.swift */,
+				C47A0032C47A0032001A9E02 /* ShipyardSidebar.swift */,
+				C47A0033C47A0033001A9E03 /* ShipyardShell.swift */,
+				C47A0034C47A0034001A9E04 /* AppsTableView.swift */,
+				C47A0035C47A0035001A9E05 /* BuildsTableView.swift */,
+				C47A0036C47A0036001A9E06 /* MonitoringView.swift */,
+				C47A0037C47A0037001A9E07 /* CertificatesTableView.swift */,
+				C47A0038C47A0038001A9E08 /* UsersTableView.swift */,
+				C47A0039C47A0039001A9E09 /* BundleIDsTableView.swift */,
+				C47A003AC47A003A001A9E0A /* ProfilesTableView.swift */,
+				C47A003BC47A003B001A9E0B /* BuildDetailView.swift */,
+				C47A003CC47A003C001A9E0C /* BetaGroupsView.swift */,
+				C47A003DC47A003D001A9E0D /* ReleaseNotesView.swift */,
+				C47A003EC47A003E001A9E0E /* ShipyardAppInfoView.swift */,
+				C47A003FC47A003F001A9E0F /* AppDetailView.swift */,
+			);
+			path = Shipyard;
+			sourceTree = "<group>";
+		};
 		CD616D792A8F62A4004ADF44 = {
 			isa = PBXGroup;
 			children = (
@@ -241,6 +296,7 @@
 				CD9DD4B52BE3EBC300820E2F /* JWT */,
 				CD9DD4952BE3DDE300820E2F /* ContentView */,
 				CD9DD49E2BE3DE8500820E2F /* SideBarView */,
+				C47A0030C47A0030001A9E30 /* Shipyard */,
 				CD6E67322BDB74C5007332D1 /* Model */,
 				CDB7694F2BD210A700DAC138 /* View */,
 				CD616D842A8F62A4004ADF44 /* App Store */,
@@ -538,6 +594,22 @@
 				B47A001BB47A001B001A9E1B /* ResourcesViewModel.swift in Sources */,
 				8D00F6222DCB34BC004CCA36 /* StateView.swift in Sources */,
 				B47A001DB47A001D001A9E1D /* ResourcesView.swift in Sources */,
+				B47A002FB47A002F001A9E2F /* DevicesView.swift in Sources */,
+				C47A0041C47A0041001A9E01 /* ShipyardTheme.swift in Sources */,
+				C47A0042C47A0042001A9E02 /* ShipyardSidebar.swift in Sources */,
+				C47A0043C47A0043001A9E03 /* ShipyardShell.swift in Sources */,
+				C47A0044C47A0044001A9E04 /* AppsTableView.swift in Sources */,
+				C47A0045C47A0045001A9E05 /* BuildsTableView.swift in Sources */,
+				C47A0046C47A0046001A9E06 /* MonitoringView.swift in Sources */,
+				C47A0047C47A0047001A9E07 /* CertificatesTableView.swift in Sources */,
+				C47A0048C47A0048001A9E08 /* UsersTableView.swift in Sources */,
+				C47A0049C47A0049001A9E09 /* BundleIDsTableView.swift in Sources */,
+				C47A004AC47A004A001A9E0A /* ProfilesTableView.swift in Sources */,
+				C47A004BC47A004B001A9E0B /* BuildDetailView.swift in Sources */,
+				C47A004CC47A004C001A9E0C /* BetaGroupsView.swift in Sources */,
+				C47A004DC47A004D001A9E0D /* ReleaseNotesView.swift in Sources */,
+				C47A004EC47A004E001A9E0E /* ShipyardAppInfoView.swift in Sources */,
+				C47A004FC47A004F001A9E0F /* AppDetailView.swift in Sources */,
 				D4E5F6071A2B3C4D5E6F7082 /* BuildProcessingMonitor.swift in Sources */,
 				7ACA666481D2A0898E7A65E2 /* AppFont.swift in Sources */,
 				A146172690C3077743D6AD5E /* AppTheme.swift in Sources */,

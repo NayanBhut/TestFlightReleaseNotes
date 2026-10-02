@@ -16,7 +16,7 @@ struct App_StoreApp: App {
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            ContentView(viewModel: viewModel)
+            ContentView(viewModel: viewModel, monitor: buildMonitor)
                 .environmentObject(navigationManager)
                 .environmentObject(appCommands)
                 .sheet(isPresented: $appCommands.showPalette) {

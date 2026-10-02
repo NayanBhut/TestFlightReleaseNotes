@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: SideBarViewModel
+    @ObservedObject var monitor: BuildProcessingMonitor
     @StateObject var detailViewModel: DetailViewModel
     @EnvironmentObject var navigationManager: NavigationManager
     @State var showAlertView: Bool = false
@@ -17,8 +18,9 @@ struct ContentView: View {
     /// and the split view the moment the first/last team is added/removed.
     @ObservedObject private var credentialStorage = CredentialStorage.shared
 
-    init(viewModel: SideBarViewModel) {
+    init(viewModel: SideBarViewModel, monitor: BuildProcessingMonitor) {
         self.viewModel = viewModel
+        self.monitor = monitor
         _detailViewModel = StateObject(wrappedValue: DetailViewModel(sidebarViewModel: viewModel))
     }
 
@@ -29,15 +31,12 @@ struct ContentView: View {
                 // matches the Figma first-launch frames.
                 FirstLaunchView(onAddKey: { showAlertView = true })
             } else {
-                NavigationSplitView {
-                    SideBarView(viewModel: viewModel, isAddNewTeam: $showAlertView, isNewAccountAdded: $isNewAccountAdded)
-                        .environmentObject(navigationManager)
-                } detail: {
-                    VStack(alignment: .center){
-                        DetailView(viewModel: detailViewModel, onAddTeam: { showAlertView = true })
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                ShipyardShell(
+                    sidebarVM: viewModel,
+                    detailVM: detailViewModel,
+                    monitor: monitor,
+                    onAddTeam: { showAlertView = true }
+                )
             }
 
             if showAlertView {
@@ -66,9 +65,10 @@ struct ContentView: View {
 
 private struct ContentViewPreview: View {
     @StateObject private var viewModel = SideBarViewModel()
+    @StateObject private var monitor = BuildProcessingMonitor()
 
     var body: some View {
-        ContentView(viewModel: viewModel)
+        ContentView(viewModel: viewModel, monitor: monitor)
             .environmentObject(NavigationManager())
     }
 }
