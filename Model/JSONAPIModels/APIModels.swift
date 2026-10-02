@@ -252,19 +252,26 @@ struct AppStoreVersionUpdateAttributes: Encodable {
     let releaseType: String
     let earliestReleaseDate: String?
     let copyright: String?
+    /// Editable while the version is in an editable state (Prepare for
+    /// Submission etc.). Omitted from the payload when nil so existing
+    /// callers that don't touch it send byte-identical requests.
+    let versionString: String?
 
     private enum CodingKeys: String, CodingKey {
         case releaseType
         case earliestReleaseDate
         case copyright
+        case versionString
     }
 
     init(releaseType: String,
          earliestReleaseDate: String?,
-         copyright: String? = nil) {
+         copyright: String? = nil,
+         versionString: String? = nil) {
         self.releaseType = releaseType
         self.earliestReleaseDate = earliestReleaseDate
         self.copyright = copyright
+        self.versionString = versionString
     }
 
     func encode(to encoder: Encoder) throws {
@@ -279,6 +286,9 @@ struct AppStoreVersionUpdateAttributes: Encodable {
             try container.encode(copyright, forKey: .copyright)
         } else {
             try container.encodeNil(forKey: .copyright)
+        }
+        if let versionString {
+            try container.encode(versionString, forKey: .versionString)
         }
     }
 }
