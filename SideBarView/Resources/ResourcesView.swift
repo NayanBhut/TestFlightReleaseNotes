@@ -120,6 +120,12 @@ struct ResourceListContentView: View {
     @State private var showCreateProfileForm = false
 
     var body: some View {
+        if kind == .devices {
+            // Figma devices-light: the devices kind renders the dedicated
+            // table (toolbar, search, platform filter, register, pagination)
+            // instead of the generic rows — everything lives in DevicesView.
+            DevicesView(viewModel: viewModel)
+        } else {
         VStack(spacing: 0) {
             header
             Divider()
@@ -167,6 +173,7 @@ struct ResourceListContentView: View {
             if kind == .users {
                 viewModel.loadInvitations()
             }
+        }
         }
     }
 
@@ -537,7 +544,8 @@ struct ViewStateListState {
 
 /// POST /v1/devices — name, platform (spec enum BundleIdPlatform) and UDID
 /// are all required. Needs an Admin key role; a TestFlight-only key 403s.
-private struct RegisterDeviceForm: View {
+/// Internal (not private) so the Figma devices table reuses the same form.
+struct RegisterDeviceForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
     @State private var name = ""
@@ -622,7 +630,8 @@ private struct RegisterDeviceForm: View {
 /// (Keychain Access → Certificate Assistant → Request a Certificate,
 /// or `openssl req -new`). File upload only: raw CSR text is never
 /// shown or pasted — users pick the file the same way as the .p8 key.
-private struct CreateCertificateForm: View {
+/// Internal (not private) so the Figma certificates table reuses it.
+struct CreateCertificateForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
     @State private var certificateType: CertificateTypeOption = .IOS_DEVELOPMENT
@@ -744,7 +753,8 @@ private struct CreateCertificateForm: View {
 
 /// POST /v1/bundleIds — name, identifier and platform are required;
 /// seedId is optional. Needs an Admin key role; a TestFlight-only key 403s.
-private struct CreateBundleIdForm: View {
+/// Internal (not private) so the Figma bundle-IDs table reuses the form.
+struct CreateBundleIdForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
     @State private var name = ""
@@ -898,7 +908,8 @@ private struct RoleDropdownMenu: View {
 /// required. Resend re-issues a pending invite with the form's details
 /// (find by email → delete → re-create; no dedicated resend endpoint).
 /// Needs an Admin key role; a TestFlight-only key 403s.
-private struct InviteUserForm: View {
+/// Internal (not private) so the Figma users table reuses the same form.
+struct InviteUserForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     /// Team apps for single-app invites (allAppsVisible == false).
     var apps: [AppsData] = []
@@ -1078,7 +1089,8 @@ private struct InviteUserForm: View {
 /// development/adhoc types). Pickers read the lists the view model
 /// already fetched — opening one kind never refetches another.
 /// Needs an Admin key role; a TestFlight-only key 403s.
-private struct CreateProfileForm: View {
+/// Internal (not private) so the Figma profiles table reuses the form.
+struct CreateProfileForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
     @State private var name = ""

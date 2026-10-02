@@ -1202,6 +1202,28 @@ extension DetailViewModel {
         }
     }
 
+    /// DELETE /v1/appStoreVersionLocalizations/{id}. Removes the record
+    /// locally on success; the caller re-seeds drafts and selection.
+    /// Returns an inline message on failure (editor stays open).
+    func deleteVersionLocalization(id: String, locale: String) async -> String? {
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .appStoreVersionLocalizations, path: id),
+            apiVersion: .v1) else {
+            return "Couldn't build the delete request."
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            if case .loaded(var localizations) = versionLocalizationsState {
+                localizations.removeAll { $0.id == id }
+                versionLocalizationsState = localizations.isEmpty ? .empty : .loaded(localizations)
+            }
+            return nil
+        } catch {
+            detailLogger.error("Failed to delete version localization: \(error.localizedDescription)")
+            return appInfoWriteErrorMessage(for: error)
+        }
+    }
+
     /// Outcome of a version localization save (same contract as
     /// AppInfoSaveResult — separate type so call sites read unambiguously).
     enum VersionLocalizationSaveResult {
