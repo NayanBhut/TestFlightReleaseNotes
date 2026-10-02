@@ -94,7 +94,7 @@ final class BetaViewModel: ObservableObject {
             return
         }
         betaLogger.error("Beta request failed: \(error.localizedDescription, privacy: .public)")
-        errorMessage = error.localizedDescription
+        errorMessage = FriendlyErrorMessage.message(for: error)
         hasError = true
     }
 
@@ -764,7 +764,7 @@ final class BetaViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 betaLogger.error("Failed to load team users: \(error.localizedDescription, privacy: .public)")
-                teamUsersError = (error as? APIError)?.details ?? error.localizedDescription
+                teamUsersError = FriendlyErrorMessage.message(for: error)
                 return
             }
         } while cursor != nil

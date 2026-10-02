@@ -389,11 +389,7 @@ extension DetailViewModel {
             if !isPaginating {
                 selectedVersion = version
                 meta = nil
-                if let apiError = error as? APIError {
-                    buildsState = .error(apiError.details)
-                } else {
-                    buildsState = .error(error.localizedDescription)
-                }
+                buildsState = .error(FriendlyErrorMessage.message(for: error))
             }
         }
     }
