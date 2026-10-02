@@ -42,13 +42,15 @@ struct ReleaseTabView: View {
     // MARK: - Version selection
 
     private var allVersions: [AppStoreVersionsModel] {
+        // NOTE: must not read shownVersion here — shownVersion reads
+        // allVersions, so that would recurse until the stack blows up.
         let loaded = reviewsVM.appStoreVersionsState.loadedValue ?? []
-        let platform = shownVersion?.platform
-            ?? reviewsVM.displayedAppStoreVersion?.platform
-        let filtered = platform.map { p in loaded.filter { $0.platform == p } } ?? loaded
-        return filtered.sorted {
+        let sorted = loaded.sorted {
             ($0.versionString ?? "").localizedStandardCompare($1.versionString ?? "") == .orderedDescending
         }
+        guard let platform = reviewsVM.displayedAppStoreVersion?.platform else { return sorted }
+        let filtered = sorted.filter { $0.platform == platform }
+        return filtered.isEmpty ? sorted : filtered
     }
 
     private var shownVersion: AppStoreVersionsModel? {
