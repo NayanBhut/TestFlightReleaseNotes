@@ -27,7 +27,7 @@ struct AppDetailView: View {
         case testflight = "TestFlight"
         case appInfo = "App Info"
         case reviews = "Reviews"
-        case release = "Release"
+        case release = "App Store Versions"
     }
 
     var body: some View {
@@ -47,6 +47,8 @@ struct AppDetailView: View {
             case .release:
                 ReleaseTabView(app: app, reviewsVM: reviewsVM) {
                     tab = .appInfo
+                } onOpenBuilds: {
+                    tab = .builds
                 }
             }
         }

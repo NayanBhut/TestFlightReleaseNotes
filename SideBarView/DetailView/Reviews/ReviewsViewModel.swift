@@ -163,6 +163,10 @@ final class ReviewsViewModel: ObservableObject {
     @Published private(set) var eligibleBuildsNextCursor: String?
     @Published private(set) var eligibleBuildsPaginationFailed = false
     @Published private(set) var eligibleBuildsError: String?
+    /// All builds on the version's platform (newest first), backing the
+    /// Choose Build dialog — processing and version-mismatched rows render
+    /// as unavailable, unlike the eligible-only list above.
+    @Published private(set) var candidateBuildsState: ViewState<[BuildsModel]> = .idle
     @Published private(set) var creatingVersion = false
     @Published private(set) var attachingBuild = false
     @Published private(set) var savingReleaseSettingsVersionId: String?
@@ -176,12 +180,14 @@ final class ReviewsViewModel: ObservableObject {
 
     private var appStoreVersionsFetchTask: Task<Void, Never>?
     private var eligibleBuildsFetchTask: Task<Void, Never>?
+    private var candidateBuildsFetchTask: Task<Void, Never>?
     private var appStoreVersionsInFlightAppId: String?
     private var eligibleBuildsInFlightVersionId: String?
     private var isPaginatingAppStoreVersions = false
     private var isPaginatingEligibleBuilds = false
     private var versionWorkflowGeneration = 0
     private var eligibleBuildsGeneration = 0
+    private var candidateBuildsGeneration = 0
     private var phasedReleaseGeneration = 0
     private var reviewsGeneration = 0
     private var submissionsGeneration = 0
@@ -310,6 +316,7 @@ final class ReviewsViewModel: ObservableObject {
             eligibleBuildsState = .idle
             eligibleBuildsNextCursor = nil
             eligibleBuildsPaginationFailed = false
+            candidateBuildsState = .idle
             isPaginatingReviews = false
             isPaginatingSubmissions = false
             createVersionError = nil
@@ -375,6 +382,7 @@ final class ReviewsViewModel: ObservableObject {
         submissionsState = .idle
         appStoreVersionsState = .idle
         eligibleBuildsState = .idle
+        candidateBuildsState = .idle
         reviewsMeta = nil
         reviewsNextCursor = nil
         submissionsNextCursor = nil
@@ -613,6 +621,7 @@ final class ReviewsViewModel: ObservableObject {
             eligibleBuildsNextCursor = nil
             eligibleBuildsPaginationFailed = false
             eligibleBuildsError = nil
+            candidateBuildsState = .idle
         }
         selectedAppStoreVersionId = version.id
         selectedAppStoreVersionSnapshot = version
@@ -1033,6 +1042,108 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
+    /// All builds on the version's platform for the Choose Build dialog.
+    /// Same query shape as the eligible fetch minus the server-side
+    /// VALID/not-expired filters, so processing and version-mismatched
+    /// rows can render as unavailable instead of vanishing.
+    func loadCandidateBuilds(for version: AppStoreVersionsModel) {
+        guard let appId = currentAppId, let platform = version.platform else { return }
+        candidateBuildsFetchTask?.cancel()
+        candidateBuildsGeneration += 1
+        let generation = candidateBuildsGeneration
+        candidateBuildsState = .loading
+        candidateBuildsFetchTask = Task {
+            var queryParams = [
+                "filter[app]": appId,
+                "filter[preReleaseVersion.platform]": platform,
+                "sort": "-uploadedDate",
+                "include": "preReleaseVersion",
+                "limit": "200"
+            ]
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else {
+                guard !Task.isCancelled, generation == candidateBuildsGeneration else { return }
+                candidateBuildsState = .error("No team selected. Add a team to load builds.")
+                return
+            }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled, generation == candidateBuildsGeneration else { return }
+                let model = try getDecoder().decode(BuildsDocument.self, from: data)
+                candidateBuildsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            } catch {
+                guard !Task.isCancelled, generation == candidateBuildsGeneration else { return }
+                reviewsLogger.error("Failed to load candidate builds: \(error.localizedDescription)")
+                candidateBuildsState = .error(FriendlyErrorMessage.message(for: error))
+            }
+        }
+    }
+
+    /// PATCH /v1/appStoreVersionLocalizations/{id} for What's New only.
+    /// Same unchanged/clear/set field contract as DetailViewModel's
+    /// localization save; the updated localization is written back into
+    /// the version inside appStoreVersionsState so the form resyncs.
+    func saveVersionWhatsNew(versionId: String, localizationId: String, whatsNew: String) async -> Bool {
+        guard currentAppId != nil,
+              selectedAppStoreVersionId == versionId,
+              case .loaded(let versions) = appStoreVersionsState,
+              let version = versions.first(where: { $0.id == versionId }),
+              let localization = version.appStoreVersionLocalizations.first(where: { $0.id == localizationId }) else { return false }
+        let draft = whatsNew.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = localization.whatsNew ?? ""
+        let field: AppInfoLocalizationFieldValue
+        if draft == original || (draft.isEmpty && original.isEmpty) {
+            field = .unchanged
+        } else if draft.isEmpty {
+            field = .clear
+        } else {
+            field = .set(draft)
+        }
+        guard field != .unchanged else { return true }
+        if case .set(let value) = field, value.count > VersionLocalizationLimits.descriptionMaxLength {
+            releaseSettingsError = "What's New can't be longer than \(VersionLocalizationLimits.descriptionMaxLength) characters."
+            return false
+        }
+        let body = VersionLocalizationUpdateRequest(
+            data: VersionLocalizationUpdateData(
+                id: localizationId,
+                attributes: VersionLocalizationUpdateAttributes(
+                    descriptionData: .unchanged,
+                    keywords: .unchanged,
+                    marketingUrl: .unchanged,
+                    promotionalText: .unchanged,
+                    supportUrl: .unchanged,
+                    whatsNew: field)))
+        guard let data = try? JSONEncoder().encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .patch(name: .appStoreVersionLocalizations, body: data, path: localizationId),
+                apiVersion: .v1) else {
+            releaseSettingsError = APIError.jsonConversionFailure.details
+            return false
+        }
+        do {
+            let response = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled,
+                  currentAppId != nil,
+                  selectedAppStoreVersionId == versionId else { return false }
+            let model = try getDecoder().decode(AppStoreVersionLocalizationsModel.self, from: response)
+            guard case .loaded(var updated) = appStoreVersionsState,
+                  let versionIndex = updated.firstIndex(where: { $0.id == versionId }),
+                  let locIndex = updated[versionIndex].appStoreVersionLocalizations.firstIndex(where: { $0.id == localizationId }) else { return false }
+            updated[versionIndex].appStoreVersionLocalizations[locIndex] = model
+            appStoreVersionsState = .loaded(updated)
+            if selectedAppStoreVersionSnapshot?.id == versionId {
+                selectedAppStoreVersionSnapshot = updated[versionIndex]
+            }
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            reviewsLogger.error("Failed to update What's New: \(error.localizedDescription)")
+            releaseSettingsError = workflowMessage(for: error)
+            return false
+        }
+    }
+
     func attachSelectedBuild() async -> Bool {
         guard let appId = currentAppId, let version = submissionVersion, let buildId = selectedBuildId, !attachingBuild else { return false }
         guard let build = eligibleBuildsState.loadedValue?.first(where: { $0.id == buildId }) else {
@@ -1098,13 +1209,19 @@ final class ReviewsViewModel: ObservableObject {
     func saveReleaseSettings(versionId: String,
                              releaseType: AppStoreVersionReleaseType,
                              earliestReleaseDate: Date?,
-                             copyright: String? = nil) async -> ReleaseSettingsSaveResult {
+                             copyright: String? = nil,
+                             versionString: String? = nil) async -> ReleaseSettingsSaveResult {
         guard savingReleaseSettingsVersionId == nil,
               currentAppId != nil,
               selectedAppStoreVersionId == versionId else { return .ignored }
         guard releaseType != .scheduled || earliestReleaseDate != nil else {
             releaseSettingsError = "Choose a release date for a scheduled release."
             return .failure(releaseSettingsError ?? "Choose a release date.")
+        }
+        let trimmedVersion = versionString?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedVersion, trimmedVersion.isEmpty {
+            releaseSettingsError = "Enter a version string."
+            return .failure(releaseSettingsError ?? "Enter a version string.")
         }
         releaseSettingsGeneration += 1
         let operationGeneration = releaseSettingsGeneration
@@ -1121,7 +1238,8 @@ final class ReviewsViewModel: ObservableObject {
             attributes: AppStoreVersionUpdateAttributes(
                 releaseType: releaseType.rawValue,
                 earliestReleaseDate: earliestReleaseDate.map(formatter.string(from:)),
-                copyright: trimmedCopyright?.isEmpty == false ? trimmedCopyright : nil)))
+                copyright: trimmedCopyright?.isEmpty == false ? trimmedCopyright : nil,
+                versionString: trimmedVersion)))
         guard let data = try? JSONEncoder().encode(body),
               let request = APIClient.shared.getRequest(
                 api: .patch(name: .getAppStoreVersions, body: data, path: versionId),
