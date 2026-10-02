@@ -530,9 +530,9 @@ final class ResourcesViewModel: ObservableObject {
             if apiError.statusCode == 403 {
                 return "\(apiError.details) — resources need an API key with broader permissions than TestFlight-only."
             }
-            return apiError.details
+            return FriendlyErrorMessage.message(for: error)
         }
-        return error.localizedDescription
+        return FriendlyErrorMessage.message(for: error)
     }
 
     // MARK: - Writes (Batch G #10)

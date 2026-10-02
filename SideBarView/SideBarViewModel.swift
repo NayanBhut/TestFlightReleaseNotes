@@ -427,9 +427,6 @@ class SideBarViewModel: ObservableObject {
     }
 
     private func friendlyMessage(for error: Error) -> String {
-        if let apiError = error as? APIError {
-            return apiError.details
-        }
-        return error.localizedDescription
+        FriendlyErrorMessage.message(for: error)
     }
 }

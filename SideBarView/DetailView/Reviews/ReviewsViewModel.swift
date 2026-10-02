@@ -1684,9 +1684,9 @@ final class ReviewsViewModel: ObservableObject {
             if apiError.statusCode == 403 {
                 return "\(apiError.details) — this section may need an API key with broader permissions (e.g. App Manager or Customer Support)."
             }
-            return apiError.details
+            return FriendlyErrorMessage.message(for: error)
         }
-        return error.localizedDescription
+        return FriendlyErrorMessage.message(for: error)
     }
 }
 

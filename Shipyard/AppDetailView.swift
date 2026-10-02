@@ -27,6 +27,7 @@ struct AppDetailView: View {
         case testflight = "TestFlight"
         case appInfo = "App Info"
         case reviews = "Reviews"
+        case release = "Release"
     }
 
     var body: some View {
@@ -43,6 +44,10 @@ struct AppDetailView: View {
                 ShipyardAppInfoView(detailVM: detailVM, reviewsVM: reviewsVM, app: app)
             case .reviews:
                 ReviewsSectionView(reviewsVM: reviewsVM, apps: [], selectedApp: .constant(app), fixedApp: app)
+            case .release:
+                ReleaseTabView(app: app, reviewsVM: reviewsVM) {
+                    tab = .appInfo
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
