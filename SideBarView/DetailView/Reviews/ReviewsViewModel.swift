@@ -1259,10 +1259,16 @@ final class ReviewsViewModel: ObservableObject {
                   let index = versions.firstIndex(where: { $0.id == versionId }) else {
                 return .ignored
             }
-            versions[index] = model
-            appStoreVersionsState = .loaded(versions)
+            // The PATCH response carries attributes only — no `included`
+            // build or localizations. Merge the previous relationships
+            // forward or a save would visibly "reset" the attached build
+            // and wipe the form's locale data until the next full reload.
+            var merged = model
+            merged.build = versions[index].build
+            merged.appStoreVersionLocalizations = versions[index].appStoreVersionLocalizations
+            versions[index] = merged
             if selectedAppStoreVersionSnapshot?.id == versionId {
-                selectedAppStoreVersionSnapshot = model
+                selectedAppStoreVersionSnapshot = merged
             }
             return .success
         } catch {
