@@ -140,6 +140,25 @@ enum BetaTesterInvitationBody {
         }
         return try? JSONSerialization.data(withJSONObject: ["data": resource], options: [])
     }
+
+    /// One invite across several groups: a single POST with a multi-entry
+    /// betaGroups linkage (Apple accepts the array; one email, one invite).
+    static func inviteToGroups(email: String,
+                               firstName: String? = nil,
+                               lastName: String? = nil,
+                               betaGroupIds: [String]) -> Data? {
+        var attributes: [String: Any] = ["email": email]
+        if let firstName, !firstName.isEmpty { attributes["firstName"] = firstName }
+        if let lastName, !lastName.isEmpty { attributes["lastName"] = lastName }
+        let resource: [String: Any] = [
+            "type": "betaTesters",
+            "attributes": attributes,
+            "relationships": [
+                "betaGroups": ["data": betaGroupIds.map { ["type": "betaGroups", "id": $0] }]
+            ]
+        ]
+        return try? JSONSerialization.data(withJSONObject: ["data": resource], options: [])
+    }
 }
 
 // MARK: - Beta review submission body

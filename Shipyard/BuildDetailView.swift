@@ -26,6 +26,7 @@ struct BuildDetailView: View {
     @Environment(\.openURL) private var openURL
     @State private var tab: DetailTab = .notes
     @State private var showExpireConfirm = false
+    @State private var pendingAssignGroup: BetaGroupModel?
 
     enum DetailTab: String, CaseIterable {
         case notes = "Release Notes"
@@ -70,6 +71,27 @@ struct BuildDetailView: View {
                 detailVM.expireBuild(buildId: buildId)
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Assign Build \(liveBuild.version ?? "") to “\(pendingAssignGroup?.name ?? "this group")”? External groups may trigger Apple review.",
+            isPresented: Binding(
+                get: { pendingAssignGroup != nil },
+                set: { if !$0 { pendingAssignGroup = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Assign Build") {
+                if let group = pendingAssignGroup {
+                    betaVM.selectGroup(group)
+                    Task {
+                        await betaVM.assignBuildToGroup(build: liveBuild)
+                    }
+                }
+                pendingAssignGroup = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingAssignGroup = nil
+            }
         }
     }
 
@@ -122,10 +144,7 @@ struct BuildDetailView: View {
             Menu {
                 ForEach(betaVM.groups, id: \.id) { group in
                     Button(group.name ?? "Unnamed group") {
-                        betaVM.selectGroup(group)
-                        Task {
-                            await betaVM.assignBuildToGroup(build: liveBuild)
-                        }
+                        pendingAssignGroup = group
                     }
                 }
             } label: {

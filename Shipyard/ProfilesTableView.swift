@@ -23,12 +23,6 @@ struct ProfilesTableView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            if showCreateForm {
-                CreateProfileForm(viewModel: viewModel) {
-                    showCreateForm = false
-                }
-                Divider()
-            }
             if let bannerError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -56,6 +50,11 @@ struct ProfilesTableView: View {
         .background(ShipyardTheme.tableBackground)
         .onAppear {
             viewModel.load(.profiles)
+        }
+        .sheet(isPresented: $showCreateForm) {
+            CreateProfileForm(viewModel: viewModel) {
+                showCreateForm = false
+            }
         }
         .confirmationDialog(
             "Delete this provisioning profile? Builds signed with it stop installing.",

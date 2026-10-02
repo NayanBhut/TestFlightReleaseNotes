@@ -26,12 +26,6 @@ struct BundleIDsTableView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            if showCreateForm {
-                CreateBundleIdForm(viewModel: viewModel) {
-                    showCreateForm = false
-                }
-                Divider()
-            }
             if let renaming {
                 renameRow(renaming)
                 Divider()
@@ -63,6 +57,11 @@ struct BundleIDsTableView: View {
         .background(ShipyardTheme.tableBackground)
         .onAppear {
             viewModel.load(.bundleIds)
+        }
+        .sheet(isPresented: $showCreateForm) {
+            CreateBundleIdForm(viewModel: viewModel) {
+                showCreateForm = false
+            }
         }
         .confirmationDialog(
             "Delete this bundle ID? Apps and profiles using it break.",

@@ -19,11 +19,11 @@ struct BetaGroupsView: View {
     var build: BuildsModel
 
     @State private var tab: GroupTab = .testers
-    @State private var inviteEmail = ""
-    @State private var isInviting = false
+    @State private var showInviteSheet = false
     @State private var removingTester: BetaTesterModel?
     @State private var deletingTester: BetaTesterModel?
     @State private var showDeleteGroupConfirm = false
+    @State private var showAssignConfirm = false
 
     enum GroupTab: String, CaseIterable {
         case testers = "Testers"
@@ -253,36 +253,25 @@ struct BetaGroupsView: View {
     private func testersTab(_ group: BetaGroupModel) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                TextField("Tester email", text: $inviteEmail)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .frame(maxWidth: 280)
-                    .disabled(isInviting)
-                if isInviting {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                } else {
-                    Button("Add Testers") {
-                        Task {
-                            isInviting = true
-                            defer { isInviting = false }
-                            await betaVM.inviteTester(email: inviteEmail)
-                            inviteEmail = ""
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(inviteEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                Spacer(minLength: 0)
+                Spacer()
                 if betaVM.hasError, let message = betaVM.errorMessage {
                     Text(message)
                         .font(.system(size: 11))
                         .foregroundColor(AppTheme.negative)
                         .lineLimit(2)
                 }
+                Button("Add Testers") {
+                    betaVM.clearError()
+                    showInviteSheet = true
+                }
+                .buttonStyle(.launchPrimary)
             }
             .padding(.bottom, 12)
+            .sheet(isPresented: $showInviteSheet) {
+                InviteTesterSheet(betaVM: betaVM) {
+                    showInviteSheet = false
+                }
+            }
 
             headerRow([("Name", 180), ("Email", 220), ("Status", 120), ("Last Activity", nil)])
 
@@ -375,10 +364,7 @@ struct BetaGroupsView: View {
             HStack {
                 Spacer()
                 Button(group.builds.contains(where: { $0.id == build.id }) ? "Assigned ✓" : "Assign This Build") {
-                    betaVM.selectGroup(group)
-                    Task {
-                        await betaVM.assignBuildToGroup(build: build)
-                    }
+                    showAssignConfirm = true
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -386,6 +372,19 @@ struct BetaGroupsView: View {
                     || betaVM.updatingBuildId == build.id)
             }
             .padding(.bottom, 12)
+            .confirmationDialog(
+                "Assign Build \(build.version ?? "") to “\(group.name ?? "this group")”? External groups may trigger Apple review.",
+                isPresented: $showAssignConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Assign Build") {
+                    betaVM.selectGroup(group)
+                    Task {
+                        await betaVM.assignBuildToGroup(build: build)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
 
             headerRow([("Build", 100), ("Version", 100), ("State", 200), ("Expires", nil)])
 
