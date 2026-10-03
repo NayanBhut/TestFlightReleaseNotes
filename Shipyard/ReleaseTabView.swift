@@ -326,6 +326,7 @@ struct ReleaseTabView: View {
         VStack(spacing: 0) {
             versionHeading
             featureTabs(chips: true)
+                .padding(.horizontal, 24)
             Divider()
             if let error = reviewsVM.writeError {
                 errorBanner(error) {
@@ -369,19 +370,23 @@ struct ReleaseTabView: View {
                 Text("│")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.tertiary)
-                ForEach(allVersions, id: \.id) { version in
-                    let selected = version.id == shownVersion?.id
-                    Button(version.versionString ?? "—") {
-                        showVersion(version)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 16) {
+                        ForEach(allVersions, id: \.id) { version in
+                            let selected = version.id == shownVersion?.id
+                            Button(version.versionString ?? "—") {
+                                showVersion(version, tab: featureTab)
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                            .foregroundColor(selected ? ShipyardTheme.accent : ShipyardTheme.body)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: selected ? .semibold : .regular))
-                    .foregroundColor(selected ? ShipyardTheme.accent : ShipyardTheme.body)
                 }
+                .frame(height: 20)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 24)
         .padding(.bottom, 8)
     }
 
