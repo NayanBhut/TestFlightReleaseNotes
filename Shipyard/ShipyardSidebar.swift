@@ -180,6 +180,15 @@ struct ShipyardSidebar: View {
                                 showTeams = false
                             }
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityLabel(team)
+                        .accessibilityAction(.default) {
+                            onSelectTeam(team)
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showTeams = false
+                            }
+                        }
                     }
                     Button {
                         showTeams = false

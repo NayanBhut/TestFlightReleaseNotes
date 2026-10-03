@@ -9,6 +9,27 @@
 
 import SwiftUI
 
+// MARK: - Top-pinned scroll container
+
+/// ScrollView whose content stays pinned to the top even when it is
+/// shorter than the viewport. SwiftUI's macOS ScrollView distributes the
+/// leftover vertical space around short content, so state screens render
+/// floating in the middle of the window; forcing the document to fill the
+/// viewport height removes that slack. Long content still scrolls: the
+/// minHeight is only a floor, never a ceiling.
+struct TopPinnedScrollView<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GeometryReader { geo in
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, minHeight: max(geo.size.height, 1), alignment: .topLeading)
+            }
+        }
+    }
+}
+
 // MARK: - Status badge
 
 /// Dot + label pill used in headings and tables (Figma status badges).
@@ -254,7 +275,7 @@ func releaseDayDisplay(_ raw: String?) -> String {
 
 private func releaseDateValue(_ raw: String?) -> Date? {
     guard let raw, !raw.isEmpty else { return nil }
-    if let date = ISO8601DateFormatter().date(from: raw) { return date }
+    if let date = sharedISOFormatter.date(from: raw) { return date }
     return buildUploadDate(raw)
 }
 

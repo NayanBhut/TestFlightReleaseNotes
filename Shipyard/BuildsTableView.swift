@@ -396,7 +396,7 @@ private let buildDateParsers: [DateFormatter] = {
 /// Shared with the build inspector (same module).
 func buildUploadDate(_ raw: String?) -> Date? {
     guard let raw, !raw.isEmpty else { return nil }
-    if let date = ISO8601DateFormatter().date(from: raw) { return date }
+    if let date = sharedISOFormatter.date(from: raw) { return date }
     for formatter in buildDateParsers {
         if let date = formatter.date(from: raw) { return date }
     }

@@ -59,29 +59,44 @@ private func appStoreVersionState(_ version: AppStoreVersionsModel) -> String? {
     version.appStoreState ?? version.appVersionState
 }
 
+let sharedFractionalISOFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+let sharedISOFormatter = ISO8601DateFormatter()
+
 private func appStoreVersionCreatedDateValue(_ version: AppStoreVersionsModel) -> Date? {
     guard let value = version.createdDate else { return nil }
-    let fractionalFormatter = ISO8601DateFormatter()
-    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = fractionalFormatter.date(from: value) {
+    if let date = sharedFractionalISOFormatter.date(from: value) {
         return date
     }
-    return ISO8601DateFormatter().date(from: value)
+    return sharedISOFormatter.date(from: value)
 }
 
 private func mostRecentlyCreatedVersion(_ versions: [AppStoreVersionsModel]) -> AppStoreVersionsModel? {
-    versions.sorted { lhs, rhs in
-        switch (appStoreVersionCreatedDateValue(lhs), appStoreVersionCreatedDateValue(rhs)) {
-        case let (.some(lhsDate), .some(rhsDate)):
-            return lhsDate > rhsDate
-        case (.some, .none):
-            return true
+    guard !versions.isEmpty else { return nil }
+    var best = versions[0]
+    var bestDate = appStoreVersionCreatedDateValue(best)
+    for version in versions.dropFirst() {
+        let date = appStoreVersionCreatedDateValue(version)
+        switch (bestDate, date) {
+        case let (.some(b), .some(d)) where d > b:
+            best = version
+            bestDate = date
         case (.none, .some):
-            return false
+            best = version
+            bestDate = date
         case (.none, .none):
-            return (lhs.versionString ?? "").localizedStandardCompare(rhs.versionString ?? "") == .orderedDescending
+            if (version.versionString ?? "").localizedStandardCompare(best.versionString ?? "") == .orderedDescending {
+                best = version
+            }
+        default:
+            break
         }
-    }.first
+    }
+    return best
 }
 
 func getVersionCaseState(versions: [AppStoreVersionsModel]) -> AppStoreVersionCaseState {
@@ -552,8 +567,23 @@ final class ReviewsViewModel: ObservableObject {
         return versions.filter { $0.platform == platform }
     }
 
+    private(set) var cachedVersionCaseState = AppStoreVersionCaseState(
+        case: .noVersion, liveVersion: nil, pendingVersion: nil)
+
+    private var versionCaseStateVersions: [AppStoreVersionsModel]?
+    private var versionCaseStatePlatform: String?
+
     private var versionCaseState: AppStoreVersionCaseState {
-        getVersionCaseState(versions: platformFilteredAppStoreVersions)
+        let versions = platformFilteredAppStoreVersions
+        let platform = selectedAppStoreVersionPlatform
+        if versionCaseStateVersions == versions, platform == versionCaseStatePlatform {
+            return cachedVersionCaseState
+        }
+        versionCaseStateVersions = versions
+        versionCaseStatePlatform = platform
+        let result = getVersionCaseState(versions: versions)
+        cachedVersionCaseState = result
+        return result
     }
 
     var submissionVersion: AppStoreVersionsModel? {
@@ -569,11 +599,12 @@ final class ReviewsViewModel: ObservableObject {
     }
 
     var displayedAppStoreVersion: AppStoreVersionsModel? {
-        if let version = versionCaseState.pendingVersion ?? versionCaseState.liveVersion {
+        let state = versionCaseState
+        if let version = state.pendingVersion ?? state.liveVersion {
             return version
         }
         if let snapshot = selectedAppStoreVersionSnapshot,
-           snapshot.id == selectedAppStoreVersionId {
+            snapshot.id == selectedAppStoreVersionId {
             return snapshot
         }
         return nil
@@ -588,13 +619,14 @@ final class ReviewsViewModel: ObservableObject {
     }
 
     var displayedAppStoreVersions: [AppStoreVersionsModel] {
-        switch versionCaseState.case {
+        let state = versionCaseState
+        switch state.case {
         case .both:
-            return [versionCaseState.liveVersion, versionCaseState.pendingVersion].compactMap { $0 }
+            return [state.liveVersion, state.pendingVersion].compactMap { $0 }
         case .liveOnly:
-            return versionCaseState.liveVersion.map { [$0] } ?? []
+            return state.liveVersion.map { [$0] } ?? []
         case .pendingOnly:
-            return versionCaseState.pendingVersion.map { [$0] } ?? []
+            return state.pendingVersion.map { [$0] } ?? []
         case .noVersion:
             return []
         }
@@ -844,7 +876,7 @@ final class ReviewsViewModel: ObservableObject {
             if operationGeneration == createVersionGeneration { creatingVersion = false }
         }
 
-        let formatter = ISO8601DateFormatter()
+        let formatter = sharedISOFormatter
         let body = AppStoreVersionCreateRequest(data: AppStoreVersionCreateData(
             attributes: AppStoreVersionCreateAttributes(
                 platform: platform.rawValue,
@@ -1619,7 +1651,7 @@ final class ReviewsViewModel: ObservableObject {
             if operationGeneration == releaseSettingsGeneration { savingReleaseSettingsVersionId = nil }
         }
 
-        let formatter = ISO8601DateFormatter()
+        let formatter = sharedISOFormatter
         let trimmedCopyright = copyright?.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = AppStoreVersionUpdateRequest(data: AppStoreVersionUpdateData(
             id: versionId,
