@@ -44,6 +44,9 @@ struct CertificateModel: Equatable {
     @ResourceAttribute var platform: String?
     @ResourceAttribute var expirationDate: String?
     @ResourceAttribute var activated: Bool?
+    /// Base64 DER (.cer). Only present on GET /v1/certificates/{id} —
+    /// never in list responses.
+    @ResourceAttribute var certificateContent: String?
 }
 
 @ResourceWrapper(type: "bundleIds")
@@ -76,6 +79,9 @@ struct ProfileModel: Equatable {
     @ResourceAttribute var uuid: String?
     @ResourceAttribute var createdDate: String?
     @ResourceAttribute var expirationDate: String?
+    /// Base64 .mobileprovision. Only present on GET /v1/profiles/{id} —
+    /// never in list responses.
+    @ResourceAttribute var profileContent: String?
 }
 
 @ResourceWrapper(type: "users")

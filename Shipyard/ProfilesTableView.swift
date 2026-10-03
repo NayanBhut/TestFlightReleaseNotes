@@ -237,6 +237,14 @@ struct ProfilesTableView: View {
         .frame(height: 38)
         .contentShape(Rectangle())
         .contextMenu {
+            Button("Download") {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.downloadProfile(profile) {
+                        bannerError = message
+                    }
+                }
+            }
+            .accessibilityLabel("Download \(profile.name ?? "profile")")
             Button("Delete", role: .destructive) {
                 deleting = profile
             }

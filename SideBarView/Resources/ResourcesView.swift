@@ -583,8 +583,6 @@ struct RegisterDeviceForm: View {
                             Text(platform.displayName)
                                 .font(.system(size: 13))
                                 .foregroundColor(ShipyardTheme.title)
-                            Spacer()
-                            ShipyardIcon(name: "ShipyardChevron", size: 10)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -694,10 +692,28 @@ struct CreateCertificateForm: View {
     @State private var csrContent = ""
     @State private var csrFileName: String?
     @State private var isSaving = false
+    @State private var isDownloading = false
+    @State private var didDownload = false
     @State private var errorMessage: String?
+    /// Set on create success (the new row is prepended, so it is first).
+    /// The form swaps to a success step offering the .cer download instead
+    /// of dismissing — there is no other path to the file in this app.
+    @State private var createdCertificate: CertificateModel?
 
     var body: some View {
         VStack(spacing: 0) {
+            if let created = createdCertificate {
+                CreateSuccessView(
+                    title: "Certificate Created",
+                    message: "“\(created.displayName ?? created.name ?? "Certificate")” is ready. Download the .cer file to install it into Keychain Access.",
+                    downloadLabel: "Download .cer",
+                    didDownload: didDownload,
+                    isDownloading: isDownloading,
+                    errorMessage: errorMessage,
+                    onDownload: { download(created) },
+                    onDone: onDone
+                )
+            } else {
             Text("Create Certificate")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundColor(ShipyardTheme.title)
@@ -726,7 +742,6 @@ struct CreateCertificateForm: View {
                                 .font(.system(size: 13))
                                 .foregroundColor(ShipyardTheme.title)
                             Spacer()
-                            ShipyardIcon(name: "ShipyardChevron", size: 10)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -811,7 +826,9 @@ struct CreateCertificateForm: View {
                             let result = await viewModel.createCertificate(
                                 certificateType: certificateType, csrContent: csrContent)
                             if case .success = result {
-                                onDone()
+                                createdCertificate = viewModel.certificatesState.loadedValue?.first
+                                didDownload = false
+                                errorMessage = nil
                             } else if case .failure(let message) = result {
                                 // .ignored: duplicate in flight / cancelled —
                                 // keep the form open, nothing was created.
@@ -829,8 +846,25 @@ struct CreateCertificateForm: View {
                 ShipyardTheme.rowDivider.frame(height: 1),
                 alignment: .top
             )
+            }
         }
         .frame(width: 560)
+    }
+
+    private func download(_ certificate: CertificateModel) {
+        Task { @MainActor in
+            isDownloading = true
+            defer { isDownloading = false }
+            switch await viewModel.downloadCertificate(certificate) {
+            case .success:
+                didDownload = true
+                errorMessage = nil
+            case .failure(let message):
+                errorMessage = message
+            case .ignored:
+                break
+            }
+        }
     }
 
     /// File picker for the CSR (same pattern as the .p8 key import).
@@ -852,6 +886,74 @@ struct CreateCertificateForm: View {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Create success + signing-file download
+
+/// Post-create step shared by the certificate/profile sheets: confirms the
+/// created item and offers its signing file (.cer/.mobileprovision) — the
+/// only download path in this app — before Done dismisses the sheet.
+struct CreateSuccessView: View {
+    var title: String
+    var message: String
+    var downloadLabel: String
+    var didDownload: Bool
+    var isDownloading: Bool
+    var errorMessage: String?
+    var onDownload: () -> Void
+    var onDone: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(title)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(ShipyardTheme.title)
+                .frame(maxWidth: .infinity)
+                .padding(16)
+                .background(ShipyardTheme.sidebarBackground)
+                .overlay(
+                    ShipyardTheme.rowDivider.frame(height: 1),
+                    alignment: .bottom
+                )
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(ShipyardTheme.success)
+                        .accessibilityHidden(true)
+                    Text(message)
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if didDownload {
+                    Text("Saved.")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.negative)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer()
+                    Button("Done") { onDone() }
+                        .buttonStyle(.launchSecondary)
+                        .disabled(isDownloading)
+                    if isDownloading {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else {
+                        Button(downloadLabel) { onDownload() }
+                            .buttonStyle(.launchPrimary)
+                    }
+                }
+            }
+            .padding(24)
         }
     }
 }
@@ -904,8 +1006,6 @@ struct CreateBundleIdForm: View {
                             Text(platform.displayName)
                                 .font(.system(size: 13))
                                 .foregroundColor(ShipyardTheme.title)
-                            Spacer()
-                            ShipyardIcon(name: "ShipyardChevron", size: 10)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -1133,8 +1233,6 @@ struct InviteUserForm: View {
                             Text(selectedRole.displayName)
                                 .font(.system(size: 13))
                                 .foregroundColor(ShipyardTheme.title)
-                            Spacer()
-                            ShipyardIcon(name: "ShipyardChevron", size: 10)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -1360,6 +1458,12 @@ struct CreateProfileForm: View {
     }
 
     @State private var step: ProfileStep = .type
+    @State private var isDownloading = false
+    @State private var didDownload = false
+    /// Set on create success (the new row is prepended, so it is first).
+    /// Swaps the wizard to a success step offering the .mobileprovision
+    /// download instead of dismissing.
+    @State private var createdProfile: ProfileModel?
 
     private var canContinue: Bool {
         switch step {
@@ -1371,6 +1475,37 @@ struct CreateProfileForm: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let created = createdProfile {
+                CreateSuccessView(
+                    title: "Profile Created",
+                    message: "“\(created.name ?? "Profile")” is ready. Download the .mobileprovision file to use it in Xcode.",
+                    downloadLabel: "Download .mobileprovision",
+                    didDownload: didDownload,
+                    isDownloading: isDownloading,
+                    errorMessage: errorMessage,
+                    onDownload: { download(created) },
+                    onDone: onDone
+                )
+            } else {
+                profileWizardContent
+            }
+        }
+        .frame(width: 560)
+        .onAppear {
+            // Relationship pickers reuse the existing fetches — load() is a
+            // no-op for kinds already loaded, so this never refetches.
+            // Relationship pickers reuse the existing fetches — but a
+            // first page alone silently truncates the picker on teams
+            // with >200 items, so the profile form drains ALL pages
+            // (loadAllPages is a no-op refetch guard when already loaded).
+            viewModel.loadAllPages(.bundleIds)
+            viewModel.loadAllPages(.certificates)
+            viewModel.loadAllPages(.devices)
+        }
+    }
+
+    private var profileWizardContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(step.title)
@@ -1429,18 +1564,6 @@ struct CreateProfileForm: View {
             .padding(.top, 12)
         }
         .padding(24)
-        .frame(width: 560)
-        .onAppear {
-            // Relationship pickers reuse the existing fetches — load() is a
-            // no-op for kinds already loaded, so this never refetches.
-            // Relationship pickers reuse the existing fetches — but a
-            // first page alone silently truncates the picker on teams
-            // with >200 items, so the profile form drains ALL pages
-            // (loadAllPages is a no-op refetch guard when already loaded).
-            viewModel.loadAllPages(.bundleIds)
-            viewModel.loadAllPages(.certificates)
-            viewModel.loadAllPages(.devices)
-        }
     }
 
     private var stepper: some View {
@@ -1506,8 +1629,6 @@ struct CreateProfileForm: View {
                         Text(profileType.displayName)
                             .font(.system(size: 13))
                             .foregroundColor(ShipyardTheme.title)
-                        Spacer()
-                        ShipyardIcon(name: "ShipyardChevron", size: 10)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -1682,11 +1803,29 @@ struct CreateProfileForm: View {
             certificateIds: certificateIds,
             deviceIds: deviceIds)
         if case .success = result {
-            onDone()
+            createdProfile = viewModel.profilesState.loadedValue?.first
+            didDownload = false
+            errorMessage = nil
         } else if case .failure(let message) = result {
             // .ignored: duplicate in flight / cancelled —
             // keep the form open, nothing was created.
             errorMessage = message
+        }
+    }
+
+    private func download(_ profile: ProfileModel) {
+        Task { @MainActor in
+            isDownloading = true
+            defer { isDownloading = false }
+            switch await viewModel.downloadProfile(profile) {
+            case .success:
+                didDownload = true
+                errorMessage = nil
+            case .failure(let message):
+                errorMessage = message
+            case .ignored:
+                break
+            }
         }
     }
 }
