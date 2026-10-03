@@ -25,6 +25,7 @@
 import SwiftUI
 import JSONAPI
 import OSLog
+import UniformTypeIdentifiers
 
 private let resourcesLogger = Logger(subsystem: "com.appstore.release-notes", category: "Resources")
 
@@ -707,6 +708,41 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
+    /// GET /v1/certificates/{id} → attributes.certificateContent (base64
+    /// DER) → NSSavePanel → .cer file. List responses never carry the
+    /// content, so download always needs this round-trip. Cancellation of
+    /// the save panel reports .ignored (nothing failed).
+    func downloadCertificate(_ certificate: CertificateModel) async -> WriteResult {
+        let key = "download-certificate-\(certificate.id)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .certificates, path: certificate.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the download request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(CertificateModel.self, from: responseData)
+            guard let base64 = model.certificateContent,
+                  let fileData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                return .failure("Apple didn't return certificate data for this certificate.")
+            }
+            guard !Task.isCancelled else { return .ignored }
+            return saveDownloadedFile(data: fileData,
+                                     suggestedName: safeFileName(certificate.displayName ?? certificate.name) + ".cer",
+                                     fileExtension: "cer")
+        } catch {
+            resourcesLogger.error("Failed to download certificate: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
     // MARK: - Bundle ID writes (Batch I, I2)
     //
     // POST /v1/bundleIds (identifier + name + platform required, seedId
@@ -1253,6 +1289,40 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
+    /// GET /v1/profiles/{id} → attributes.profileContent (base64
+    /// .mobileprovision) → NSSavePanel. Same contract as
+    /// downloadCertificate: save-panel cancel reports .ignored.
+    func downloadProfile(_ profile: ProfileModel) async -> WriteResult {
+        let key = "download-profile-\(profile.id)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getProfiles, path: profile.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the download request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(ProfileModel.self, from: responseData)
+            guard let base64 = model.profileContent,
+                  let fileData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                return .failure("Apple didn't return profile data for this profile.")
+            }
+            guard !Task.isCancelled else { return .ignored }
+            return saveDownloadedFile(data: fileData,
+                                     suggestedName: safeFileName(profile.name) + ".mobileprovision",
+                                     fileExtension: "mobileprovision")
+        } catch {
+            resourcesLogger.error("Failed to download profile: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
     private func prependProfile(_ model: ProfileModel) {
         guard case .loaded(var profiles) = profilesState else {
             retry(.profiles)
@@ -1328,5 +1398,32 @@ final class ResourcesViewModel: ObservableObject {
             return apiError.details
         }
         return error.localizedDescription
+    }
+
+    /// Filename-safe fallback: blank names become "download", path
+    /// separators become dashes so the save panel never escapes.
+    private func safeFileName(_ raw: String?) -> String {
+        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "download" }
+        return trimmed.replacingOccurrences(of: "/", with: "-")
+    }
+
+    /// NSSavePanel + atomic write for downloaded signing files. Must run
+    /// on the main actor (all callers are @MainActor-isolated Tasks from
+    /// SwiftUI actions, same as the rest of this view model).
+    private func saveDownloadedFile(data: Data, suggestedName: String, fileExtension: String) -> WriteResult {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.canCreateDirectories = true
+        if let fileType = UTType(filenameExtension: fileExtension) {
+            panel.allowedContentTypes = [fileType]
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return .ignored }
+        do {
+            try data.write(to: url, options: .atomic)
+            return .success
+        } catch {
+            return .failure("Couldn't write the file: \(error.localizedDescription)")
+        }
     }
 }

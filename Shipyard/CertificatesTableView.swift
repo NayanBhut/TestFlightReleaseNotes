@@ -233,6 +233,14 @@ struct CertificatesTableView: View {
         .frame(height: 38)
         .contentShape(Rectangle())
         .contextMenu {
+            Button("Download") {
+                Task { @MainActor in
+                    if case .failure(let message) = await viewModel.downloadCertificate(certificate) {
+                        bannerError = message
+                    }
+                }
+            }
+            .accessibilityLabel("Download \(certificate.displayName ?? certificate.name ?? "certificate")")
             Button("Revoke") {
                 revoking = certificate
             }
