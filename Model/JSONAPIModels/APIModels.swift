@@ -639,6 +639,96 @@ enum VersionLocalizationLimits {
     static let promotionalTextMaxLength = 170
     static let descriptionMaxLength = 4000
     static let whatsNewMaxLength = 4000
+    static let reviewNotesMaxLength = 4000
+}
+
+// MARK: - Review details (contact/demo/notes per version)
+
+/// One record per version (Apple creates it for some versions, not all —
+/// absent = GET 404s, then the client creates it). Attribute set verified
+/// against the OpenAPI spec (AppStoreReviewDetail resource).
+@ResourceWrapper(type: "appStoreReviewDetails")
+struct AppStoreReviewDetailsModel: Equatable {
+    var id: String
+    @ResourceAttribute var contactFirstName: String?
+    @ResourceAttribute var contactLastName: String?
+    @ResourceAttribute var contactPhone: String?
+    @ResourceAttribute var contactEmail: String?
+    @ResourceAttribute var demoAccountName: String?
+    @ResourceAttribute var demoAccountPassword: String?
+    @ResourceAttribute var demoAccountRequired: Bool?
+    @ResourceAttribute var notes: String?
+}
+
+/// Nullable update attributes — nil means "leave unchanged" (omitted),
+/// matching the spec's nullable update request.
+struct ReviewDetailsUpdateAttributes: Encodable {
+    var contactFirstName: String?
+    var contactLastName: String?
+    var contactPhone: String?
+    var contactEmail: String?
+    var demoAccountName: String?
+    var demoAccountPassword: String?
+    var demoAccountRequired: Bool?
+    var notes: String?
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(contactFirstName, forKey: .contactFirstName)
+        try container.encodeIfPresent(contactLastName, forKey: .contactLastName)
+        try container.encodeIfPresent(contactPhone, forKey: .contactPhone)
+        try container.encodeIfPresent(contactEmail, forKey: .contactEmail)
+        try container.encodeIfPresent(demoAccountName, forKey: .demoAccountName)
+        try container.encodeIfPresent(demoAccountPassword, forKey: .demoAccountPassword)
+        try container.encodeIfPresent(demoAccountRequired, forKey: .demoAccountRequired)
+        try container.encodeIfPresent(notes, forKey: .notes)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contactFirstName, contactLastName, contactPhone, contactEmail
+        case demoAccountName, demoAccountPassword, demoAccountRequired, notes
+    }
+
+    var isEmpty: Bool {
+        contactFirstName == nil && contactLastName == nil && contactPhone == nil
+            && contactEmail == nil && demoAccountName == nil && demoAccountPassword == nil
+            && demoAccountRequired == nil && notes == nil
+    }
+}
+
+struct ReviewDetailsUpdateRequest: Encodable {
+    var data: ReviewDetailsUpdateData
+}
+
+struct ReviewDetailsUpdateData: Encodable {
+    var type = "appStoreReviewDetails"
+    var id: String
+    var attributes: ReviewDetailsUpdateAttributes
+}
+
+/// Create links the record to its version; attributes ride along so a
+/// first save is a single POST.
+struct ReviewDetailsCreateRequest: Encodable {
+    var data: ReviewDetailsCreateData
+}
+
+struct ReviewDetailsCreateData: Encodable {
+    var type = "appStoreReviewDetails"
+    var attributes: ReviewDetailsUpdateAttributes
+    var relationships: ReviewDetailsCreateRelationships
+}
+
+struct ReviewDetailsCreateRelationships: Encodable {
+    var appStoreVersion: ReviewDetailsVersionLinkage
+}
+
+struct ReviewDetailsVersionLinkage: Encodable {
+    var data: ReviewDetailsVersionRef
+}
+
+struct ReviewDetailsVersionRef: Encodable {
+    var type = "appStoreVersions"
+    var id: String
 }
 
 // MARK: - Screenshots (Batch J F4)

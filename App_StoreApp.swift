@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
 struct App_StoreApp: App {
@@ -25,6 +26,7 @@ struct App_StoreApp: App {
                 .task {
                     buildMonitor.start()
                     AppAppearance.applyStored()
+                    clampMainWindowToVisibleScreen()
                 }
                 .onReceive(appCommands.refreshRequested) { _ in
                     viewModel.retryApps()
@@ -36,6 +38,7 @@ struct App_StoreApp: App {
                     AppAppearance.toggle()
                 }
         }
+        .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Command Palette") {
@@ -64,4 +67,23 @@ struct App_StoreApp: App {
         }
         .menuBarExtraStyle(.menu)
     }
+}
+
+/// One-time safety: a window frame restored from a larger display can end
+/// up wider than the current screen, pushing centered content off-screen
+/// with no visible edge to grab. Shrink only the width overflow on the
+/// window's own screen — never grow, move, or touch height — so
+/// multi-display setups are unaffected.
+private func clampMainWindowToVisibleScreen() {
+    guard let window = NSApp.keyWindow
+        ?? NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }),
+        let screen = window.screen else { return }
+    let visible = screen.visibleFrame
+    var frame = window.frame
+    guard frame.width > visible.width else { return }
+    frame.size.width = visible.width
+    if frame.minX < visible.minX {
+        frame.origin.x = visible.minX
+    }
+    window.setFrame(frame, display: true)
 }

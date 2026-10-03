@@ -61,6 +61,10 @@
 		C47A0053C47A0053001A9E53 /* RevokeCertificateDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0052C47A0052001A9E52 /* RevokeCertificateDialog.swift */; };
 		C47A0055C47A0055001A9E55 /* ReleaseTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0054C47A0054001A9E54 /* ReleaseTabView.swift */; };
 		C47A0059C47A0059001A9E59 /* ChooseBuildSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0058C47A0058001A9E58 /* ChooseBuildSheet.swift */; };
+		C47A005BC47A005B001A9E5B /* ReleaseComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005BD47A005B001A9E5B /* ReleaseComponents.swift */; };
+		C47A005CC47A005C001A9E5C /* ReleaseDialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */; };
+		C47A005DC47A005D001A9E5D /* ReleasePrepareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */; };
+		C47A005EC47A005E001A9E5E /* ReleaseStatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */; };
 		C47A0057C47A0057001A9E57 /* FriendlyErrorMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0056C47A0056001A9E56 /* FriendlyErrorMessage.swift */; };
 		B47A0023B47A0023001A9E23 /* ReportsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */; };
 		B47A0025B47A0025001A9E25 /* ReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0024B47A0024001A9E24 /* ReportsView.swift */; };
@@ -149,6 +153,10 @@
 		C47A0052C47A0052001A9E52 /* RevokeCertificateDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RevokeCertificateDialog.swift; sourceTree = "<group>"; };
 		C47A0054C47A0054001A9E54 /* ReleaseTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseTabView.swift; sourceTree = "<group>"; };
 		C47A0058C47A0058001A9E58 /* ChooseBuildSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChooseBuildSheet.swift; sourceTree = "<group>"; };
+		C47A005BD47A005B001A9E5B /* ReleaseComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseComponents.swift; sourceTree = "<group>"; };
+		C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDialogs.swift; sourceTree = "<group>"; };
+		C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleasePrepareView.swift; sourceTree = "<group>"; };
+		C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseStatusViews.swift; sourceTree = "<group>"; };
 		C47A0056C47A0056001A9E56 /* FriendlyErrorMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendlyErrorMessage.swift; sourceTree = "<group>"; };
 		B47A0022B47A0022001A9E22 /* ReportsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsViewModel.swift; sourceTree = "<group>"; };
 		B47A0024B47A0024001A9E24 /* ReportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsView.swift; sourceTree = "<group>"; };
@@ -297,6 +305,10 @@
 				C47A0052C47A0052001A9E52 /* RevokeCertificateDialog.swift */,
 				C47A0054C47A0054001A9E54 /* ReleaseTabView.swift */,
 				C47A0058C47A0058001A9E58 /* ChooseBuildSheet.swift */,
+				C47A005BD47A005B001A9E5B /* ReleaseComponents.swift */,
+				C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */,
+				C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */,
+				C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */,
 			);
 			path = Shipyard;
 			sourceTree = "<group>";
@@ -629,6 +641,10 @@
 				C47A0053C47A0053001A9E53 /* RevokeCertificateDialog.swift in Sources */,
 				C47A0055C47A0055001A9E55 /* ReleaseTabView.swift in Sources */,
 				C47A0059C47A0059001A9E59 /* ChooseBuildSheet.swift in Sources */,
+				C47A005BC47A005B001A9E5B /* ReleaseComponents.swift in Sources */,
+				C47A005CC47A005C001A9E5C /* ReleaseDialogs.swift in Sources */,
+				C47A005DC47A005D001A9E5D /* ReleasePrepareView.swift in Sources */,
+				C47A005EC47A005E001A9E5E /* ReleaseStatusViews.swift in Sources */,
 				D4E5F6071A2B3C4D5E6F7082 /* BuildProcessingMonitor.swift in Sources */,
 				7ACA666481D2A0898E7A65E2 /* AppFont.swift in Sources */,
 				A146172690C3077743D6AD5E /* AppTheme.swift in Sources */,

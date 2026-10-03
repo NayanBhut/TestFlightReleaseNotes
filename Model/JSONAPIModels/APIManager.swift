@@ -545,10 +545,20 @@ enum APIName: String {
     case appInfoLocalizations = "/appInfoLocalizations"
     // Batch I (I6): top-level route for version localizations —
     // PATCH /v1/appStoreVersionLocalizations/{id}. Not under
-    // /appStoreVersions/{id}/ (that subpath is read-only list); reusing
+    // /v1/appStoreVersions/{id}/ (that subpath is read-only list); reusing
     // .getAppStoreVersions would build /v1/appStoreVersions/{id}, which is
     // the wrong resource entirely.
     case appStoreVersionLocalizations = "/appStoreVersionLocalizations"
+    // Review contact/demo/notes per version — GET/PATCH
+    // /v1/appStoreReviewDetails[/{id}] plus the version related link
+    // GET /v1/appStoreVersions/{id}/appStoreReviewDetail (composed with
+    // .getAppStoreVersions + path; note singular — 404 = none yet, then
+    // POST to create).
+    // Attribute set verified against the OpenAPI spec
+    // (AppStoreReviewDetail{Create,Update}Request): contactFirstName,
+    // contactLastName, contactPhone, contactEmail, demoAccountName,
+    // demoAccountPassword, demoAccountRequired, notes — all nullable.
+    case appStoreReviewDetails = "/appStoreReviewDetails"
     // Batch J (F4): screenshot sets + screenshots (top-level collections).
     // Sets are listed per localization via the related link
     // GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets
