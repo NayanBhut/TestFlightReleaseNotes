@@ -192,14 +192,15 @@ struct ReleaseTabView: View {
                 case .error(let message):
                     loadErrorView(message)
                 case .loaded:
-                    if allVersions.isEmpty && section.searchText.isEmpty && section.statusFilter == .all {
+                    let versions = allVersions
+                    if versions.isEmpty && section.searchText.isEmpty && section.statusFilter == .all {
                         emptyState
                     } else if featureTab == .allVersions {
-                        n1List
+                        n1List(versions: versions)
                     } else if shownVersion != nil {
                         detailMode
                     } else {
-                        n1List
+                        n1List(versions: versions)
                     }
                 case .empty:
                     emptyState
@@ -386,9 +387,8 @@ struct ReleaseTabView: View {
 
     private func featureTabButton(_ tab: FeatureTab, label: String) -> some View {
         Button(label) {
-            if tab == .overview, shownVersion == nil,
-               let first = allVersions.first {
-                showVersion(first)
+            if shownVersion == nil, let first = allVersions.first {
+                showVersion(first, tab: tab)
             } else {
                 featureTab = tab
             }
@@ -396,15 +396,16 @@ struct ReleaseTabView: View {
         .buttonStyle(.plain)
         .font(.system(size: 11, weight: featureTab == tab ? .semibold : .regular))
         .foregroundColor(featureTab == tab ? ShipyardTheme.accent : ShipyardTheme.body)
+        .accessibilityLabel(label)
     }
 
-    private func showVersion(_ version: AppStoreVersionsModel) {
+    private func showVersion(_ version: AppStoreVersionsModel, tab: FeatureTab? = nil) {
         if ReviewsViewModel.isPendingApprovalVersion(version) {
             reviewsVM.selectAppStoreVersion(version)
         }
         shownVersionId = version.id
         n1SelectedId = version.id
-        featureTab = .overview
+        featureTab = tab ?? .overview
         syncDrafts()
         loadPhased()
         loadVersionData()
@@ -416,7 +417,7 @@ struct ReleaseTabView: View {
         case .overview:
             overviewContent
         case .allVersions:
-            n1List
+            n1List(versions: allVersions)
         case .resolution:
             resolutionContent
         case .builds:
@@ -429,7 +430,7 @@ struct ReleaseTabView: View {
         if let version = shownVersion {
             switch shownState {
             case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
-                ScrollView {
+                TopPinnedScrollView {
                     WaitingVersionView(
                         version: version,
                         localizations: localizations,
@@ -438,7 +439,7 @@ struct ReleaseTabView: View {
                         .padding(24)
                 }
             case "IN_REVIEW":
-                ScrollView {
+                TopPinnedScrollView {
                     InReviewVersionView(
                         version: version,
                         localizations: localizations,
@@ -447,7 +448,7 @@ struct ReleaseTabView: View {
                         .padding(24)
                 }
             case "PENDING_DEVELOPER_RELEASE":
-                ScrollView {
+                TopPinnedScrollView {
                     PendingReleaseVersionView(
                         version: version,
                         localizations: localizations,
@@ -457,7 +458,7 @@ struct ReleaseTabView: View {
                 }
             case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
                  "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE":
-                ScrollView {
+                TopPinnedScrollView {
                     LiveVersionView(
                         version: version,
                         localizations: localizations,
@@ -471,7 +472,7 @@ struct ReleaseTabView: View {
                  "METADATA_REJECTED", "PREPARE_FOR_SUBMISSION":
                 prepareForm(version)
             default:
-                ScrollView {
+                TopPinnedScrollView {
                     LockedVersionView(
                         version: version,
                         localizations: localizations,
@@ -515,36 +516,37 @@ struct ReleaseTabView: View {
         if let version = shownVersion,
            shownState == "REJECTED" || shownState == "DEVELOPER_REJECTED"
             || shownState == "INVALID_BINARY" {
-            ScrollView {
+            TopPinnedScrollView {
                 RejectedThreadView(version: version, kind: .binary, appId: app.id)
                     .padding(24)
             }
         } else if let version = shownVersion, shownState == "METADATA_REJECTED" {
-            ScrollView {
+            TopPinnedScrollView {
                 RejectedThreadView(version: version, kind: .metadata, appId: app.id)
                     .padding(24)
             }
         } else {
-            VStack(spacing: 8) {
-                Text("No conversations")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(ShipyardTheme.title)
-                Text("Rejection messages from App Review appear here. Conversations live in App Store Connect.")
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.body)
-                Button("Open in App Store Connect") {
-                    openASC()
+            TopPinnedScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No conversations")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("Rejection messages from App Review appear here. Conversations live in App Store Connect.")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                    Button("Open in App Store Connect") {
+                        openASC()
+                    }
+                    .buttonStyle(.launchSecondary)
+                    .padding(.top, 4)
                 }
-                .buttonStyle(.launchSecondary)
-                .padding(.top, 4)
+                .padding(24)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(24)
         }
     }
 
     private var versionBuilds: some View {
-        ScrollView {
+        TopPinnedScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Builds for version \(shownVersion?.versionString ?? "—")")
                     .font(.system(size: 13, weight: .semibold))
@@ -584,7 +586,6 @@ struct ReleaseTabView: View {
             }
             .padding(24)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func buildStateBadge(_ build: BuildsModel) -> some View {
@@ -970,14 +971,14 @@ struct ReleaseTabView: View {
 
     // MARK: - N1 All Versions
 
-    private var n1Selected: AppStoreVersionsModel? {
-        if let id = n1SelectedId, let found = allVersions.first(where: { $0.id == id }) {
+    private func n1Selected(in versions: [AppStoreVersionsModel]) -> AppStoreVersionsModel? {
+        if let id = n1SelectedId, let found = versions.first(where: { $0.id == id }) {
             return found
         }
-        return shownVersion ?? allVersions.first
+        return shownVersion ?? versions.first
     }
 
-    private var n1List: some View {
+    private func n1List(versions: [AppStoreVersionsModel]) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -995,7 +996,7 @@ struct ReleaseTabView: View {
             .padding(.top, 12)
             Divider()
                 .padding(.top, 8)
-            ScrollView {
+            TopPinnedScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 10) {
                         Text(app.name?.prefix(1).uppercased() ?? "A")
@@ -1013,12 +1014,12 @@ struct ReleaseTabView: View {
                                 .foregroundColor(ShipyardTheme.body)
                         }
                         Spacer(minLength: 0)
-                        Text("\(allVersions.count) version\(allVersions.count == 1 ? "" : "s")")
+                        Text("\(versions.count) version\(versions.count == 1 ? "" : "s")")
                             .font(.system(size: 11))
                             .foregroundColor(ShipyardTheme.body)
                     }
-                    n1Table
-                    if allVersions.isEmpty {
+                    n1Table(versions: versions)
+                    if versions.isEmpty {
                         // Filtered-empty (search/filter), not truly-empty:
                         // offer clearing instead of a bare table.
                         VStack(spacing: 8) {
@@ -1038,7 +1039,7 @@ struct ReleaseTabView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 32)
                     }
-                    if let selected = n1Selected {
+                    if let selected = n1Selected(in: versions) {
                         n1DetailCard(selected)
                     }
                 }
@@ -1056,8 +1057,13 @@ struct ReleaseTabView: View {
             ?? ""
     }
 
-    private var n1Table: some View {
-        VStack(spacing: 0) {
+    private func n1Table(versions: [AppStoreVersionsModel]) -> some View {
+        let selectedId = n1Selected(in: versions)?.id
+        let submissionId = reviewsVM.submissionVersion?.id
+        let submissionDate = reviewsVM.submissionVersion?.platform.flatMap { platform in
+            reviewsVM.latestSubmission(forPlatform: platform)?.submittedDate
+        }
+        return VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("Version ↓")
                     .frame(width: 90, alignment: .leading)
@@ -1076,9 +1082,10 @@ struct ReleaseTabView: View {
             .padding(.horizontal, 16)
             .frame(height: 28)
             .background(ShipyardTheme.tableHeader)
-            ForEach(allVersions, id: \.id) { version in
+            ForEach(versions, id: \.id) { version in
                 let state = version.appStoreState ?? version.appVersionState
-                let selected = version.id == n1Selected?.id
+                let selected = version.id == selectedId
+                let submittedText: String = version.id == submissionId ? releaseDayDisplay(submissionDate) : "—"
                 Button {
                     n1SelectedId = version.id
                 } label: {
@@ -1093,7 +1100,7 @@ struct ReleaseTabView: View {
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundColor(ShipyardTheme.title)
                             .frame(width: 90, alignment: .leading)
-                        Text(n1SubmittedCell(version))
+                        Text(submittedText)
                             .font(.system(size: 12))
                             .foregroundColor(ShipyardTheme.body)
                             .frame(width: 130, alignment: .leading)
@@ -1119,17 +1126,6 @@ struct ReleaseTabView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(LaunchTheme.border, lineWidth: 1)
         )
-    }
-
-    /// Submitted date is only knowable for the pending row (matched by
-    /// platform); older rows have no version↔submission linkage in the
-    /// API, so they honestly show "—".
-    private func n1SubmittedCell(_ version: AppStoreVersionsModel) -> String {
-        guard version.id == reviewsVM.submissionVersion?.id,
-              let date = reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate else {
-            return "—"
-        }
-        return releaseDayDisplay(date)
     }
 
     private func n1DetailCard(_ version: AppStoreVersionsModel) -> some View {
@@ -1454,7 +1450,7 @@ struct ReleaseTabView: View {
         lastLocaleDefault = draftWhatsNew
         draftReleaseType = AppStoreVersionReleaseType(rawValue: version.releaseType ?? "") ?? .manual
         if let raw = version.earliestReleaseDate,
-           let date = ISO8601DateFormatter().date(from: raw) {
+           let date = sharedISOFormatter.date(from: raw) {
             draftReleaseDate = date
         } else {
             draftReleaseDate = Date()

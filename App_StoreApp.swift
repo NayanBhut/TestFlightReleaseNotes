@@ -70,20 +70,31 @@ struct App_StoreApp: App {
 }
 
 /// One-time safety: a window frame restored from a larger display can end
-/// up wider than the current screen, pushing centered content off-screen
-/// with no visible edge to grab. Shrink only the width overflow on the
-/// window's own screen — never grow, move, or touch height — so
-/// multi-display setups are unaffected.
+/// up wider than the current screen, pushing content off-screen with no
+/// visible edge to grab. Shrinks width overflow and recentres when any
+/// edge is offscreen. Only runs once on launch — never grows, changes
+/// height, or fires on multi-display setups where the window fits.
 private func clampMainWindowToVisibleScreen() {
     guard let window = NSApp.keyWindow
         ?? NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }),
         let screen = window.screen else { return }
     let visible = screen.visibleFrame
     var frame = window.frame
-    guard frame.width > visible.width else { return }
-    frame.size.width = visible.width
+    var changed = false
+    if frame.width > visible.width {
+        frame.size.width = visible.width
+        changed = true
+    }
     if frame.minX < visible.minX {
         frame.origin.x = visible.minX
+        changed = true
+    } else if frame.maxX > visible.maxX {
+        frame.origin.x = visible.maxX - frame.width
+        if frame.minX < visible.minX {
+            frame.origin.x = visible.minX
+        }
+        changed = true
     }
+    guard changed else { return }
     window.setFrame(frame, display: true)
 }

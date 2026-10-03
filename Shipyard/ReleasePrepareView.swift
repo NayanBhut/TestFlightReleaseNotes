@@ -40,7 +40,7 @@ struct ReleasePrepareView: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        ScrollView {
+        TopPinnedScrollView {
             HStack(alignment: .top, spacing: 20) {
                 versionAndReleaseColumn
                 reviewInformationColumn
