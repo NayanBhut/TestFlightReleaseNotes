@@ -219,7 +219,10 @@ struct CertificatesTableView: View {
                 .frame(width: 160, alignment: .leading)
 
             HStack(spacing: 6) {
-                ShipyardIcon(name: status.iconName)
+                Circle()
+                    .fill(status.color)
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
                 Text(status.text)
                     .font(.system(size: 13))
                     .foregroundColor(ShipyardTheme.title)
@@ -271,27 +274,28 @@ struct CertificatesTableView: View {
 // MARK: - Display helpers
 
 private struct CertificateStatus {
-    let iconName: String
+    let color: Color
     let text: String
 }
 
 /// Active (usable), Expiring Soon (<30 days), Expired, or Revoked
 /// (deactivated). The API carries no revoked flag — a deactivated,
-/// unexpired certificate reads as revoked.
+/// unexpired certificate reads as revoked. Dots match the Profiles
+/// table: green usable, amber expiring, red dead.
 private func certificateStatus(_ certificate: CertificateModel) -> CertificateStatus {
     if certificate.activated == false {
-        return CertificateStatus(iconName: "ShipyardCertMinus", text: "Revoked")
+        return CertificateStatus(color: ShipyardTheme.danger, text: "Revoked")
     }
     guard let expiry = sharedCertificateExpiryDate(certificate.expirationDate) else {
-        return CertificateStatus(iconName: "ShipyardCertOk", text: "Active")
+        return CertificateStatus(color: ShipyardTheme.success, text: "Active")
     }
     if expiry < Date() {
-        return CertificateStatus(iconName: "ShipyardCertX", text: "Expired")
+        return CertificateStatus(color: ShipyardTheme.danger, text: "Expired")
     }
     if let soon = Calendar.current.date(byAdding: .day, value: 30, to: Date()), expiry < soon {
-        return CertificateStatus(iconName: "ShipyardCertWarn", text: "Expiring Soon")
+        return CertificateStatus(color: ShipyardTheme.warning, text: "Expiring Soon")
     }
-    return CertificateStatus(iconName: "ShipyardCertOk", text: "Active")
+    return CertificateStatus(color: ShipyardTheme.success, text: "Active")
 }
 
 /// "Sep 28, 2026"; unparseable values pass through untouched.
