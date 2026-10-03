@@ -167,6 +167,9 @@ struct PhasedReleaseModel: Equatable {
     var id: String
 
     @ResourceAttribute var phasedReleaseState: String?
+    /// Day 1–7 of the rollout (Apple's fixed 1/2/5/10/20/50/100% ladder).
+    /// Absent until the rollout actually starts.
+    @ResourceAttribute var currentDayNumber: Int?
 }
 
 /// POST body: only the appStoreVersion linkage is required (server

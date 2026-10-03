@@ -2,42 +2,100 @@
 //  ReleaseTabView.swift
 //  App Store
 //
-//  Figma App Store Versions workspace (76:31086 missing-items,
-//  76:33999 complete): version heading + feature tabs, an editable
-//  submission form (version string, per-locale What's New, build picker,
-//  release type, phased release), a read-only App Review panel (contact
-//  details have no API surface — managed in App Store Connect), a general
-//  information inspector, and an action bar with a missing-items summary,
-//  Save, and Submit for Review. All writes reuse ReviewsViewModel.
+//  App Store Versions workspace shell: N1 All Versions list, N2/N3/N4
+//  empty/loading/error states, and per-version detail screens routed by
+//  Apple version state (01/03/C2 prepare form, 05 waiting, 06 in review,
+//  07 pending release, 09 live, R1/R2 resolution, locked states).
+//  Drafts live here so the action bar can save them; the prepare form,
+//  status screens, and dialogs are separate views.
 //
 
 import SwiftUI
 
-/// Submission workspace for one app's App Store versions.
+// MARK: - Section toolbar state (shared with AppDetailView)
+
+enum ReleaseStatusFilter: String, CaseIterable {
+    case all = "All"
+    case draft = "Draft"
+    case waiting = "Waiting"
+    case inReview = "In Review"
+    case approved = "Approved"
+    case live = "Live"
+    case rejected = "Rejected"
+
+    func matches(_ state: String?) -> Bool {
+        switch self {
+        case .all: return true
+        case .draft: return state == "PREPARE_FOR_SUBMISSION"
+        case .waiting: return state == "WAITING_FOR_REVIEW" || state == "READY_FOR_REVIEW"
+        case .inReview: return state == "IN_REVIEW"
+        case .approved: return state == "PENDING_DEVELOPER_RELEASE" || state == "PENDING_APPLE_RELEASE"
+        case .live:
+            return ["READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "REMOVED_FROM_SALE",
+                    "DEVELOPER_REMOVED_FROM_SALE", "REPLACED_WITH_NEW_VERSION"].contains(state ?? "")
+        case .rejected:
+            return ["REJECTED", "METADATA_REJECTED", "DEVELOPER_REJECTED", "INVALID_BINARY"].contains(state ?? "")
+        }
+    }
+}
+
+@MainActor
+final class ReleaseSectionState: ObservableObject {
+    @Published var searchText = ""
+    @Published var statusFilter: ReleaseStatusFilter = .all
+    @Published var newVersionRequested = false
+}
+
+// MARK: - Shell
+
 struct ReleaseTabView: View {
     var app: AppsData
     @ObservedObject var reviewsVM: ReviewsViewModel
+    @ObservedObject var section: ReleaseSectionState
     var onOpenAppInfo: () -> Void
     var onOpenBuilds: () -> Void
 
     @Environment(\.openURL) private var openURL
 
-    private enum FeatureTab: Hashable {
+    enum FeatureTab: Hashable {
         case overview, allVersions, resolution, builds
     }
 
-    @State private var featureTab: FeatureTab = .overview
+    @State private var featureTab: FeatureTab = .allVersions
     @State private var shownVersionId: String?
+    @State private var n1SelectedId: String?
     @State private var draftVersionString = ""
     @State private var draftWhatsNew = ""
     @State private var draftLocaleId: String?
     @State private var draftReleaseType = AppStoreVersionReleaseType.manual
     @State private var draftReleaseDate = Date()
+    @State private var draftFirstName = ""
+    @State private var draftLastName = ""
+    @State private var draftPhone = ""
+    @State private var draftEmail = ""
+    @State private var draftDemoRequired = false
+    @State private var draftDemoUser = ""
+    @State private var draftDemoPass = ""
+    @State private var draftNotes = ""
     @State private var syncedVersionId: String?
+    @State private var lastLocaleDefault: String?
+    @State private var lastReviewDefault = ReleaseTabView.emptyReviewJoin
     @State private var saving = false
     @State private var saveError: String?
-    @State private var showSubmitConfirm = false
     @State private var showChooseBuild = false
+    @State private var showSubmitDialog = false
+    @State private var showCancelDialog = false
+    @State private var showReleaseDialog = false
+    @State private var showNewVersionSheet = false
+    @State private var showRemoveConfirm = false
+    @State private var showLoadErrorDetails = false
+    @State private var toastTitle: String?
+    @State private var toastDetail: String?
+    @State private var toastGeneration = 0
+    @State private var initialLandingDone = false
+    @State private var showStuckRetry = false
+
+    private static let emptyReviewJoin = Array(repeating: "", count: 7).joined(separator: "\u{1F}")
 
     // MARK: - Version selection
 
@@ -48,14 +106,26 @@ struct ReleaseTabView: View {
         let sorted = loaded.sorted {
             ($0.versionString ?? "").localizedStandardCompare($1.versionString ?? "") == .orderedDescending
         }
-        guard let platform = reviewsVM.displayedAppStoreVersion?.platform else { return sorted }
-        let filtered = sorted.filter { $0.platform == platform }
-        return filtered.isEmpty ? sorted : filtered
+        let platform = reviewsVM.displayedAppStoreVersion?.platform
+            ?? reviewsVM.selectedAppStoreVersionPlatform
+        let scoped = platform.map { p in sorted.filter { $0.platform == p } } ?? sorted
+        let filtered = (scoped.isEmpty ? sorted : scoped).filter { version in
+            let state = version.appStoreState ?? version.appVersionState
+            guard section.statusFilter.matches(state) else { return false }
+            let query = section.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return true }
+            return (version.versionString ?? "").localizedCaseInsensitiveContains(query)
+                || (version.build?.version ?? "").localizedCaseInsensitiveContains(query)
+        }
+        return filtered
     }
 
     private var shownVersion: AppStoreVersionsModel? {
+        // Resolved from the unfiltered list on purpose: an active
+        // search/filter must never yank the open form out from under
+        // the user (which would also discard unsaved drafts on resync).
         if let id = shownVersionId,
-           let found = allVersions.first(where: { $0.id == id }) {
+           let found = reviewsVM.appStoreVersionsState.loadedValue?.first(where: { $0.id == id }) {
             return found
         }
         return reviewsVM.displayedAppStoreVersion
@@ -76,33 +146,76 @@ struct ReleaseTabView: View {
         return true
     }
 
+    private var localizations: [AppStoreVersionLocalizationsModel] {
+        // The versions list never includes localizations — prefer the
+        // dedicated locale fetch once it arrives for the shown version.
+        if let id = shownVersion?.id,
+           reviewsVM.versionLocalizationsVersionId == id,
+           let loaded = reviewsVM.versionLocalizationsState.loadedValue {
+            return loaded
+        }
+        return shownVersion?.appStoreVersionLocalizations ?? []
+    }
+
+    private var reviewDetailsValue: AppStoreReviewDetailsModel? {
+        guard let id = shownVersion?.id,
+              reviewsVM.reviewDetailsVersionId == id else { return nil }
+        return reviewsVM.reviewDetailsState.loadedValue
+    }
+
+    private var reviewDetailsKnown: Bool {
+        guard let id = shownVersion?.id,
+              reviewsVM.reviewDetailsVersionId == id else { return false }
+        switch reviewsVM.reviewDetailsState {
+        case .loading: return false
+        default: return true
+        }
+    }
+
+    /// Changes whenever the shown version or its locale set does.
+    private var localeSyncKey: String {
+        "\(shownVersion?.id ?? "none")#\(localizations.map(\.id).joined(separator: ","))"
+    }
+
+    private var reviewSyncKey: String {
+        "\(shownVersion?.id ?? "none")#\(reviewsVM.reviewDetailsVersionId ?? "none")#\(reviewDetailsValue?.id ?? "none")"
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        VStack(spacing: 0) {
-            switch reviewsVM.appStoreVersionsState {
-            case .loading, .idle:
-                loadingView
-            case .error(let message):
-                loadErrorView(message)
-            case .loaded:
-                if shownVersion != nil {
-                    versionHeading
-                    featureTabs
-                    Divider()
-                    HStack(alignment: .top, spacing: 0) {
-                        featureContent
-                        inspector
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                switch reviewsVM.appStoreVersionsState {
+                case .loading, .idle:
+                    loadingView
+                case .error(let message):
+                    loadErrorView(message)
+                case .loaded:
+                    if allVersions.isEmpty && section.searchText.isEmpty && section.statusFilter == .all {
+                        emptyState
+                    } else if featureTab == .allVersions {
+                        n1List
+                    } else if shownVersion != nil {
+                        detailMode
+                    } else {
+                        n1List
                     }
-                    Divider()
-                    actionBar
-                } else {
+                case .empty:
                     emptyState
                 }
-            case .empty:
-                emptyState
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(ShipyardTheme.tableBackground)
+            if let title = toastTitle {
+                ReleaseToast(title: title, detail: toastDetail ?? "") {
+                    toastTitle = nil
+                    toastDetail = nil
+                }
+                .padding(.trailing, 24)
+                .padding(.bottom, 72)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ShipyardTheme.tableBackground)
         .onAppear {
             reviewsVM.load(app: app)
             if shownVersionId == nil {
@@ -110,10 +223,28 @@ struct ReleaseTabView: View {
             }
             syncDrafts()
             loadPhased()
+            loadVersionData()
+            if !initialLandingDone {
+                initialLandingDone = true
+                featureTab = .allVersions
+            }
         }
         .onChange(of: shownVersion?.id) {
             syncDrafts()
             loadPhased()
+            loadVersionData()
+        }
+        .onChange(of: localeSyncKey) {
+            adoptLoadedLocales()
+        }
+        .onChange(of: reviewSyncKey) {
+            adoptLoadedReviewDetails()
+        }
+        .onChange(of: section.newVersionRequested) { _, requested in
+            if requested {
+                section.newVersionRequested = false
+                showNewVersionSheet = true
+            }
         }
         .sheet(isPresented: $showChooseBuild) {
             if let version = shownVersion {
@@ -123,16 +254,98 @@ struct ReleaseTabView: View {
                 }
             }
         }
+        .sheet(isPresented: $showSubmitDialog) {
+            if let version = shownVersion {
+                SubmitReviewDialog(
+                    appId: app.id,
+                    appName: app.name ?? "this app",
+                    version: version,
+                    phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
+                    reviewsVM: reviewsVM
+                ) {
+                    reviewsVM.refreshAfterWrite(appId: app.id)
+                    showToast(title: "Submitted for review",
+                              detail: "\(app.name ?? "App") \(version.versionString ?? "") · Build #\(version.build?.version ?? "—")")
+                }
+            }
+        }
+        .sheet(isPresented: $showCancelDialog) {
+            if let version = shownVersion {
+                CancelSubmissionDialog(
+                    appName: app.name ?? "this app",
+                    version: version,
+                    phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
+                    submission: reviewsVM.cancellableSubmission(forPlatform: version.platform),
+                    reviewsVM: reviewsVM
+                ) {
+                    // Never assume the post-cancel state — refetch and
+                    // route by whatever Apple returns (usually Prepare).
+                    reviewsVM.refreshAfterWrite(appId: app.id)
+                    featureTab = .overview
+                    showToast(title: "Submission cancelled",
+                              detail: "\(app.name ?? "App") \(version.versionString ?? "") · Build #\(version.build?.version ?? "—")")
+                }
+            }
+        }
+        .sheet(isPresented: $showReleaseDialog) {
+            if let version = shownVersion {
+                ReleaseVersionDialog(
+                    appName: app.name ?? "this app",
+                    version: version,
+                    phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
+                    reviewsVM: reviewsVM
+                ) {
+                    reviewsVM.refreshAfterWrite(appId: app.id)
+                }
+            }
+        }
+        .sheet(isPresented: $showNewVersionSheet) {
+            NewVersionSheet(appId: app.id, reviewsVM: reviewsVM) {
+                if let id = reviewsVM.selectedAppStoreVersionId,
+                   let created = reviewsVM.appStoreVersionsState.loadedValue?.first(where: { $0.id == id }) {
+                    showVersion(created)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Remove from sale isn’t available through the API. Open this app in App Store Connect to change availability?",
+            isPresented: $showRemoveConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Open in App Store Connect") {
+                openASC()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
-    // MARK: - Heading + tabs
+    // MARK: - Detail mode
+
+    private var detailMode: some View {
+        VStack(spacing: 0) {
+            versionHeading
+            featureTabs(chips: true)
+            Divider()
+            if let error = reviewsVM.writeError {
+                errorBanner(error) {
+                    reviewsVM.writeError = nil
+                }
+            }
+            HStack(alignment: .top, spacing: 0) {
+                featureContent
+                inspector
+            }
+            Divider()
+            detailActionBar
+        }
+    }
 
     private var versionHeading: some View {
         HStack(spacing: 12) {
             Text("Version \(shownVersion?.versionString ?? "—")")
                 .font(.system(size: 18))
                 .foregroundColor(ShipyardTheme.title)
-            statusBadge(shownState)
+            ReleaseStatusBadge(state: shownState)
             Spacer(minLength: 0)
             Button("‹ All Versions") {
                 featureTab = .allVersions
@@ -145,38 +358,25 @@ struct ReleaseTabView: View {
         .padding(.vertical, 12)
     }
 
-    private func statusBadge(_ state: String?) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(ShipyardTheme.body)
-                .frame(width: 6, height: 6)
-            Text(getStatusLabel(appStoreState: state))
-                .font(.system(size: 10))
-                .foregroundColor(ShipyardTheme.title)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
-        .background(ShipyardTheme.tableHeader)
-        .cornerRadius(10)
-    }
-
-    private var featureTabs: some View {
+    private func featureTabs(chips: Bool) -> some View {
         HStack(spacing: 16) {
             featureTabButton(.overview, label: "Overview")
             featureTabButton(.allVersions, label: "All Versions")
             featureTabButton(.resolution, label: "Resolution Center")
             featureTabButton(.builds, label: "Builds")
-            Text("│")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.tertiary)
-            ForEach(allVersions, id: \.id) { version in
-                let selected = version.id == shownVersion?.id
-                Button(version.versionString ?? "—") {
-                    showVersion(version)
+            if chips {
+                Text("│")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.tertiary)
+                ForEach(allVersions, id: \.id) { version in
+                    let selected = version.id == shownVersion?.id
+                    Button(version.versionString ?? "—") {
+                        showVersion(version)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                    .foregroundColor(selected ? ShipyardTheme.accent : ShipyardTheme.body)
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: selected ? .semibold : .regular))
-                .foregroundColor(selected ? ShipyardTheme.accent : ShipyardTheme.body)
             }
             Spacer(minLength: 0)
         }
@@ -186,7 +386,12 @@ struct ReleaseTabView: View {
 
     private func featureTabButton(_ tab: FeatureTab, label: String) -> some View {
         Button(label) {
-            featureTab = tab
+            if tab == .overview, shownVersion == nil,
+               let first = allVersions.first {
+                showVersion(first)
+            } else {
+                featureTab = tab
+            }
         }
         .buttonStyle(.plain)
         .font(.system(size: 11, weight: featureTab == tab ? .semibold : .regular))
@@ -194,563 +399,148 @@ struct ReleaseTabView: View {
     }
 
     private func showVersion(_ version: AppStoreVersionsModel) {
-        if Self.isPendingVersion(version) {
+        if ReviewsViewModel.isPendingApprovalVersion(version) {
             reviewsVM.selectAppStoreVersion(version)
         }
         shownVersionId = version.id
+        n1SelectedId = version.id
         featureTab = .overview
         syncDrafts()
         loadPhased()
-    }
-
-    private static func isPendingVersion(_ version: AppStoreVersionsModel) -> Bool {
-        ReviewsViewModel.isPendingApprovalVersion(version)
+        loadVersionData()
     }
 
     @ViewBuilder
     private var featureContent: some View {
         switch featureTab {
         case .overview:
-            overviewForm
+            overviewContent
         case .allVersions:
-            allVersionsList
+            n1List
         case .resolution:
-            resolutionCenter
+            resolutionContent
         case .builds:
             versionBuilds
         }
     }
 
-    // MARK: - Overview form
-
-    private var overviewForm: some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: 20) {
-                versionAndReleaseColumn
-                reviewInformationColumn
+    @ViewBuilder
+    private var overviewContent: some View {
+        if let version = shownVersion {
+            switch shownState {
+            case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+                ScrollView {
+                    WaitingVersionView(
+                        version: version,
+                        localizations: localizations,
+                        primaryLocale: app.primaryLocale,
+                        reviewsVM: reviewsVM)
+                        .padding(24)
+                }
+            case "IN_REVIEW":
+                ScrollView {
+                    InReviewVersionView(
+                        version: version,
+                        localizations: localizations,
+                        primaryLocale: app.primaryLocale,
+                        reviewsVM: reviewsVM)
+                        .padding(24)
+                }
+            case "PENDING_DEVELOPER_RELEASE":
+                ScrollView {
+                    PendingReleaseVersionView(
+                        version: version,
+                        localizations: localizations,
+                        primaryLocale: app.primaryLocale,
+                        reviewsVM: reviewsVM)
+                        .padding(24)
+                }
+            case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
+                 "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE":
+                ScrollView {
+                    LiveVersionView(
+                        version: version,
+                        localizations: localizations,
+                        primaryLocale: app.primaryLocale,
+                        reviewsVM: reviewsVM,
+                        removedFromSale: (shownState == "REMOVED_FROM_SALE"
+                            || shownState == "DEVELOPER_REMOVED_FROM_SALE"))
+                        .padding(24)
+                }
+            case "REJECTED", "DEVELOPER_REJECTED", "INVALID_BINARY",
+                 "METADATA_REJECTED", "PREPARE_FOR_SUBMISSION":
+                prepareForm(version)
+            default:
+                ScrollView {
+                    LockedVersionView(
+                        version: version,
+                        localizations: localizations,
+                        primaryLocale: app.primaryLocale,
+                        reviewsVM: reviewsVM)
+                        .padding(24)
+                }
             }
+        }
+    }
+
+    private func prepareForm(_ version: AppStoreVersionsModel) -> some View {
+        ReleasePrepareView(
+            app: app,
+            version: version,
+            reviewsVM: reviewsVM,
+            localizations: localizations,
+            reviewDetails: reviewDetailsValue,
+            missingItems: missingItems,
+            missingDetail: missingDetail,
+            canEdit: canEditShown,
+            draftVersionString: $draftVersionString,
+            draftWhatsNew: $draftWhatsNew,
+            draftLocaleId: $draftLocaleId,
+            draftReleaseType: $draftReleaseType,
+            draftReleaseDate: $draftReleaseDate,
+            draftFirstName: $draftFirstName,
+            draftLastName: $draftLastName,
+            draftPhone: $draftPhone,
+            draftEmail: $draftEmail,
+            draftDemoRequired: $draftDemoRequired,
+            draftDemoUser: $draftDemoUser,
+            draftDemoPass: $draftDemoPass,
+            draftNotes: $draftNotes,
+            showChooseBuild: $showChooseBuild,
+            onOpenAppInfo: onOpenAppInfo)
+    }
+
+    @ViewBuilder
+    private var resolutionContent: some View {
+        if let version = shownVersion,
+           shownState == "REJECTED" || shownState == "DEVELOPER_REJECTED"
+            || shownState == "INVALID_BINARY" {
+            ScrollView {
+                RejectedThreadView(version: version, kind: .binary, appId: app.id)
+                    .padding(24)
+            }
+        } else if let version = shownVersion, shownState == "METADATA_REJECTED" {
+            ScrollView {
+                RejectedThreadView(version: version, kind: .metadata, appId: app.id)
+                    .padding(24)
+            }
+        } else {
+            VStack(spacing: 8) {
+                Text("No conversations")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text("Rejection messages from App Review appear here. Conversations live in App Store Connect.")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.body)
+                Button("Open in App Store Connect") {
+                    openASC()
+                }
+                .buttonStyle(.launchSecondary)
+                .padding(.top, 4)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(24)
         }
-    }
-
-    private var versionAndReleaseColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            fieldLabel("Version *")
-            fieldBox(disabled: !canEditShown) {
-                TextField("2.4.0", text: $draftVersionString)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .disabled(!canEditShown)
-            }
-
-            whatsNewField
-
-            Text("Build *")
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-                .padding(.top, 8)
-            buildSelectorCard
-
-            Text("Version release")
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-                .padding(.top, 8)
-            releaseTypeOptions
-            if draftReleaseType == .scheduled {
-                DatePicker(
-                    "Release date",
-                    selection: $draftReleaseDate,
-                    displayedComponents: .date
-                )
-                .font(.system(size: 12))
-                .disabled(!canEditShown)
-            }
-
-            phasedReleaseRow
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var whatsNewField: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                fieldLabel("What’s New * · \(localeDisplay(draftLocale?.locale))")
-                Spacer(minLength: 0)
-                if localizations.count > 1 {
-                    Picker("", selection: $draftLocaleId) {
-                        ForEach(localizations, id: \.id) { loc in
-                            Text(localeDisplay(loc.locale))
-                                .tag(Optional(loc.id))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .font(.system(size: 11))
-                    .frame(maxWidth: 160)
-                }
-            }
-            fieldBox(disabled: !canEditShown, minHeight: 76) {
-                TextEditor(text: $draftWhatsNew)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .disabled(!canEditShown)
-                    .frame(minHeight: 60)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text("\(draftWhatsNew.count) / 4000")
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.tertiary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-            }
-        }
-        .onChange(of: draftLocaleId) { _, _ in
-            if let loc = draftLocale {
-                draftWhatsNew = loc.whatsNew ?? ""
-            }
-        }
-    }
-
-    private var localizations: [AppStoreVersionLocalizationsModel] {
-        shownVersion?.appStoreVersionLocalizations ?? []
-    }
-
-    private var draftLocale: AppStoreVersionLocalizationsModel? {
-        if let id = draftLocaleId {
-            return localizations.first { $0.id == id }
-        }
-        return localizations.first
-    }
-
-    private var buildSelectorCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                if let build = shownVersion?.build {
-                    Text("\(shownVersion?.versionString ?? "") · Build #\(build.version ?? "")")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.title)
-                } else {
-                    Text("No build selected")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.title)
-                }
-                Spacer(minLength: 0)
-                if canEditShown {
-                    Button("Choose Build") {
-                        showChooseBuild = true
-                    }
-                    .buttonStyle(.launchSecondary)
-                    .controlSize(.small)
-                }
-            }
-            if let build = shownVersion?.build {
-                Text("Uploaded \(buildDetailUploadedDisplay(build.uploadedDate))")
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.body)
-                buildStateBadge(build)
-            } else {
-                Text("Choose a processed build for version \(shownVersion?.versionString ?? "").")
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.body)
-            }
-            if let error = reviewsVM.attachBuildError, canEditShown {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.danger)
-            }
-        }
-        .padding(10)
-        .background(ShipyardTheme.tableBackground)
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(LaunchTheme.border, lineWidth: 1)
-        )
-    }
-
-    private func buildStateBadge(_ build: BuildsModel) -> some View {
-        let state = build.processingState ?? ""
-        return HStack(spacing: 5) {
-            Circle()
-                .fill(state == "VALID" ? ShipyardTheme.success : ShipyardTheme.accent)
-                .frame(width: 6, height: 6)
-            Text(buildStateDisplayName(state))
-                .font(.system(size: 10))
-                .foregroundColor(ShipyardTheme.title)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
-        .background(ShipyardTheme.tableHeader)
-        .cornerRadius(10)
-    }
-
-    private var releaseTypeOptions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            releaseOption(.manual, label: "Manually release")
-            releaseOption(.afterApproval, label: "Automatically release after approval")
-            releaseOption(.scheduled, label: "Automatically release on a specific date")
-        }
-        .disabled(!canEditShown)
-    }
-
-    private func releaseOption(_ type: AppStoreVersionReleaseType, label: String) -> some View {
-        Button {
-            draftReleaseType = type
-        } label: {
-            HStack(spacing: 8) {
-                RadioDot(selected: draftReleaseType == type, color: ShipyardTheme.accent)
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.title)
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var phasedReleaseRow: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Phased release")
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.title)
-                Text(phasedReleaseSubtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.body)
-            }
-            Spacer(minLength: 0)
-            if reviewsVM.phasedLoading {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else {
-                Toggle("", isOn: phasedBinding)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .disabled(!canEditShown || reviewsVM.phasedActionInFlight)
-            }
-        }
-        .padding(.top, 4)
-    }
-
-    private var phasedReleaseSubtitle: String {
-        if let release = reviewsVM.phasedRelease,
-           reviewsVM.phasedVersionId == shownVersion?.id {
-            return "State: \(release.phasedReleaseState ?? "unknown") — roll out this update over 7 days."
-        }
-        return "Roll out this update over 7 days."
-    }
-
-    private var phasedBinding: Binding<Bool> {
-        Binding(
-            get: {
-                reviewsVM.phasedVersionId == shownVersion?.id
-                    && (reviewsVM.phasedRelease?.phasedReleaseState ?? "") == "ACTIVE"
-            },
-            set: { on in
-                guard let version = shownVersion else { return }
-                Task {
-                    if on {
-                        if reviewsVM.phasedRelease == nil {
-                            await reviewsVM.startPhasedRelease(versionId: version.id)
-                        } else {
-                            await reviewsVM.setPhasedReleaseState("ACTIVE")
-                        }
-                    } else {
-                        await reviewsVM.setPhasedReleaseState("PAUSED")
-                    }
-                }
-            }
-        )
-    }
-
-    // MARK: - Review information (read-only: no API)
-
-    private var reviewInformationColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("App Review information")
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-            reviewDisabledField(label: "Contact name *", prompt: "Managed in App Store Connect")
-            reviewDisabledField(label: "Phone *", prompt: "Managed in App Store Connect")
-            reviewDisabledField(label: "Email *", prompt: "Managed in App Store Connect")
-            HStack(spacing: 12) {
-                Text("Sign-in required")
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.title)
-                Spacer(minLength: 0)
-                Toggle("", isOn: .constant(false))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .disabled(true)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                fieldLabel("Notes for App Review")
-                fieldBox(disabled: true, minHeight: 76) {
-                    Text("Managed in App Store Connect")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.tertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
-                }
-            }
-            Text("Review contact details have no App Store Connect API — they can only be edited on the web.")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-            Button("Open in App Store Connect") {
-                if let url = URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)") {
-                    openURL(url)
-                }
-            }
-            .buttonStyle(.launchSecondary)
-            .controlSize(.small)
-
-            statusAlert
-
-            Text(releaseTypeHelper)
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-            Button("Manage shared metadata in App Info ›") {
-                onOpenAppInfo()
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(ShipyardTheme.accent)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func reviewDisabledField(label: String, prompt: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            fieldLabel(label)
-            fieldBox(disabled: true) {
-                Text(prompt)
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    // MARK: - Status alert + action bar
-
-    private var missingItems: [String] {
-        guard let version = shownVersion, canEditShown else { return [] }
-        var items: [String] = []
-        if localizations.isEmpty
-            || localizations.contains(where: { ($0.whatsNew ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            items.append("What’s New")
-        }
-        if version.build == nil {
-            items.append("build")
-        }
-        if draftReleaseType == .scheduled && version.earliestReleaseDate == nil {
-            items.append("release date")
-        }
-        return items
-    }
-
-    private var statusAlert: some View {
-        let missing = missingItems
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(missing.isEmpty ? "Ready to submit" : "\(missing.count) required item\(missing.count == 1 ? "" : "s") missing")
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-            Text(missing.isEmpty
-                ? "Version, release notes, build, and review contact are complete."
-                : "Add \(missing.joined(separator: ", ")).")
-                .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.body)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(ShipyardTheme.tableBackground)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(LaunchTheme.border, lineWidth: 1)
-        )
-    }
-
-    private var releaseTypeHelper: String {
-        switch draftReleaseType {
-        case .manual:
-            return "After approval, the version waits for you to release it."
-        case .afterApproval:
-            return "After approval, the version releases to the App Store automatically."
-        case .scheduled:
-            return "After approval, the version releases on the scheduled date."
-        }
-    }
-
-    private var inspector: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("GENERAL INFORMATION")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-            inspectorRow(label: "APP NAME", value: app.name ?? "—")
-            inspectorRow(label: "APPLE ID", value: app.id)
-            inspectorRow(label: "SKU", value: app.sku ?? "—")
-            inspectorRow(label: "PRIMARY LOCALE", value: localeDisplay(app.primaryLocale))
-            ShipyardTheme.rowDivider.frame(height: 1)
-            Text("VERSION HISTORY")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-            Text(getStatusLabel(appStoreState: shownState))
-                .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.title)
-            Text("Prepare → Waiting → In Review → Pending → Ready")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-            Button("View \(app.name ?? "App") Builds ›") {
-                onOpenBuilds()
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(ShipyardTheme.accent)
-            Button("Edit App Info ›") {
-                onOpenAppInfo()
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(ShipyardTheme.accent)
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .frame(width: 224)
-        .background(ShipyardTheme.sidebarBackground)
-        .overlay(
-            ShipyardTheme.rowDivider.frame(width: 1),
-            alignment: .leading
-        )
-    }
-
-    private func inspectorRow(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(ShipyardTheme.tertiary)
-            Text(value)
-                .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.title)
-        }
-    }
-
-    private var actionBar: some View {
-        HStack(spacing: 8) {
-            Text(actionBarText)
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let error = saveError ?? reviewsVM.releaseSettingsError, canEditShown {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.danger)
-            }
-            if saving {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else {
-                Button("Save") {
-                    save()
-                }
-                .buttonStyle(.launchSecondary)
-                .disabled(!canEditShown || !isDirty)
-            }
-            if reviewsVM.submittingReview {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else if canSubmit {
-                Button("Submit for Review") {
-                    showSubmitConfirm = true
-                }
-                .buttonStyle(.launchPrimary)
-            } else {
-                Button("Submit for Review") {
-                    showSubmitConfirm = true
-                }
-                .buttonStyle(.launchSecondary)
-                .disabled(true)
-            }
-        }
-        .padding(.horizontal, 24)
-        .frame(height: 56)
-        .background(ShipyardTheme.tableBackground)
-        .confirmationDialog(
-            "Submit version \(shownVersion?.versionString ?? "") (build \(shownVersion?.build?.version ?? "—")) to App Review? Metadata locks while it's in review.",
-            isPresented: $showSubmitConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Submit for Review") {
-                Task {
-                    if let version = shownVersion,
-                       await reviewsVM.submitForReview(appId: app.id, versionId: version.id) {
-                        reviewsVM.load(appId: app.id, force: true)
-                    }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-    }
-
-    private var actionBarText: String {
-        guard shownVersion != nil else { return "" }
-        if !canEditShown {
-            return "Version is \(getStatusLabel(appStoreState: shownState).lowercased()) — metadata is locked while Apple has it."
-        }
-        let missing = missingItems
-        if missing.isEmpty {
-            return "All required fields complete · Submit → Waiting for Review"
-        }
-        return "Missing: \(missing.joined(separator: ", "))."
-    }
-
-    private var canSubmit: Bool {
-        guard canEditShown, missingItems.isEmpty else { return false }
-        return reviewsVM.canSubmitForReview
-            && reviewsVM.submissionVersion?.id == shownVersion?.id
-    }
-
-    // MARK: - All versions / resolution / builds
-
-    private var allVersionsList: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                ForEach(allVersions, id: \.id) { version in
-                    let state = version.appStoreState ?? version.appVersionState
-                    Button {
-                        showVersion(version)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Text("Version \(version.versionString ?? "—")")
-                                .font(.system(size: 13))
-                                .foregroundColor(ShipyardTheme.title)
-                            statusBadge(state)
-                            Spacer(minLength: 0)
-                            if version.id == shownVersion?.id {
-                                Text("Current")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(ShipyardTheme.accent)
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 10)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider()
-                        .background(ShipyardTheme.rowDivider)
-                }
-            }
-            .padding(.vertical, 8)
-        }
-    }
-
-    private var resolutionCenter: some View {
-        ContentUnavailableView(
-            "Resolution Center",
-            systemImage: "envelope",
-            description: Text("Rejection messages from App Review have no App Store Connect API — read and reply to them in App Store Connect.")
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var versionBuilds: some View {
@@ -797,6 +587,787 @@ struct ReleaseTabView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private func buildStateBadge(_ build: BuildsModel) -> some View {
+        let state = build.processingState ?? ""
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(state == "VALID" ? ShipyardTheme.success : ShipyardTheme.accent)
+                .frame(width: 6, height: 6)
+            Text(buildStateDisplayName(state))
+                .font(.system(size: 10))
+                .foregroundColor(ShipyardTheme.title)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(ShipyardTheme.tableHeader)
+        .cornerRadius(10)
+    }
+
+    // MARK: - Inspector
+
+    private var inspector: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("GENERAL INFORMATION")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+            inspectorRow(label: "APP NAME", value: app.name ?? "—")
+            inspectorRow(label: "APPLE ID", value: app.id)
+            inspectorRow(label: "SKU", value: app.sku ?? "—")
+            inspectorRow(label: "PRIMARY LOCALE", value: ReleasePrepareView.localeDisplay(app.primaryLocale))
+            ShipyardTheme.rowDivider.frame(height: 1)
+            Text("VERSION HISTORY")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+            Text(historyLine)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
+            Text("Prepare → Waiting → In Review → Pending → Ready")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+            Button("View \(app.name ?? "App") Builds ›") {
+                onOpenBuilds()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(ShipyardTheme.accent)
+            Button("Edit App Info ›") {
+                onOpenAppInfo()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(ShipyardTheme.accent)
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(width: 224)
+        .background(ShipyardTheme.sidebarBackground)
+        .overlay(
+            ShipyardTheme.rowDivider.frame(width: 1),
+            alignment: .leading
+        )
+    }
+
+    private func inspectorRow(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(ShipyardTheme.tertiary)
+            Text(value)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
+        }
+    }
+
+    private var historyLine: String {
+        guard let version = shownVersion else { return "—" }
+        let submitted = releaseDayDisplay(
+            reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)
+        switch shownState {
+        case "PREPARE_FOR_SUBMISSION":
+            return "Draft · Created \(releaseDayDisplay(version.createdDate))"
+        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+            return "Submitted \(submitted)"
+        case "IN_REVIEW":
+            return "In Review · submitted \(submitted)"
+        case "PENDING_DEVELOPER_RELEASE":
+            return "Approved · pending release"
+        case "PENDING_APPLE_RELEASE":
+            return "Approved · releasing automatically"
+        case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION":
+            return "Live · \(phasedHistorySuffix)"
+        case "REJECTED", "DEVELOPER_REJECTED", "INVALID_BINARY":
+            return "Rejected · fix and resubmit"
+        case "METADATA_REJECTED":
+            return "Metadata rejected · fix and resubmit"
+        default:
+            return "\(getStatusLabel(appStoreState: shownState)) · Created \(releaseDayDisplay(version.createdDate))"
+        }
+    }
+
+    private var phasedHistorySuffix: String {
+        if let release = reviewsVM.phasedRelease,
+           reviewsVM.phasedVersionId == shownVersion?.id {
+            return "phased \((release.phasedReleaseState ?? "").lowercased())"
+        }
+        return "released to all users"
+    }
+
+    // MARK: - Action bars
+
+    @ViewBuilder
+    private var detailActionBar: some View {
+        switch featureTab {
+        case .overview:
+            overviewActionBar
+        case .allVersions:
+            n1ActionBar
+        case .resolution:
+            resolutionActionBar
+        case .builds:
+            buildsActionBar
+        }
+    }
+
+    @ViewBuilder
+    private var overviewActionBar: some View {
+        switch shownState {
+        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+            waitingActionBar
+        case "IN_REVIEW":
+            inReviewActionBar
+        case "PENDING_DEVELOPER_RELEASE":
+            pendingReleaseActionBar
+        case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
+             "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE",
+             "REPLACED_WITH_NEW_VERSION":
+            liveActionBar
+        default:
+            if canEditShown {
+                prepareActionBar
+            } else {
+                lockedActionBar
+            }
+        }
+    }
+
+    private var prepareActionBar: some View {
+        HStack(spacing: 8) {
+            Text(actionBarText)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let error = saveError ?? reviewsVM.releaseSettingsError, canEditShown {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.danger)
+            }
+            if saving {
+                ProgressView()
+                    .scaleEffect(0.7)
+            } else {
+                Button("Save") {
+                    save()
+                }
+                .buttonStyle(.launchSecondary)
+                .disabled(!canEditShown || !isDirty)
+            }
+            if reviewsVM.submittingReview {
+                ProgressView()
+                    .scaleEffect(0.7)
+            } else if canSubmit {
+                Button("Submit for Review") {
+                    showSubmitDialog = true
+                }
+                .buttonStyle(.launchPrimary)
+            } else {
+                Button("Submit for Review") {
+                    showSubmitDialog = true
+                }
+                .buttonStyle(.launchSecondary)
+                .disabled(true)
+            }
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var waitingActionBar: some View {
+        HStack(spacing: 8) {
+            Text("Cancel Submission → Prepare for Submission · Your saved information is retained.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Edit Info") {
+                onOpenAppInfo()
+            }
+            .buttonStyle(.launchSecondary)
+            if let version = shownVersion,
+               reviewsVM.cancellableSubmission(forPlatform: version.platform) != nil {
+                Button("Cancel Submission") {
+                    showCancelDialog = true
+                }
+                .buttonStyle(.launchDestructive)
+            }
+            Button("Request Expedited Review") {
+                openASC()
+            }
+            .buttonStyle(.launchSecondary)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var inReviewActionBar: some View {
+        HStack(spacing: 8) {
+            Text("App Review will notify you when the review is complete.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Message App Review") {
+                openASC()
+            }
+            .buttonStyle(.launchPrimary)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var pendingReleaseActionBar: some View {
+        HStack(spacing: 8) {
+            Text("Release This Version → Ready for Distribution · Phased release will begin.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if reviewsVM.releasingVersionId != nil {
+                ProgressView()
+                    .scaleEffect(0.7)
+            } else {
+                Button("Release This Version") {
+                    showReleaseDialog = true
+                }
+                .buttonStyle(.launchPrimary)
+            }
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var liveActionBar: some View {
+        HStack(spacing: 8) {
+            Text("This version is available for distribution.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if reviewsVM.canCreateAppStoreVersion {
+                Button("Create New Version") {
+                    showNewVersionSheet = true
+                }
+                .buttonStyle(.launchSecondary)
+            }
+            Button("Remove from Sale") {
+                showRemoveConfirm = true
+            }
+            .buttonStyle(.launchDestructive)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var lockedActionBar: some View {
+        HStack(spacing: 8) {
+            Text("Version is \(getStatusLabel(appStoreState: shownState).lowercased()) — metadata is locked while Apple has it.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let version = shownVersion,
+               reviewsVM.cancellableSubmission(forPlatform: version.platform) != nil {
+                Button("Cancel Submission") {
+                    showCancelDialog = true
+                }
+                .buttonStyle(.launchDestructive)
+            }
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var resolutionActionBar: some View {
+        HStack(spacing: 8) {
+            if shownState == "REJECTED" || shownState == "DEVELOPER_REJECTED"
+                || shownState == "INVALID_BINARY" {
+                Text("Resubmit → Waiting for Review · A new processed build is required.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Upload New Build and Resubmit") {
+                    showChooseBuild = true
+                }
+                .buttonStyle(.launchPrimary)
+            } else if shownState == "METADATA_REJECTED" {
+                Text("Edit in App Info, then resubmit → Waiting for Review · No new build needed.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Edit Metadata and Resubmit") {
+                    featureTab = .overview
+                }
+                .buttonStyle(.launchPrimary)
+            } else {
+                Text("Rejection messages from App Review appear here.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Open in App Store Connect") {
+                    openASC()
+                }
+                .buttonStyle(.launchSecondary)
+            }
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var buildsActionBar: some View {
+        HStack(spacing: 8) {
+            Text("Builds for version \(shownVersion?.versionString ?? "—"). Uploads come from Xcode — processed builds can be attached here.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Open Builds tab") {
+                onOpenBuilds()
+            }
+            .buttonStyle(.launchSecondary)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var n1ActionBar: some View {
+        HStack(spacing: 8) {
+            Text("Apps › \(app.name ?? "App") › App Store Versions · Select a version to view its release details.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("View \(app.name ?? "App") Builds") {
+                onOpenBuilds()
+            }
+            .buttonStyle(.launchSecondary)
+            Button("App Info") {
+                onOpenAppInfo()
+            }
+            .buttonStyle(.launchSecondary)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var actionBarText: String {
+        guard shownVersion != nil else { return "" }
+        if !canEditShown {
+            return "Version is \(getStatusLabel(appStoreState: shownState).lowercased()) — metadata is locked while Apple has it."
+        }
+        let missing = missingItems
+        if missing.isEmpty {
+            return "All required fields complete · Submit → Waiting for Review"
+        }
+        return "Missing: \(missing.joined(separator: ", "))."
+    }
+
+    private var canSubmit: Bool {
+        guard canEditShown, missingItems.isEmpty else { return false }
+        return reviewsVM.canSubmitForReview
+            && reviewsVM.submissionVersion?.id == shownVersion?.id
+    }
+
+    // MARK: - N1 All Versions
+
+    private var n1Selected: AppStoreVersionsModel? {
+        if let id = n1SelectedId, let found = allVersions.first(where: { $0.id == id }) {
+            return found
+        }
+        return shownVersion ?? allVersions.first
+    }
+
+    private var n1List: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("App Store Versions")
+                        .font(.system(size: 18))
+                        .foregroundColor(ShipyardTheme.title)
+                    featureTabs(chips: false)
+                }
+                Spacer(minLength: 0)
+                Text("\(shipyardPlatformDisplay(appStorePlatformLabel)) · \(app.name ?? "App")")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            Divider()
+                .padding(.top, 8)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        Text(app.name?.prefix(1).uppercased() ?? "A")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(shipyardTileColor(for: app.id))
+                            .cornerRadius(6)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(app.name ?? "App")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(ShipyardTheme.title)
+                            Text("\(app.bundleId ?? "") · \(shipyardPlatformDisplay(appStorePlatformLabel)) · \(ReleasePrepareView.localeDisplay(app.primaryLocale))")
+                                .font(.system(size: 11))
+                                .foregroundColor(ShipyardTheme.body)
+                        }
+                        Spacer(minLength: 0)
+                        Text("\(allVersions.count) version\(allVersions.count == 1 ? "" : "s")")
+                            .font(.system(size: 11))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+                    n1Table
+                    if allVersions.isEmpty {
+                        // Filtered-empty (search/filter), not truly-empty:
+                        // offer clearing instead of a bare table.
+                        VStack(spacing: 8) {
+                            Text("No matching versions")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(ShipyardTheme.title)
+                            Text("No versions match the current search or status filter.")
+                                .font(.system(size: 12))
+                                .foregroundColor(ShipyardTheme.body)
+                            Button("Clear search and filters") {
+                                section.searchText = ""
+                                section.statusFilter = .all
+                            }
+                            .buttonStyle(.launchSecondary)
+                            .padding(.top, 4)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 32)
+                    }
+                    if let selected = n1Selected {
+                        n1DetailCard(selected)
+                    }
+                }
+                .padding(24)
+            }
+            Divider()
+            n1ActionBar
+        }
+    }
+
+    private var appStorePlatformLabel: String {
+        shownVersion?.platform
+            ?? reviewsVM.displayedAppStoreVersion?.platform
+            ?? reviewsVM.selectedAppStoreVersionPlatform
+            ?? ""
+    }
+
+    private var n1Table: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text("Version ↓")
+                    .frame(width: 90, alignment: .leading)
+                Text("Status")
+                    .frame(width: 190, alignment: .leading)
+                Text("Build")
+                    .frame(width: 90, alignment: .leading)
+                Text("Submitted")
+                    .frame(width: 130, alignment: .leading)
+                Text("Released")
+                    .frame(width: 130, alignment: .leading)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11))
+            .foregroundColor(ShipyardTheme.body)
+            .padding(.horizontal, 16)
+            .frame(height: 28)
+            .background(ShipyardTheme.tableHeader)
+            ForEach(allVersions, id: \.id) { version in
+                let state = version.appStoreState ?? version.appVersionState
+                let selected = version.id == n1Selected?.id
+                Button {
+                    n1SelectedId = version.id
+                } label: {
+                    HStack(spacing: 12) {
+                        Text(version.versionString ?? "—")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+                            .frame(width: 90, alignment: .leading)
+                        ReleaseStatusBadge(state: state)
+                            .frame(width: 190, alignment: .leading)
+                        Text(version.build.map { "#\($0.version ?? "")" } ?? "—")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(ShipyardTheme.title)
+                            .frame(width: 90, alignment: .leading)
+                        Text(n1SubmittedCell(version))
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                            .frame(width: 130, alignment: .leading)
+                        Text("—")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                            .frame(width: 130, alignment: .leading)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 38)
+                    .background(selected ? ShipyardTheme.selectedRow : ShipyardTheme.tableBackground)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider()
+                    .background(ShipyardTheme.rowDivider)
+            }
+        }
+        .background(ShipyardTheme.tableBackground)
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(LaunchTheme.border, lineWidth: 1)
+        )
+    }
+
+    /// Submitted date is only knowable for the pending row (matched by
+    /// platform); older rows have no version↔submission linkage in the
+    /// API, so they honestly show "—".
+    private func n1SubmittedCell(_ version: AppStoreVersionsModel) -> String {
+        guard version.id == reviewsVM.submissionVersion?.id,
+              let date = reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate else {
+            return "—"
+        }
+        return releaseDayDisplay(date)
+    }
+
+    private func n1DetailCard(_ version: AppStoreVersionsModel) -> some View {
+        let state = version.appStoreState ?? version.appVersionState
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Version \(version.versionString ?? "—")")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.title)
+                Spacer(minLength: 0)
+                Button("Open Version ›") {
+                    showVersion(version)
+                }
+                .buttonStyle(.launchPrimary)
+                .controlSize(.small)
+            }
+            Text(n1DetailSubtitle(state))
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+            if let build = version.build {
+                Text("Build #\(build.version ?? "—") · \(buildStateDisplayName(build.processingState ?? "")) · Uploaded \(releaseDateTimeDisplay(build.uploadedDate))")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.tertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ShipyardTheme.tableBackground)
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(LaunchTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func n1DetailSubtitle(_ state: String?) -> String {
+        switch state {
+        case "PREPARE_FOR_SUBMISSION":
+            return "Continue preparing release notes, App Review information, and release options."
+        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+            return "Submitted — waiting for App Review."
+        case "IN_REVIEW":
+            return "Apple is reviewing this version."
+        case "PENDING_DEVELOPER_RELEASE":
+            return "Approved — ready for you to release."
+        case "REJECTED", "DEVELOPER_REJECTED", "INVALID_BINARY":
+            return "Rejected — fix the build and resubmit."
+        case "METADATA_REJECTED":
+            return "Metadata rejected — fix the metadata and resubmit."
+        default:
+            return getStatusLabel(appStoreState: state)
+        }
+    }
+
+    // MARK: - N2/N3/N4
+
+    private var emptyState: some View {
+        VStack(spacing: 0) {
+            n1HeadingOnly
+            Divider()
+            VStack(spacing: 12) {
+                Spacer()
+                VStack(spacing: 8) {
+                    Text("No App Store Versions Yet")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("Create an App Store version for \(app.name ?? "this app"), then choose a build and prepare your submission. Your existing TestFlight builds stay in Builds.")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 440)
+                    HStack(spacing: 12) {
+                        Button("New Version") {
+                            showNewVersionSheet = true
+                        }
+                        .buttonStyle(.launchPrimary)
+                        Button("View \(app.name ?? "App") Builds") {
+                            onOpenBuilds()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.accent)
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(32)
+                .frame(maxWidth: 520)
+                .background(ShipyardTheme.tableBackground)
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            n1ActionBar
+        }
+    }
+
+    private var n1HeadingOnly: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("App Store Versions")
+                    .font(.system(size: 18))
+                    .foregroundColor(ShipyardTheme.title)
+                featureTabs(chips: false)
+            }
+            Spacer(minLength: 0)
+            Text("\(shipyardPlatformDisplay(appStorePlatformLabel)) · \(app.name ?? "App")")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+    }
+
+    private var loadingView: some View {
+        VStack(spacing: 0) {
+            n1HeadingOnly
+            Divider()
+            VStack(spacing: 12) {
+                Spacer()
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading versions…")
+                            .font(.system(size: 13))
+                            .foregroundColor(ShipyardTheme.title)
+                    }
+                    Text("Syncing \(app.name ?? "the app") with App Store Connect.")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                    if showStuckRetry {
+                        Text("This is taking longer than usual.")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                        Button("Retry Connection") {
+                            showStuckRetry = false
+                            reviewsVM.retryAppStoreVersions()
+                        }
+                        .buttonStyle(.launchSecondary)
+                        .padding(.top, 4)
+                    }
+                    VStack(spacing: 8) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ShipyardTheme.tableHeader)
+                                .frame(height: 12)
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+                .padding(32)
+                .frame(maxWidth: 520)
+                .background(ShipyardTheme.tableBackground)
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .task {
+                    // Backstop: if a fetch is dropped without settling
+                    // (cancelled with no successor), the screen would sit
+                    // on the spinner forever with no recourse. Surface a
+                    // retry instead of stranding the user.
+                    try? await Task.sleep(nanoseconds: 20_000_000_000)
+                    if reviewsVM.appStoreVersionsState.loadedValue == nil {
+                        switch reviewsVM.appStoreVersionsState {
+                        case .loading, .idle:
+                            showStuckRetry = true
+                        default:
+                            break
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            n1ActionBar
+        }
+    }
+
+    private func loadErrorView(_ message: String) -> some View {
+        VStack(spacing: 0) {
+            n1HeadingOnly
+            Divider()
+            VStack(spacing: 12) {
+                Spacer()
+                VStack(spacing: 8) {
+                    Text("Unable to Load Versions")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("Check your network connection and try again. Your saved drafts have not been changed.")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 440)
+                    if showLoadErrorDetails {
+                        Text(message.isEmpty ? "Unknown error." : message)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(ShipyardTheme.body)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 440)
+                    }
+                    HStack(spacing: 12) {
+                        Button("Retry Connection") {
+                            reviewsVM.retryAppStoreVersions()
+                        }
+                        .buttonStyle(.launchPrimary)
+                        Button(showLoadErrorDetails ? "Hide Details" : "Show Details") {
+                            showLoadErrorDetails.toggle()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.accent)
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(32)
+                .frame(maxWidth: 520)
+                .background(ShipyardTheme.tableBackground)
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            n1ActionBar
+        }
+    }
+
     // MARK: - Drafts + save
 
     private var isDirty: Bool {
@@ -805,7 +1376,71 @@ struct ReleaseTabView: View {
         if draftReleaseType.rawValue != (version.releaseType ?? "") { return true }
         if draftReleaseType == .scheduled { return true }
         if let loc = draftLocale, draftWhatsNew != (loc.whatsNew ?? "") { return true }
+        if let details = reviewDetailsValue, reviewDraftDirty(details) { return true }
+        if reviewDetailsValue == nil,
+           !(draftFirstName.isEmpty && draftLastName.isEmpty && draftPhone.isEmpty
+                && draftEmail.isEmpty && draftDemoUser.isEmpty && draftDemoPass.isEmpty
+                && draftNotes.isEmpty && !draftDemoRequired) { return true }
         return false
+    }
+
+    private var draftLocale: AppStoreVersionLocalizationsModel? {
+        if let id = draftLocaleId {
+            return localizations.first { $0.id == id }
+        }
+        return localizations.first
+    }
+
+    private func reviewDraftDirty(_ details: AppStoreReviewDetailsModel) -> Bool {
+        if draftFirstName != (details.contactFirstName ?? "") { return true }
+        if draftLastName != (details.contactLastName ?? "") { return true }
+        if draftPhone != (details.contactPhone ?? "") { return true }
+        if draftEmail != (details.contactEmail ?? "") { return true }
+        if draftDemoRequired != (details.demoAccountRequired ?? false) { return true }
+        if draftDemoUser != (details.demoAccountName ?? "") { return true }
+        if !draftDemoPass.isEmpty { return true }
+        if draftNotes != (details.notes ?? "") { return true }
+        return false
+    }
+
+    private var missingItems: [String] {
+        guard let version = shownVersion, canEditShown else { return [] }
+        var items: [String] = []
+        // The draft counts for the selected locale — flagging the model's
+        // blank value while the user is typing would never clear.
+        let locs = localizations
+        if locs.isEmpty {
+            items.append("What’s New")
+        } else {
+            let anyBlank = locs.contains { loc in
+                let text = loc.id == draftLocaleId ? draftWhatsNew : (loc.whatsNew ?? "")
+                return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            if anyBlank {
+                items.append("What’s New")
+            }
+        }
+        if version.build == nil {
+            items.append("build")
+        }
+        if draftReleaseType == .scheduled && version.earliestReleaseDate == nil {
+            items.append("release date")
+        }
+        if reviewDetailsKnown {
+            if draftFirstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || draftLastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || draftEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                items.append("review contact")
+            }
+        }
+        return items
+    }
+
+    private var missingDetail: String {
+        if localizations.isEmpty {
+            return "Add a locale in App Info, then write What’s New."
+        }
+        return "Add \(missingItems.joined(separator: ", "))."
     }
 
     private func syncDrafts() {
@@ -813,10 +1448,10 @@ struct ReleaseTabView: View {
         syncedVersionId = version.id
         saveError = nil
         draftVersionString = version.versionString ?? ""
-        let locs = version.appStoreVersionLocalizations
-        let preferred = locs.first { $0.locale == app.primaryLocale } ?? locs.first
+        let preferred = localizations.first { $0.locale == app.primaryLocale } ?? localizations.first
         draftLocaleId = preferred?.id
         draftWhatsNew = preferred?.whatsNew ?? ""
+        lastLocaleDefault = draftWhatsNew
         draftReleaseType = AppStoreVersionReleaseType(rawValue: version.releaseType ?? "") ?? .manual
         if let raw = version.earliestReleaseDate,
            let date = ISO8601DateFormatter().date(from: raw) {
@@ -824,13 +1459,59 @@ struct ReleaseTabView: View {
         } else {
             draftReleaseDate = Date()
         }
+        syncReviewDrafts()
+    }
+
+    private func syncReviewDrafts() {
+        let details = reviewDetailsValue
+        draftFirstName = details?.contactFirstName ?? ""
+        draftLastName = details?.contactLastName ?? ""
+        draftPhone = details?.contactPhone ?? ""
+        draftEmail = details?.contactEmail ?? ""
+        draftDemoRequired = details?.demoAccountRequired ?? false
+        draftDemoUser = details?.demoAccountName ?? ""
+        draftDemoPass = details?.demoAccountPassword ?? ""
+        draftNotes = details?.notes ?? ""
+        lastReviewDefault = reviewDraftJoin()
+    }
+
+    private func reviewDraftJoin() -> String {
+        [draftFirstName, draftLastName, draftPhone, draftEmail,
+         draftDemoRequired ? "1" : "0", draftDemoUser, draftNotes]
+            .joined(separator: "\u{1F}")
+    }
+
+    private func adoptLoadedLocales() {
+        let locs = localizations
+        if localizations.first(where: { $0.id == draftLocaleId }) == nil {
+            let preferred = locs.first { $0.locale == app.primaryLocale } ?? locs.first
+            draftLocaleId = preferred?.id
+        }
+        let currentDefault = draftLocale?.whatsNew ?? ""
+        if draftWhatsNew == (lastLocaleDefault ?? "") {
+            draftWhatsNew = currentDefault
+            lastLocaleDefault = currentDefault
+        }
+    }
+
+    private func adoptLoadedReviewDetails() {
+        guard let details = reviewDetailsValue else { return }
+        if reviewDraftJoin() == lastReviewDefault {
+            syncReviewDrafts()
+        }
     }
 
     private func loadPhased() {
-        guard let version = shownVersion, canEditShown else { return }
+        guard let version = shownVersion else { return }
         Task {
             await reviewsVM.loadPhasedRelease(versionId: version.id)
         }
+    }
+
+    private func loadVersionData() {
+        guard let version = shownVersion else { return }
+        reviewsVM.loadVersionLocalizations(versionId: version.id)
+        reviewsVM.loadReviewDetails(versionId: version.id)
     }
 
     private func save() {
@@ -839,6 +1520,17 @@ struct ReleaseTabView: View {
         saveError = nil
         Task {
             var ok = true
+            // The list can go stale (another client — or the web — moved
+            // the version on). A write against a locked version comes
+            // back 409, so check the server state first and bail out
+            // with the fresh status instead of failing each write.
+            if let serverState = await reviewsVM.refreshVersionForSave(versionId: version.id),
+               !isVersionEditable(appStoreState: serverState) {
+                saveError = "Version is now \(getStatusLabel(appStoreState: serverState).lowercased()) — reloaded the latest status. Your edits are kept below."
+                saving = false
+                reviewsVM.load(appId: app.id, force: true)
+                return
+            }
             let versionDirty = draftVersionString != (version.versionString ?? "")
             let releaseDirty = draftReleaseType.rawValue != (version.releaseType ?? "")
                 || draftReleaseType == .scheduled
@@ -864,6 +1556,22 @@ struct ReleaseTabView: View {
                     ok = false
                 }
             }
+            if ok, reviewDetailsKnown || reviewDetailsValue != nil,
+               reviewFormDirty {
+                if await reviewsVM.saveReviewDetails(
+                    versionId: version.id,
+                    firstName: draftFirstName,
+                    lastName: draftLastName,
+                    phone: draftPhone,
+                    email: draftEmail,
+                    demoRequired: draftDemoRequired,
+                    demoUsername: draftDemoUser,
+                    demoPassword: draftDemoPass,
+                    notes: draftNotes) == false {
+                    saveError = reviewsVM.releaseSettingsError ?? "Couldn't save review information."
+                    ok = false
+                }
+            }
             saving = false
             if ok {
                 syncedVersionId = nil
@@ -872,96 +1580,58 @@ struct ReleaseTabView: View {
         }
     }
 
+    /// Whether the review-contact form differs from the loaded record
+    /// (or has any input when no record exists yet).
+    private var reviewFormDirty: Bool {
+        if let details = reviewDetailsValue {
+            return reviewDraftDirty(details)
+        }
+        return !(draftFirstName.isEmpty && draftLastName.isEmpty && draftPhone.isEmpty
+            && draftEmail.isEmpty && draftDemoUser.isEmpty && draftDemoPass.isEmpty
+            && draftNotes.isEmpty && !draftDemoRequired)
+    }
+
     // MARK: - Shared bits
 
-    private func fieldLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12))
-            .foregroundColor(ShipyardTheme.title)
-    }
-
-    private func fieldBox<Content: View>(disabled: Bool, minHeight: CGFloat = 28, @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .leading)
-            .background(disabled ? ShipyardTheme.tableHeader : LaunchTheme.field)
-            .cornerRadius(6)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(LaunchTheme.border, lineWidth: 1)
-            )
-    }
-
-    private var loadingView: some View {
-        HStack {
-            Spacer(minLength: 0)
-            ProgressView()
-                .scaleEffect(0.8)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func loadErrorView(_ message: String) -> some View {
-        VStack(spacing: 8) {
-            Text(message.isEmpty ? "Couldn't load versions" : message)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(ShipyardTheme.title)
-            Button("Retry") {
-                reviewsVM.retryAppStoreVersions()
+    private func showToast(title: String, detail: String) {
+        toastTitle = title
+        toastDetail = detail
+        toastGeneration += 1
+        let generation = toastGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if generation == toastGeneration {
+                toastTitle = nil
+                toastDetail = nil
             }
-            .buttonStyle(.launchSecondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Text("No App Store version yet")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(ShipyardTheme.title)
-            Text("Create one in App Info, then come back to prepare it for review.")
+    private func openASC() {
+        if let url = URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)") {
+            openURL(url)
+        }
+    }
+
+    private func errorBanner(_ message: String, onDismiss: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(AppTheme.negative)
+            Text(message)
                 .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.body)
-            Button("Open App Info") {
-                onOpenAppInfo()
+                .foregroundColor(AppTheme.negative)
+            Spacer()
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
             }
-            .buttonStyle(.launchSecondary)
-            .padding(.top, 4)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss error")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func localeDisplay(_ raw: String?) -> String {
-        guard let raw, !raw.isEmpty else { return "—" }
-        switch raw {
-        case "en-US": return "English (U.S.)"
-        case "en-GB": return "English (U.K.)"
-        case "en-AU": return "English (Australia)"
-        case "en-CA": return "English (Canada)"
-        case "fr-FR": return "French"
-        case "de-DE": return "German"
-        case "es-ES": return "Spanish (Spain)"
-        case "es-MX": return "Spanish (Mexico)"
-        case "it": return "Italian"
-        case "ja": return "Japanese"
-        case "ko": return "Korean"
-        case "pt-BR": return "Portuguese (Brazil)"
-        case "pt-PT": return "Portuguese (Portugal)"
-        case "ru": return "Russian"
-        case "zh-Hans": return "Chinese (Simplified)"
-        case "zh-Hant": return "Chinese (Traditional)"
-        default: return raw
-        }
-    }
-
-    private func buildDetailUploadedDisplay(_ raw: String?) -> String {
-        guard let date = buildUploadDate(raw) else { return "—" }
-        let day = DateFormatter()
-        day.dateFormat = "MMM d, yyyy"
-        let time = DateFormatter()
-        time.dateFormat = "h:mm a"
-        return "\(day.string(from: date)) at \(time.string(from: date))"
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+        .background(ShipyardTheme.tableBackground)
     }
 }

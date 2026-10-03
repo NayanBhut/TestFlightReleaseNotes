@@ -402,6 +402,10 @@ extension ButtonStyle where Self == LaunchSecondaryButtonStyle {
     static var launchSecondary: LaunchSecondaryButtonStyle { LaunchSecondaryButtonStyle() }
 }
 
+extension ButtonStyle where Self == LaunchDestructiveButtonStyle {
+    static var launchDestructive: LaunchDestructiveButtonStyle { LaunchDestructiveButtonStyle() }
+}
+
 /// Solid blue primary action (Continue / Add Team), per Figma.
 struct LaunchPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
@@ -433,6 +437,22 @@ struct LaunchSecondaryButtonStyle: ButtonStyle {
                     .stroke(LaunchTheme.border, lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.7 : 1.0)
+    }
+}
+
+/// Solid red destructive action (Remove from Review / Remove from Sale).
+struct LaunchDestructiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.appCaption)
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(isEnabled ? ShipyardTheme.danger : LaunchTheme.track)
+            .cornerRadius(6)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
     }
 }
 

@@ -21,6 +21,7 @@ struct AppDetailView: View {
     var onManage: (BuildsModel) -> Void
 
     @Binding var tab: AppTab
+    @StateObject private var releaseSection = ReleaseSectionState()
 
     enum AppTab: String, CaseIterable {
         case builds = "Builds"
@@ -45,7 +46,7 @@ struct AppDetailView: View {
             case .reviews:
                 ReviewsSectionView(reviewsVM: reviewsVM, apps: [], selectedApp: .constant(app), fixedApp: app)
             case .release:
-                ReleaseTabView(app: app, reviewsVM: reviewsVM) {
+                ReleaseTabView(app: app, reviewsVM: reviewsVM, section: releaseSection) {
                     tab = .appInfo
                 } onOpenBuilds: {
                     tab = .builds
@@ -88,6 +89,25 @@ struct AppDetailView: View {
             }
 
             Spacer()
+
+            if tab == .release {
+                ShipyardSearchField(prompt: "Search versions", text: $releaseSection.searchText)
+                Menu {
+                    ForEach(ReleaseStatusFilter.allCases, id: \.self) { filter in
+                        Button(filter.rawValue) {
+                            releaseSection.statusFilter = filter
+                        }
+                    }
+                } label: {
+                    ShipyardMenuLabel(text: "Status: \(releaseSection.statusFilter.rawValue)")
+                }
+                .menuStyle(.borderlessButton)
+                Button("New Version") {
+                    releaseSection.newVersionRequested = true
+                }
+                .buttonStyle(.launchPrimary)
+                .controlSize(.small)
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 44)
