@@ -526,8 +526,18 @@ struct ShipyardAppInfoView: View {
         if field == .name, text.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 {
             return "Name must be at least 2 characters."
         }
-        if url, !text.isEmpty, !(text.hasPrefix("http://") || text.hasPrefix("https://")) {
-            return "Invalid URL format"
+        if url, !text.isEmpty {
+            // Same rule as DetailViewModel.validateAppInfoLocalization
+            // (URL(string:) + http(s) scheme + non-nil host) so text the
+            // inline message accepts can't still fail on Save
+            // (BUG_SWEEP #26). A bare prefix check used to let
+            // "https://" through and then reject it at save time.
+            guard let parsed = URL(string: text),
+                  let scheme = parsed.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  parsed.host != nil else {
+                return "Invalid URL — use a full http(s) address with a host."
+            }
         }
         return nil
     }
@@ -658,7 +668,9 @@ struct ShipyardAppInfoView: View {
 
     private func save() async {
         // Client-side gate mirrors fieldError so over-limit/ malformed
-        // input never reaches the API.
+        // input never reaches the API. Surface it instead of no-op'ing:
+        // the Save button stays enabled, so the failure must be visible
+        // (BUG_SWEEP #11).
         for field in Field.allCases {
             let limit: Int? = switch field {
             case .name, .subtitle: 30
@@ -668,7 +680,10 @@ struct ShipyardAppInfoView: View {
             default: nil
             }
             let url = field == .privacyPolicy || field == .support || field == .marketing
-            if fieldError(field, limit: limit, url: url) != nil { return }
+            if let error = fieldError(field, limit: limit, url: url) {
+                saveError = error
+                return
+            }
         }
         guard let infoId = appInfoLocalization?.id,
               let versionLoc = versionLocalization else {

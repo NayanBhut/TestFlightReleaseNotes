@@ -150,6 +150,12 @@ class SideBarViewModel: ObservableObject {
             queryParams["filter[name]"] = trimmedSearchText
         }
 
+        // Stamp the request-time query so the response handler can tell a
+        // merge issued under the old term from one under the current
+        // (BUG_SWEEP #6): stamping appMeta/cursor from a stale response
+        // would pair the old query's page metadata with the new query's rows.
+        let requestSearchTerm = trimmedSearchText
+
         if let stateFilter = selectedStateFilter.apiValue {
             queryParams["filter[appStoreVersions.appStoreState]"] = stateFilter
         }
@@ -170,7 +176,7 @@ class SideBarViewModel: ObservableObject {
             let model = try getDecoder().decode(AppsDocument.self, from: data)
             // Ignore stale responses superseded by a newer fetch.
             guard !Task.isCancelled else { return }
-            updateCurrentLiveVersion(responseApp: model, nextPage: nextPage, isSearchRefresh: isSearchRefresh)
+            updateCurrentLiveVersion(responseApp: model, nextPage: nextPage, isSearchRefresh: isSearchRefresh, requestSearchTerm: requestSearchTerm)
         } catch {
             // A cancelled fetch means a newer one took over - don't surface
             // its failure or overwrite the newer state.
@@ -214,7 +220,7 @@ class SideBarViewModel: ObservableObject {
             (app.bundleId ?? "").localizedCaseInsensitiveContains(term)
     }
 
-    private func updateCurrentLiveVersion(responseApp: AppsDocument, nextPage: String? = nil, isSearchRefresh: Bool = false) {
+    private func updateCurrentLiveVersion(responseApp: AppsDocument, nextPage: String? = nil, isSearchRefresh: Bool = false, requestSearchTerm: String = "") {
         let processedApps = responseApp.data.map { appData -> AppsData in
             var tempApp = appData
             let currentVersion = appData.appStoreVersions.first
@@ -235,8 +241,16 @@ class SideBarViewModel: ObservableObject {
         if isSearchRefresh {
             // Union of the server's name matches and the already-loaded apps
             // that match locally (by name OR bundle ID) so bundle-ID matches
-            // don't vanish once the server response arrives.
-            let localMatches = allLoadedApps.filter(matchesSearch)
+            // don't vanish once the server response arrives. The merge must
+            // use the request-time term: a response issued under term A that
+            // lands after the user retyped term B would otherwise filter the
+            // new rows by B's matcher while meta/cursor say A (BUG_SWEEP #6).
+            let requestTerm = requestSearchTerm
+            let localMatches = allLoadedApps.filter { app in
+                guard !requestTerm.isEmpty else { return true }
+                return (app.name ?? "").localizedCaseInsensitiveContains(requestTerm) ||
+                    (app.bundleId ?? "").localizedCaseInsensitiveContains(requestTerm)
+            }
             let localIDs = Set(localMatches.map(\.id))
             allLoadedApps = localMatches + processedApps.filter { !localIDs.contains($0.id) }
         } else if nextPage != nil {

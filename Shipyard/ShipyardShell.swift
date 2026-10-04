@@ -69,6 +69,7 @@ struct ShipyardShell: View {
                 resourcesVM.resetForTeamSwitch()
                 reviewsVM.resetForTeamSwitch()
                 sidebarVM.isTeamChanged = false
+                clearDetail()
             }
         }
         // App tap lands on the builds list (Figma builds-list): auto-select
@@ -187,6 +188,7 @@ struct ShipyardShell: View {
     private func deleteTeam(_ team: String) {
         let wasSelected = CredentialStorage.shared.selectedTeam?.key == team
         CredentialStorage.shared.deleteCredential(for: team)
+        clearDetail()
         if credentialStorage.teams.isEmpty {
             sidebarVM.clearOnLogout()
             resourcesVM.resetForTeamSwitch()
@@ -197,6 +199,15 @@ struct ShipyardShell: View {
             resourcesVM.resetForTeamSwitch()
             reviewsVM.resetForTeamSwitch()
         }
+    }
+
+    /// Team lifecycle reset: detail screens take precedence over section,
+    /// so leaving them set would keep rendering the old team's app/build
+    /// (including its notes editor) after a switch or delete.
+    private func clearDetail() {
+        detailApp = nil
+        detailBuild = nil
+        reviewApp = nil
     }
 }
 

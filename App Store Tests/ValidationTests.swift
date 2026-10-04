@@ -569,4 +569,32 @@ final class ValidationTests: XCTestCase {
         let payload = try XCTUnwrap(root["data"] as? [String: Any])
         XCTAssertEqual(payload["attributes"] as? [String: String], ["status": "DISABLED"])
     }
+
+    // MARK: - ASN1 malformed-input guard (BUG_SWEEP #2)
+
+    /// A truncated/garbage .p8 body must throw `invalidASN1`, never trap on
+    /// out-of-bounds subscripts. Swift runtime traps are fatal, so the
+    /// onboarding `try?` cannot catch them — the parser must bounds-check.
+    func testToECKeyDataGarbageThrowsNotTraps() {
+        let cases: [Data] = [
+            Data(),
+            Data([0x30, 0x00]),                                       // empty sequence
+            Data([0x30, 0x02, 0x02, 0x01]),                           // seq missing [2]
+            Data([0x30, 0x06, 0x02, 0x01, 0x00, 0x04, 0x01, 0xAA]),   // outer ok, octet not a seq
+            Data([0x04, 0x02, 0xAA, 0xBB]),                           // not a sequence at all
+        ]
+        for bytes in cases {
+            XCTAssertThrowsError(try bytes.toECKeyData()) { error in
+                XCTAssertEqual(error as? JWT.Error, .invalidASN1)
+            }
+        }
+    }
+
+    func testToRawSignatureShortSequenceThrows() {
+        // seq with only INTEGER R — element [1] (S) must not subscript.
+        let data = Data([0x30, 0x03, 0x02, 0x01, 0x01])
+        XCTAssertThrowsError(try data.toRawSignature()) { error in
+            XCTAssertEqual(error as? JWT.Error, .invalidASN1)
+        }
+    }
 }

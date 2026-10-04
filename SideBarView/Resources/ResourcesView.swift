@@ -317,6 +317,10 @@ struct CreateCertificateForm: View {
                             let result = await viewModel.createCertificate(
                                 certificateType: certificateType, csrContent: csrContent)
                             if case .success = result {
+                                // Always safe now: prependCertificate/prependProfile
+                                // seed the list with the server-confirmed model even
+                                // when the list wasn't loaded, so `first` is the cert
+                                // just created (BUG_SWEEP #12).
                                 createdCertificate = viewModel.certificatesState.loadedValue?.first
                                 didDownload = false
                                 errorMessage = nil

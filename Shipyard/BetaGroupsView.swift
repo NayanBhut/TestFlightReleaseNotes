@@ -221,7 +221,9 @@ struct BetaGroupsView: View {
 
     private func detailHeader(_ group: BetaGroupModel) -> some View {
         let kind = betaGroupKind(group)
-        let autoNotify = betaVM.betaDetails[build.id]?.autoNotifyEnabled ?? false
+        // Pending-aware, not raw: betaDetails[..] flickers back to Off
+        // while a toggle's re-fetch is in flight (BUG_SWEEP #14b).
+        let autoNotify = betaVM.autoNotifyState(for: build.id)
         return HStack(spacing: 12) {
             Text(group.name ?? "Unnamed group")
                 .font(.system(size: 18, weight: .semibold))
@@ -432,7 +434,9 @@ struct BetaGroupsView: View {
     // MARK: - Settings tab
 
     private func settingsTab(_ group: BetaGroupModel) -> some View {
-        let autoNotify = betaVM.betaDetails[build.id]?.autoNotifyEnabled ?? false
+        // Same pending-aware source as detailHeader — the raw value flips
+        // back to Off while the toggle's re-fetch is in flight (BUG_SWEEP #14b).
+        let autoNotify = betaVM.autoNotifyState(for: build.id)
         return VStack(alignment: .leading, spacing: 16) {
             Toggle("Auto-notify testers for Build \(build.version ?? "")", isOn: Binding(
                 get: { autoNotify },
