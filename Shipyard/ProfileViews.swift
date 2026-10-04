@@ -100,6 +100,7 @@ struct ProfileDetailView: View {
 
     @State private var detail: ProfileModel?
     @State private var detailError: String?
+    @State private var isLoadingDetail = true
     @State private var isDownloading = false
     @State private var bannerError: String?
     @State private var showDelete = false
@@ -175,6 +176,38 @@ struct ProfileDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ShipyardTheme.tableBackground)
+        .overlay {
+            if isLoadingDetail, detail == nil {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button(action: onBack) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Profiles")
+                                .font(.system(size: 13))
+                        }
+                        .foregroundColor(ShipyardTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back to profiles")
+                    .padding(24)
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("Loading profile details…")
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.body)
+                        }
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(ShipyardTheme.tableBackground)
+            }
+        }
         .onAppear {
             Task { @MainActor in
                 await loadDetail()
@@ -410,6 +443,7 @@ struct ProfileDetailView: View {
     }
 
     private func loadDetail() async {
+        defer { isLoadingDetail = false }
         do {
             detail = try await viewModel.fetchProfileDetail(id: profile.id)
             detailError = nil
@@ -571,7 +605,7 @@ struct RegenerateProfileSheet: View {
 
     @State private var stage = RegenStage.dependencies
     @State private var detail: ProfileModel?
-    @State private var certificateId: String?
+    @State private var certificateIds: Set<String> = []
     @State private var deviceIds: Set<String> = []
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -655,7 +689,7 @@ struct RegenerateProfileSheet: View {
                             .disabled(isSaving)
                         Button("Review Replacement") { stage = .review }
                             .buttonStyle(.launchPrimary)
-                            .disabled(isSaving || certificateId == nil)
+                            .disabled(isSaving || certificateIds.isEmpty)
                     } else {
                         Button("Back") { stage = .dependencies }
                             .buttonStyle(.launchSecondary)
@@ -736,37 +770,48 @@ struct RegenerateProfileSheet: View {
                                  value: "\(profileTypeName(profile.profileType)) · \(profilePlatformChip(profile.platform))")
             profileReadOnlyField(label: "Bundle ID", value: bundleName)
             VStack(alignment: .leading, spacing: 6) {
-                Text(developmentKind ? "Development certificate" : "Distribution certificate")
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.title)
-                Menu {
-                    ForEach(eligibleCertificates, id: \.id) { cert in
-                        Button(profileCertificateLabel(cert)) {
-                            certificateId = cert.id
-                        }
+                HStack(spacing: 12) {
+                    Text(certificateIds.isEmpty
+                         ? "CERTIFICATES" : "CERTIFICATES (\(certificateIds.count) SELECTED)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ShipyardTheme.body)
+                    Spacer(minLength: 0)
+                    Button("Select All") {
+                        certificateIds = Set(eligibleCertificates.map(\.id))
                     }
-                } label: {
-                    HStack {
-                        Text(eligibleCertificates.first(where: { $0.id == certificateId })
-                            .map(profileCertificateLabel) ?? "Select a certificate")
-                            .font(.system(size: 13))
-                            .foregroundColor(ShipyardTheme.title)
-                            .lineLimit(1)
-                        Spacer()
-                        Text("⌄").font(.system(size: 12)).foregroundColor(ShipyardTheme.body)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.accent)
+                    .disabled(isSaving || eligibleCertificates.isEmpty)
+                    .accessibilityLabel("Select all eligible certificates")
+                    Button("Clear") {
+                        certificateIds = []
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                    .background(Color.white)
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(LaunchTheme.border, lineWidth: 1))
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.body)
+                    .disabled(isSaving || certificateIds.isEmpty)
                 }
-                .menuStyle(.borderlessButton)
-                .disabled(isSaving || eligibleCertificates.isEmpty)
-                .accessibilityLabel("Select replacement certificate")
+                ForEach(eligibleCertificates, id: \.id) { cert in
+                    Toggle(isOn: Binding(
+                        get: { certificateIds.contains(cert.id) },
+                        set: { checked in
+                            if checked { certificateIds.insert(cert.id) }
+                            else { certificateIds.remove(cert.id) }
+                        })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(profileCertificateLabel(cert))
+                                    .font(.system(size: 13))
+                                    .foregroundColor(ShipyardTheme.title)
+                                Text("Active · \(profilePlatformChip(cert.platform))")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(ShipyardTheme.body)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                        .disabled(isSaving)
+                        .padding(.vertical, 4)
+                }
                 if eligibleCertificates.isEmpty {
                     Text("No active compatible certificates — create one first.")
                         .font(.system(size: 11))
@@ -774,6 +819,28 @@ struct RegenerateProfileSheet: View {
                 }
             }
             if allowsDevices {
+                HStack(spacing: 12) {
+                    Text(deviceIds.isEmpty
+                         ? "DEVICES" : "DEVICES (\(deviceIds.count) SELECTED)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ShipyardTheme.body)
+                    Spacer(minLength: 0)
+                    Button("Select All") {
+                        deviceIds = Set(eligibleDevices.map(\.id))
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.accent)
+                    .disabled(isSaving || eligibleDevices.isEmpty)
+                    .accessibilityLabel("Select all eligible devices")
+                    Button("Clear") {
+                        deviceIds = []
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.body)
+                    .disabled(isSaving || deviceIds.isEmpty)
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(eligibleDevices, id: \.id) { device in
@@ -831,8 +898,12 @@ struct RegenerateProfileSheet: View {
     private var oldReplacementTable: some View {
         let oldCert = (detail?.certificates ?? profile.certificates).first
             .map(profileCertificateLabel) ?? "—"
-        let newCert = eligibleCertificates.first(where: { $0.id == certificateId })
-            .map(profileCertificateLabel) ?? "—"
+        let newCerts = eligibleCertificates
+            .filter { certificateIds.contains($0.id) }
+            .map(profileCertificateLabel)
+        let newCert = newCerts.isEmpty ? "—"
+            : newCerts.count == 1 ? newCertSerial(newCerts[0])
+            : "\(newCerts.count) certificates"
         let oldDeviceCount = (detail?.devices ?? profile.devices).count
         let rows = [
             ("Signing certificate",
@@ -947,7 +1018,7 @@ struct RegenerateProfileSheet: View {
             name: profile.name ?? "Regenerated profile",
             profileType: profileType ?? .IOS_APP_DEVELOPMENT,
             bundleIdId: bundleId,
-            certificateIds: Set([certificateId].compactMap { $0 }),
+            certificateIds: certificateIds,
             deviceIds: deviceIds)
         switch result {
         case .success:
