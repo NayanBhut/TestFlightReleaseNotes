@@ -64,7 +64,7 @@ struct BundleIdModel: Equatable {
 }
 
 @ResourceWrapper(type: "profiles")
-struct ProfileModel: Equatable {
+struct ProfileModel: Equatable, Identifiable {
     static func == (lhs: ProfileModel, rhs: ProfileModel) -> Bool {
         return lhs.id == rhs.id
     }
@@ -90,6 +90,49 @@ struct ProfileModel: Equatable {
     @ResourceRelationship var devices: [DeviceModel]
     /// Signing certificates — hydrated only with include=certificates.
     @ResourceRelationship var certificates: [CertificateModel]
+    /// Bundle ID — hydrated only with include=bundleId (profiles list
+    /// and detail fetches use it for the Bundle ID column/inspector).
+    @ResourceRelationship var bundleId: BundleIdModel?
+}
+
+/// List/detail status. The API only reports ACTIVE/INVALID — "Expired"
+/// is derived client-side from expirationDate (Figma 3-5273 red dot).
+enum ProfileComputedStatus: Equatable {
+    case active
+    case expired
+    case invalid
+
+    var displayName: String {
+        switch self {
+        case .active: return "Active"
+        case .expired: return "Expired"
+        case .invalid: return "Invalid"
+        }
+    }
+}
+
+extension ProfileModel {
+    /// Server INVALID wins; otherwise past-expiry means expired.
+    /// Missing/unparseable dates never claim expiry.
+    var computedStatus: ProfileComputedStatus {
+        if profileState == "INVALID" { return .invalid }
+        if let raw = expirationDate,
+           let date = ProfileModel.parseDate(raw),
+           date < Date() {
+            return .expired
+        }
+        return .active
+    }
+
+    /// ISO-8601 with or without fractional seconds (same tolerance as
+    /// the table's expiry display).
+    static func parseDate(_ raw: String) -> Date? {
+        if let date = ISO8601DateFormatter().date(from: raw) { return date }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXXXX"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter.date(from: raw)
+    }
 }
 
 @ResourceWrapper(type: "users")
@@ -377,6 +420,24 @@ enum CertificateTypeOption: String, CaseIterable {
             .replacingOccurrences(of: "Ios", with: "iOS")
             .replacingOccurrences(of: "Id ", with: "ID ")
             .replacingOccurrences(of: "Nfc", with: "NFC")
+    }
+
+    /// Wizard eligibility (Figma 114-3438 "matching type enforced"):
+    /// development profile kinds only accept *DEVELOPMENT* certs,
+    /// everything else only *DISTRIBUTION* certs. The legacy unprefixed
+    /// DEVELOPMENT/DISTRIBUTION match every platform.
+    func matchesKind(development: Bool) -> Bool {
+        development ? rawValue.contains("DEVELOPMENT") : rawValue.contains("DISTRIBUTION")
+    }
+
+    /// Platform prefix match for the wizard picker. tvOS has no dedicated
+    /// cert types — it shares the iOS signing identities.
+    func matchesPlatform(_ platformCode: String) -> Bool {
+        if !(rawValue.hasPrefix("IOS_") || rawValue.hasPrefix("MAC_")) { return true }
+        switch platformCode {
+        case "MAC_OS": return rawValue.hasPrefix("MAC_")
+        default: return rawValue.hasPrefix("IOS_")
+        }
     }
 }
 
@@ -712,6 +773,82 @@ enum ProfileTypeOption: String, CaseIterable {
     /// relationship (409 ENTITY_ERROR.RELATIONSHIP.NOT_ALLOWED).
     var allowsDevices: Bool {
         rawValue.hasSuffix("_DEVELOPMENT") || rawValue.hasSuffix("_ADHOC")
+    }
+
+    /// Short distribution kind ("Development", "Ad Hoc", "App Store",
+    /// "In-House", "Direct") for recaps and detail subtitles.
+    var shortKindName: String {
+        if rawValue.hasSuffix("_DEVELOPMENT") { return "Development" }
+        if rawValue.hasSuffix("_ADHOC") { return "Ad Hoc" }
+        if rawValue.hasSuffix("_STORE") { return "App Store" }
+        if rawValue.hasSuffix("_INHOUSE") { return "In-House" }
+        if rawValue.hasSuffix("_DIRECT") { return "Direct" }
+        return displayName
+    }
+    /// Distribution family for the wizard: development kinds need
+    /// development certificates, everything else needs distribution
+    /// certificates (Figma 114-3438 "matching type enforced").
+    var needsDevelopmentCertificates: Bool {
+        rawValue.hasSuffix("_DEVELOPMENT")
+    }
+
+    /// BundleId platform code implied by the type prefix (wizard +
+    /// device picker filtering). Mac Catalyst profiles take Mac IDs.
+    var bundlePlatformCode: String {
+        if rawValue.hasPrefix("MAC_") { return "MAC_OS" }
+        if rawValue.hasPrefix("TVOS_") { return "TVOS" }
+        return "IOS"
+    }
+
+    /// Wizard distribution kind (Figma 114-3320 radios).
+    enum DistributionKind: String, CaseIterable, Hashable {
+        case development = "Development"
+        case adHoc = "Ad Hoc"
+        case appStore = "App Store"
+
+        var hint: String {
+            switch self {
+            case .development:
+                return "Requires development certificates and registered devices."
+            case .adHoc:
+                return "Requires distribution certificates and registered devices."
+            case .appStore:
+                return "Requires a compatible distribution certificate; devices are skipped."
+            }
+        }
+    }
+
+    /// Resolve platform + kind to a concrete type, or nil for
+    /// unsupported combinations (e.g. macOS Ad Hoc doesn't exist).
+    /// `otherType` covers In-House/Direct/Catalyst picks outside the
+    /// three Figma kinds — nil kind means `otherType` must be set.
+    static func resolve(platformCode: String,
+                        kind: DistributionKind?,
+                        otherType: ProfileTypeOption? = nil) -> ProfileTypeOption? {
+        if let kind {
+            switch (platformCode, kind) {
+            case ("IOS", .development): return .IOS_APP_DEVELOPMENT
+            case ("IOS", .adHoc): return .IOS_APP_ADHOC
+            case ("IOS", .appStore): return .IOS_APP_STORE
+            case ("MAC_OS", .development): return .MAC_APP_DEVELOPMENT
+            case ("MAC_OS", .appStore): return .MAC_APP_STORE
+            case ("TVOS", .development): return .TVOS_APP_DEVELOPMENT
+            case ("TVOS", .adHoc): return .TVOS_APP_ADHOC
+            case ("TVOS", .appStore): return .TVOS_APP_STORE
+            default: return nil
+            }
+        }
+        return otherType
+    }
+
+    /// Remaining types for a platform outside the three Figma kinds.
+    static func otherTypes(for platformCode: String) -> [ProfileTypeOption] {
+        switch platformCode {
+        case "MAC_OS": return [.MAC_APP_DIRECT, .MAC_CATALYST_APP_DEVELOPMENT,
+                               .MAC_CATALYST_APP_STORE, .MAC_CATALYST_APP_DIRECT]
+        case "TVOS": return [.TVOS_APP_INHOUSE]
+        default: return [.IOS_APP_INHOUSE]
+        }
     }
 }
 

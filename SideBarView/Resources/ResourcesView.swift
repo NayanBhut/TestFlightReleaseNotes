@@ -607,34 +607,88 @@ struct CreateProfileForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
     @State private var name = ""
-    @State private var profileType: ProfileTypeOption = .IOS_APP_DEVELOPMENT
+    /// Figma 114-3320: platform picker + distribution-kind radios resolve
+    /// to a concrete type; `otherType` covers In-House/Direct/Catalyst
+    /// picks outside the three kinds.
+    @State private var platformCode = "IOS"
+    @State private var kind: ProfileTypeOption.DistributionKind? = .development
+    @State private var otherType: ProfileTypeOption?
     @State private var bundleIdId: String?
     @State private var certificateIds: Set<String> = []
     @State private var deviceIds: Set<String> = []
     @State private var isSaving = false
     @State private var errorMessage: String?
 
+    private var resolvedType: ProfileTypeOption? {
+        ProfileTypeOption.resolve(platformCode: platformCode, kind: kind, otherType: otherType)
+    }
+
     private var bundleIds: [BundleIdModel] { viewModel.bundleIdsState.loadedValue ?? [] }
     private var certificates: [CertificateModel] { viewModel.certificatesState.loadedValue ?? [] }
     private var devices: [DeviceModel] { viewModel.devicesState.loadedValue ?? [] }
 
-    /// BundleId platform (IOS / MAC_OS / TVOS) implied by the chosen
-    /// profile type. Mac Catalyst profiles take Mac bundle IDs.
-    private var profileBundlePlatform: String {
-        let raw = profileType.rawValue
-        if raw.hasPrefix("MAC_") { return "MAC_OS" }
-        if raw.hasPrefix("TVOS_") { return "TVOS" }
-        return "IOS"
-    }
+    /// BundleId platform code implied by the platform picker. Mac
+    /// Catalyst profiles take Mac bundle IDs.
+    private var profileBundlePlatform: String { platformCode }
 
-    /// Bundle IDs usable with the chosen type. Entries without platform
-    /// data are kept (unclassifiable, not necessarily wrong); UNIVERSAL
-    /// matches every platform.
+    /// Bundle IDs usable with the chosen platform. Entries without
+    /// platform data are kept (unclassifiable, not necessarily wrong);
+    /// UNIVERSAL matches every platform.
     private var filteredBundleIds: [BundleIdModel] {
         bundleIds.filter { bundle in
             guard let platform = bundle.platform, !platform.isEmpty else { return true }
             return platform == profileBundlePlatform || platform == "UNIVERSAL"
         }
+    }
+
+    /// Certificates selectable for the resolved type: matching kind +
+    /// platform, and not expired (an expired cert guarantees a 409).
+    private var eligibleCertificates: [CertificateModel] {
+        guard let resolved = resolvedType else { return [] }
+        let development = resolved.needsDevelopmentCertificates
+        return certificates.filter { cert in
+            guard let option = cert.certificateType.flatMap(CertificateTypeOption.init(rawValue:)),
+                  option.matchesKind(development: development),
+                  option.matchesPlatform(profileBundlePlatform) else { return false }
+            if let raw = cert.expirationDate,
+               let date = ProfileModel.parseDate(raw), date < Date() { return false }
+            return true
+        }
+    }
+
+    private func certificateExclusionReason(_ cert: CertificateModel) -> String? {
+        guard let resolved = resolvedType else { return "No profile type selected" }
+        guard let option = cert.certificateType.flatMap(CertificateTypeOption.init(rawValue:)) else {
+            return "Unknown type"
+        }
+        if !option.matchesKind(development: resolved.needsDevelopmentCertificates) {
+            return "Excluded · wrong type"
+        }
+        if !option.matchesPlatform(profileBundlePlatform) {
+            return "Excluded · wrong platform"
+        }
+        if let raw = cert.expirationDate,
+           let date = ProfileModel.parseDate(raw), date < Date() {
+            return "Excluded · expired"
+        }
+        return nil
+    }
+
+    /// Devices selectable for the profile: enabled with a matching (or
+    /// universal) platform. Everything else renders as an excluded row.
+    private var eligibleDevices: [DeviceModel] {
+        devices.filter { device in
+            (device.status ?? "") == "ENABLED"
+                && devicePlatformMatches(device.platform, profilePlatform: profileBundlePlatform)
+        }
+    }
+
+    private func deviceExclusionReason(_ device: DeviceModel) -> String? {
+        if (device.status ?? "") != "ENABLED" { return "Disabled · excluded" }
+        if !devicePlatformMatches(device.platform, profilePlatform: profileBundlePlatform) {
+            return "Wrong platform · excluded"
+        }
+        return nil
     }
 
     enum ProfileStep: Int, CaseIterable {
@@ -675,33 +729,56 @@ struct CreateProfileForm: View {
     }
 
     @State private var step: ProfileStep = .type
-    @State private var isDownloading = false
-    @State private var didDownload = false
     /// Set on create success (the new row is prepended, so it is first).
-    /// Swaps the wizard to a success step offering the .mobileprovision
-    /// download instead of dismissing.
+    /// Swaps the wizard to the created sheet with Download + Install for
+    /// Xcode instead of dismissing.
     @State private var createdProfile: ProfileModel?
 
     private var canContinue: Bool {
         switch step {
-        case .bundleID: return bundleIdId != nil
-        case .certificates: return !certificateIds.isEmpty
-        case .name: return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .type, .devices, .review: return true
+        case .type:
+            return resolvedType != nil
+        case .bundleID:
+            return bundleIdId != nil
+        case .certificates:
+            return !certificateIds.isEmpty
+        case .devices:
+            // Development/ad-hoc profiles embed devices server-side —
+            // an empty pick passes the old gate and 409s on create.
+            return resolvedType?.allowsDevices == false || !deviceIds.isEmpty
+        case .name:
+            return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .review:
+            return true
+        }
+    }
+
+    /// Retire picks invalidated by a type change: unknown bundle IDs,
+    /// ineligible certificates, and devices when the new type embeds
+    /// none (or that no longer match).
+    private func reconcilePicks() {
+        if let selected = bundleIdId,
+           !filteredBundleIds.contains(where: { $0.id == selected }) {
+            bundleIdId = nil
+        }
+        certificateIds = certificateIds.filter { id in
+            eligibleCertificates.contains(where: { $0.id == id })
+        }
+        if resolvedType?.allowsDevices == false {
+            deviceIds = []
+        } else {
+            deviceIds = deviceIds.filter { id in
+                eligibleDevices.contains(where: { $0.id == id })
+            }
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             if let created = createdProfile {
-                CreateSuccessView(
-                    title: "Profile Created",
-                    message: "“\(created.name ?? "Profile")” is ready. Download the .mobileprovision file to use it in Xcode.",
-                    downloadLabel: "Download .mobileprovision",
-                    didDownload: didDownload,
-                    isDownloading: isDownloading,
-                    errorMessage: errorMessage,
-                    onDownload: { download(created) },
+                ProfileCreatedSheet(
+                    viewModel: viewModel,
+                    profile: created,
                     onDone: onDone
                 )
             } else {
@@ -831,42 +908,103 @@ struct CreateProfileForm: View {
     }
 
     private var typeStep: some View {
-        VStack(alignment: .leading, spacing: 8) {
-                Text("PROFILE TYPE")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(ShipyardTheme.body)
-                    Menu {
-                        ForEach(ProfileTypeOption.allCases, id: \.self) { option in
-                            Button(option.displayName) {
-                                profileType = option
-                                if let selected = bundleIdId,
-                                   !filteredBundleIds.contains(where: { $0.id == selected }) {
-                                    bundleIdId = nil
-                                }
-                                if !option.allowsDevices {
-                                    deviceIds = []
-                                }
-                            }
-                        }
-                    } label: {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Platform and distribution")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            Text("macOS profiles use .provisionprofile; iOS profiles use .mobileprovision. Certificate eligibility follows both platform and profile type.")
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Platform")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.title)
+                Menu {
+                    Button("iOS") { platformCode = "IOS"; kind = .development; otherType = nil; reconcilePicks() }
+                    Button("macOS") { platformCode = "MAC_OS"; kind = .development; otherType = nil; reconcilePicks() }
+                    Button("tvOS") { platformCode = "TVOS"; kind = .development; otherType = nil; reconcilePicks() }
+                } label: {
                     HStack {
-                        Text(profileType.displayName)
+                        Text(platformDisplayName)
                             .font(.system(size: 13))
                             .foregroundColor(ShipyardTheme.title)
+                        Spacer()
+                        Text("⌄").font(.system(size: 12)).foregroundColor(ShipyardTheme.body)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(LaunchTheme.field)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                    .background(Color.white)
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(LaunchTheme.border, lineWidth: 1)
-                    )
+                            .stroke(LaunchTheme.border, lineWidth: 1))
                 }
                 .menuStyle(.borderlessButton)
                 .disabled(isSaving)
-                .accessibilityLabel("Select profile type")
+                .accessibilityLabel("Select platform")
             }
+            Picker("", selection: Binding(
+                get: { kind },
+                set: { newKind in
+                    kind = newKind
+                    otherType = nil
+                    reconcilePicks()
+                })) {
+                    ForEach(ProfileTypeOption.DistributionKind.allCases, id: \.self) { item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.rawValue)
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.title)
+                            Text(item.hint)
+                                .font(.system(size: 11))
+                                .foregroundColor(ShipyardTheme.body)
+                        }
+                        .tag(ProfileTypeOption.DistributionKind?(item))
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .disabled(isSaving)
+                .labelsHidden()
+            if resolvedType == nil {
+                Text(kind == nil
+                     ? "Pick a distribution kind above, or choose an enterprise/direct type below."
+                     : "This combination has no provisioning profile type (macOS has no Ad Hoc). Pick another kind or platform.")
+                    .font(.system(size: 11))
+                    .foregroundColor(kind == nil ? ShipyardTheme.body : AppTheme.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Menu {
+                Button("None — use the kinds above") {
+                    kind = .development
+                    otherType = nil
+                    reconcilePicks()
+                }
+                ForEach(ProfileTypeOption.otherTypes(for: platformCode), id: \.self) { option in
+                    Button(option.displayName) {
+                        kind = nil
+                        otherType = option
+                        reconcilePicks()
+                    }
+                }
+            } label: {
+                Text(otherType == nil ? "Other profile types…" : otherType?.displayName ?? "")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.accent)
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(isSaving)
+            .accessibilityLabel("Other profile types")
+        }
+    }
+
+    private var platformDisplayName: String {
+        switch platformCode {
+        case "MAC_OS": return "macOS"
+        case "TVOS": return "tvOS"
+        default: return "iOS"
+        }
     }
 
     private var bundleStep: some View {
@@ -936,18 +1074,49 @@ struct CreateProfileForm: View {
     private var certificatesStep: some View {
             ScrollView {
                 LazyVStack(spacing: 8) {
+                    if !(resolvedType?.needsDevelopmentCertificates ?? true) {
+                        Text("App Store and ad-hoc profiles use distribution certificates — development certificates are excluded below.")
+                            .font(.system(size: 11))
+                            .foregroundColor(ShipyardTheme.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     ForEach(certificates, id: \.id) { certificate in
-                        pickerToggleRow(
-                            title: certificate.displayName ?? certificate.name ?? "Unknown certificate",
-                            subtitle: "\(certificateTypeDisplayName(certificate.certificateType)) • Expires \(certificateExpiryDisplay(certificate.expirationDate))",
-                            isOn: Binding(
-                                get: { certificateIds.contains(certificate.id) },
-                                set: { checked in
-                                    if checked { certificateIds.insert(certificate.id) }
-                                    else { certificateIds.remove(certificate.id) }
+                        if let reason = certificateExclusionReason(certificate) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(certificate.displayName ?? certificate.name ?? "Unknown certificate")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(ShipyardTheme.body)
+                                        .lineLimit(1)
+                                    Text(reason)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(ShipyardTheme.body)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(.vertical, 4)
+                            .opacity(0.7)
+                            .accessibilityLabel("\(certificate.displayName ?? "certificate"), \(reason)")
+                        } else {
+                            pickerToggleRow(
+                                title: certificate.displayName ?? certificate.name ?? "Unknown certificate",
+                                subtitle: "\(certificateTypeDisplayName(certificate.certificateType)) • Expires \(certificateExpiryDisplay(certificate.expirationDate))",
+                                isOn: Binding(
+                                    get: { certificateIds.contains(certificate.id) },
+                                    set: { checked in
+                                        if checked { certificateIds.insert(certificate.id) }
+                                        else { certificateIds.remove(certificate.id) }
+                                    }
+                                )
                             )
-                        )
+                        }
+                    }
+                    if certificates.isEmpty {
+                        Text("No certificates found. Create one first.")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
                     }
                 }
                 .padding(12)
@@ -962,25 +1131,29 @@ struct CreateProfileForm: View {
 
     private var devicesStep: some View {
             VStack(alignment: .leading, spacing: 8) {
-                if !profileType.allowsDevices {
-                    Text("\(profileType.displayName) profiles can't include devices — Apple rejects the relationship. Skipping this step is safe.")
-                        .font(.system(size: 12))
-                        .foregroundColor(ShipyardTheme.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
+                if resolvedType?.allowsDevices == false {
+                    // Figma 114-3561: store/in-house/direct profiles skip
+                    // device registration — recap instead of an empty list.
+                    DeviceStatusBanner(
+                        variant: .info,
+                        title: "No device registration required",
+                        message: "\(resolvedType?.displayName ?? "This profile type") uses a compatible distribution certificate. Devices are skipped.")
+                    devicesSkippedRecap
                 } else {
                 HStack(spacing: 12) {
-                    Text(deviceIds.isEmpty ? "DEVICES" : "DEVICES (\(deviceIds.count) SELECTED)")
+                    Text(eligibleSelectedDeviceCount == 0
+                         ? "DEVICES" : "DEVICES (\(eligibleSelectedDeviceCount) SELECTED)")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(ShipyardTheme.body)
                     Spacer(minLength: 0)
                     Button("Select All") {
-                        deviceIds = Set(devices.map(\.id))
+                        deviceIds = Set(eligibleDevices.map(\.id))
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(ShipyardTheme.accent)
-                    .disabled(isSaving || devices.isEmpty)
+                    .disabled(isSaving || eligibleDevices.isEmpty)
+                    .accessibilityLabel("Select all eligible devices")
                     Button("Clear") {
                         deviceIds = []
                     }
@@ -989,20 +1162,47 @@ struct CreateProfileForm: View {
                     .foregroundColor(ShipyardTheme.body)
                     .disabled(isSaving || deviceIds.isEmpty)
                 }
+                Text("Development and Ad Hoc profiles include selected enabled devices.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(devices, id: \.id) { device in
-                            pickerToggleRow(
-                                title: device.name ?? "Unknown device",
-                                subtitle: "\(devicePlatformDisplayName(device.platform ?? "")) • \(device.udid ?? "")",
-                                isOn: Binding(
-                                    get: { deviceIds.contains(device.id) },
-                                    set: { checked in
-                                        if checked { deviceIds.insert(device.id) }
-                                        else { deviceIds.remove(device.id) }
+                            if let reason = deviceExclusionReason(device) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(device.name ?? "Unknown device")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(ShipyardTheme.body)
+                                            .lineLimit(1)
+                                        Text(reason)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(ShipyardTheme.body)
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.vertical, 4)
+                                .opacity(0.7)
+                            } else {
+                                pickerToggleRow(
+                                    title: device.name ?? "Unknown device",
+                                    subtitle: "\(devicePlatformDisplayName(device.platform ?? "")) • \(device.udid ?? "")",
+                                    isOn: Binding(
+                                        get: { deviceIds.contains(device.id) },
+                                        set: { checked in
+                                            if checked { deviceIds.insert(device.id) }
+                                            else { deviceIds.remove(device.id) }
+                                        }
+                                    )
                                 )
-                            )
+                            }
+                        }
+                        if devices.isEmpty {
+                            Text("No devices found. Register one first.")
+                                .font(.system(size: 12))
+                                .foregroundColor(ShipyardTheme.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
                         }
                     }
                     .padding(12)
@@ -1017,22 +1217,120 @@ struct CreateProfileForm: View {
             )
     }
 
+    /// Picks still valid under the current type (stale ids from a
+    /// previous type are reconciled away on type change).
+    private var eligibleSelectedDeviceCount: Int {
+        deviceIds.filter { id in eligibleDevices.contains(where: { $0.id == id }) }.count
+    }
+
+    /// Figma 114-3561 recap for types that embed no devices.
+    private var devicesSkippedRecap: some View {
+        VStack(spacing: 0) {
+            skippedRecapRow(stage: "Type",
+                            value: resolvedType.map { "\($0.displayName) · \(platformDisplayName)" } ?? "—")
+            skippedRecapRow(stage: "Bundle ID",
+                            value: bundleIds.first(where: { $0.id == bundleIdId })?.identifier ?? "—")
+            skippedRecapRow(stage: "Certificate",
+                            value: certificateIds.compactMap { id in
+                                certificates.first(where: { $0.id == id })
+                            }.map { cert in
+                                if let serial = cert.serialNumber, !serial.isEmpty {
+                                    return "\(cert.displayName ?? cert.name ?? "Certificate") · \(serial)"
+                                }
+                                return cert.displayName ?? cert.name ?? "Certificate"
+                            }.joined(separator: ", "))
+            skippedRecapRow(stage: "Devices", value: "Not applicable · skipped")
+        }
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(LaunchTheme.border, lineWidth: 1))
+    }
+
+    private func skippedRecapRow(stage: String, value: String) -> some View {
+        HStack(spacing: 12) {
+            Text(stage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(value.isEmpty ? "—" : value)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(2)
+        }
+        .font(.system(size: 12))
+        .foregroundColor(ShipyardTheme.title)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(minHeight: 38, alignment: .leading)
+        .background(LaunchTheme.field)
+    }
+
     private var nameStep: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(nameRecap)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .fixedSize(horizontal: false, vertical: true)
             LaunchField(label: "Profile Name", text: $name, prompt: "Acme Development")
                 .disabled(isSaving)
+            Text("A descriptive, unique name.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+        }
+    }
+
+    /// "iOS Development · com.acme.orbit · John Appleseed 7168F2F9 ·
+    /// 2 devices selected." (Figma 114-3614).
+    private var nameRecap: String {
+        var parts: [String] = []
+        if let resolved = resolvedType {
+            parts.append("\(platformDisplayName) \(resolved.shortKindName)")
+        }
+        if let bundle = bundleIds.first(where: { $0.id == bundleIdId }),
+           let identifier = bundle.identifier, !identifier.isEmpty {
+            parts.append(identifier)
+        }
+        let certs = certificateIds.compactMap { id in certificates.first(where: { $0.id == id }) }
+        if certs.count == 1, let cert = certs.first {
+            let label = cert.displayName ?? cert.name ?? "Certificate"
+            if let serial = cert.serialNumber, !serial.isEmpty {
+                parts.append("\(label) \(serial)")
+            } else {
+                parts.append(label)
+            }
+        } else if !certs.isEmpty {
+            parts.append("\(certs.count) certificates")
+        }
+        if resolvedType?.allowsDevices == true {
+            parts.append("\(eligibleSelectedDeviceCount) device\(eligibleSelectedDeviceCount == 1 ? "" : "s") selected")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var reviewStep: some View {
             VStack(alignment: .leading, spacing: 10) {
-                reviewRow("Type", profileType.displayName)
+                reviewRow("Type", resolvedType.map { "\($0.displayName) · \(platformDisplayName)" } ?? "—")
                 reviewRow("Bundle ID", bundleIds.first(where: { $0.id == bundleIdId }).map { "\($0.name ?? "") (\($0.identifier ?? ""))" } ?? "—")
-                reviewRow("Certificates", "\(certificateIds.count) selected")
-                reviewRow("Devices", deviceIds.isEmpty ? "None (distribution)" : "\(deviceIds.count) selected")
+                reviewRow("Certificates", reviewNames(
+                    certificateIds.compactMap { id in certificates.first(where: { $0.id == id }) }
+                        .map { $0.displayName ?? $0.name ?? "Certificate" }))
+                reviewRow("Devices", devicesReviewLabel)
                 reviewRow("Name", name.isEmpty ? "—" : name)
                 Text("Test on a throwaway profile first. Needs an API key with the Admin role.")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.body)
             }
+    }
+
+    private var devicesReviewLabel: String {
+        guard resolvedType?.allowsDevices == true else { return "Not applicable · skipped" }
+        let names = deviceIds.compactMap { id in devices.first(where: { $0.id == id }) }
+            .map { $0.name ?? $0.udid ?? $0.id }
+        return reviewNames(names)
+    }
+
+    private func reviewNames(_ names: [String]) -> String {
+        if names.isEmpty { return "—" }
+        if names.count <= 3 { return names.joined(separator: "; ") }
+        return names.prefix(3).joined(separator: "; ") + " +\(names.count - 3)"
     }
 
     private func reviewRow(_ label: String, _ value: String) -> some View {
@@ -1052,36 +1350,26 @@ struct CreateProfileForm: View {
         isSaving = true
         defer { isSaving = false }
         errorMessage = nil
+        guard let resolved = resolvedType else {
+            errorMessage = "Pick a valid platform and profile type first."
+            return
+        }
+        // Defensive: only eligible devices ever reach the body (the
+        // devices gate + reconcilePicks enforce this in the UI).
+        let eligibleIds = Set(eligibleDevices.map(\.id))
         let result = await viewModel.createProfile(
             name: name,
-            profileType: profileType,
+            profileType: resolved,
             bundleIdId: bundleIdId,
             certificateIds: certificateIds,
-            deviceIds: deviceIds)
+            deviceIds: deviceIds.intersection(eligibleIds))
         if case .success = result {
             createdProfile = viewModel.profilesState.loadedValue?.first
-            didDownload = false
             errorMessage = nil
         } else if case .failure(let message) = result {
             // .ignored: duplicate in flight / cancelled —
             // keep the form open, nothing was created.
             errorMessage = message
-        }
-    }
-
-    private func download(_ profile: ProfileModel) {
-        Task { @MainActor in
-            isDownloading = true
-            defer { isDownloading = false }
-            switch await viewModel.downloadProfile(profile) {
-            case .success:
-                didDownload = true
-                errorMessage = nil
-            case .failure(let message):
-                errorMessage = message
-            case .ignored:
-                break
-            }
         }
     }
 }

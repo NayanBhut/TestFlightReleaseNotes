@@ -204,6 +204,88 @@ final class ValidationTests: XCTestCase {
         }
     }
 
+    // MARK: - Profiles flow (status, type resolve, eligibility)
+
+    private func profileFixture(id: String, state: String?, expiry: String?) -> ProfileModel {
+        var model = ProfileModel(id: id, devices: [], certificates: [], bundleId: nil)
+        model.profileState = state
+        model.expirationDate = expiry
+        return model
+    }
+
+    func testProfileComputedStatus() {
+        let active = profileFixture(id: "p1", state: "ACTIVE", expiry: "2027-09-22T00:00:00-07:00")
+        XCTAssertEqual(active.computedStatus, .active)
+
+        let invalid = profileFixture(id: "p2", state: "INVALID", expiry: "2027-09-22T00:00:00-07:00")
+        XCTAssertEqual(invalid.computedStatus, .invalid)
+
+        // Server INVALID wins even past expiry.
+        let invalidExpired = profileFixture(id: "p3", state: "INVALID", expiry: "2020-01-01T00:00:00-07:00")
+        XCTAssertEqual(invalidExpired.computedStatus, .invalid)
+
+        let expired = profileFixture(id: "p4", state: "ACTIVE", expiry: "2025-09-20T00:00:00-07:00")
+        XCTAssertEqual(expired.computedStatus, .expired)
+
+        // Missing/unparseable dates never claim expiry.
+        let undated = profileFixture(id: "p5", state: "ACTIVE", expiry: nil)
+        XCTAssertEqual(undated.computedStatus, .active)
+        let garbage = profileFixture(id: "p6", state: "ACTIVE", expiry: "not-a-date")
+        XCTAssertEqual(garbage.computedStatus, .active)
+    }
+
+    func testProfileTypeResolve() {
+        XCTAssertEqual(
+            ProfileTypeOption.resolve(platformCode: "IOS", kind: .development),
+            .IOS_APP_DEVELOPMENT)
+        XCTAssertEqual(
+            ProfileTypeOption.resolve(platformCode: "IOS", kind: .adHoc),
+            .IOS_APP_ADHOC)
+        XCTAssertEqual(
+            ProfileTypeOption.resolve(platformCode: "IOS", kind: .appStore),
+            .IOS_APP_STORE)
+        XCTAssertEqual(
+            ProfileTypeOption.resolve(platformCode: "MAC_OS", kind: .development),
+            .MAC_APP_DEVELOPMENT)
+        // macOS has no Ad Hoc type — wizard must block, not guess.
+        XCTAssertNil(ProfileTypeOption.resolve(platformCode: "MAC_OS", kind: .adHoc))
+        XCTAssertEqual(
+            ProfileTypeOption.resolve(platformCode: "TVOS", kind: .adHoc),
+            .TVOS_APP_ADHOC)
+        // Enterprise/direct via the Other picker.
+        XCTAssertEqual(
+            ProfileTypeOption.resolve(platformCode: "IOS", kind: nil, otherType: .IOS_APP_INHOUSE),
+            .IOS_APP_INHOUSE)
+        XCTAssertNil(ProfileTypeOption.resolve(platformCode: "IOS", kind: nil, otherType: nil))
+        XCTAssertTrue(ProfileTypeOption.otherTypes(for: "MAC_OS").contains(.MAC_APP_DIRECT))
+        XCTAssertFalse(ProfileTypeOption.otherTypes(for: "MAC_OS").contains(.IOS_APP_STORE))
+    }
+
+    func testCertificateEligibility() {
+        // Kind matching: development kinds take *DEVELOPMENT* only.
+        XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.matchesKind(development: true))
+        XCTAssertFalse(CertificateTypeOption.IOS_DEVELOPMENT.matchesKind(development: false))
+        XCTAssertTrue(CertificateTypeOption.IOS_DISTRIBUTION.matchesKind(development: false))
+        XCTAssertFalse(CertificateTypeOption.IOS_DISTRIBUTION.matchesKind(development: true))
+        XCTAssertTrue(CertificateTypeOption.MAC_APP_DISTRIBUTION.matchesKind(development: false))
+        // Legacy unprefixed types match every platform.
+        XCTAssertTrue(CertificateTypeOption.DEVELOPMENT.matchesPlatform("IOS"))
+        XCTAssertTrue(CertificateTypeOption.DEVELOPMENT.matchesPlatform("MAC_OS"))
+        XCTAssertTrue(CertificateTypeOption.DISTRIBUTION.matchesPlatform("TVOS"))
+        // Prefixed types stay on their platform; tvOS shares iOS identities.
+        XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.matchesPlatform("TVOS"))
+        XCTAssertFalse(CertificateTypeOption.MAC_APP_DEVELOPMENT.matchesPlatform("IOS"))
+        XCTAssertFalse(CertificateTypeOption.IOS_DISTRIBUTION.matchesPlatform("MAC_OS"))
+    }
+
+    func testDevicePlatformMatches() {
+        XCTAssertTrue(devicePlatformMatches("IOS", profilePlatform: "IOS"))
+        XCTAssertTrue(devicePlatformMatches("UNIVERSAL", profilePlatform: "MAC_OS"))
+        XCTAssertTrue(devicePlatformMatches(nil, profilePlatform: "IOS"))
+        XCTAssertFalse(devicePlatformMatches("MAC_OS", profilePlatform: "IOS"))
+        XCTAssertTrue(devicePlatformMatches("MAC_OS", profilePlatform: "MAC_OS"))
+    }
+
     // MARK: - Invite body relationships (Batch I fix)
 
     func testInviteBodyVisibleApps() throws {
