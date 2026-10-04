@@ -165,6 +165,12 @@ final class ResourcesViewModel: ObservableObject {
     @Published var invitationsState: ViewState<[UserInvitationModel]> = .idle
     private var invitationsFetchTask: Task<Void, Never>?
 
+    /// Last successfully loaded rows, retained across failures so the
+    /// Users error state can show the stale cache with editing disabled
+    /// (Figma 114-13286) instead of a bare error. Cleared on team switch.
+    private(set) var lastLoadedUsers: [UserModel] = []
+    private(set) var lastLoadedInvitations: [UserInvitationModel] = []
+
     func isWriteInFlight(_ key: String) -> Bool { writeInFlight.contains(key) }
 
     // MARK: - Search (Batch F #6)
@@ -272,6 +278,32 @@ final class ResourcesViewModel: ObservableObject {
         cachedFilter(&invitationsFilterCache, kind: .users, source: invitationsState.loadedValue ?? []) {
             [$0.email, $0.firstName, $0.lastName, ($0.roles ?? []).joined(separator: " ")]
         }
+    }
+
+    /// Pending list order (Figma 114-4654 "Sort: Date sent"). The API
+    /// exposes no sent-date on invitations — expirationDate is the closest
+    /// proxy (fixed lifetime, so ordering matches). Newest first, undated
+    /// rows last.
+    var pendingInvitationsByRecency: [UserInvitationModel] {
+        filteredInvitations.sorted {
+            switch ($0.expirationDate, $1.expirationDate) {
+            case let (lhs?, rhs?): return lhs > rhs
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return ($0.email ?? "") < ($1.email ?? "")
+            }
+        }
+    }
+
+    /// App-scope label shared by the users table, pending list, detail
+    /// summaries and sheets ("All Apps" vs "Orbit, Atlas"). Empty names
+    /// with a scoped flag means the linkage didn't hydrate — say so
+    /// instead of showing a blank.
+    nonisolated static func appScopeLabel(allAppsVisible: Bool?, visibleAppNames: [String]) -> String {
+        if allAppsVisible ?? true { return "All Apps" }
+        let names = visibleAppNames.filter { !$0.isEmpty }
+        if names.isEmpty { return "Selected apps" }
+        return names.joined(separator: ", ")
     }
 
     /// Row count after filtering, without the view needing to know which
@@ -392,6 +424,12 @@ final class ResourcesViewModel: ObservableObject {
         if let sort = kind.sortParam {
             queryParams["sort"] = sort
         }
+        if kind == .users {
+            // Hydrate app-scope names (table "App scope" column, edit-user
+            // chooser, resend recap). spec: include=visibleApps is valid
+            // on GET /v1/users; links-only linkage decodes to [].
+            queryParams["include"] = "visibleApps"
+        }
 
         guard let request = APIClient.shared.getRequest(
             api: .get(name: kind.apiName, queryParams: queryParams), apiVersion: .v1) else {
@@ -461,6 +499,7 @@ final class ResourcesViewModel: ObservableObject {
             nextCursors[kind] = model.meta.paging.nextCursor
             totals[kind] = model.meta.paging.total
             usersState = merged.isEmpty ? .empty : .loaded(merged)
+            lastLoadedUsers = merged
         }
         // Staleness only on success: a failed load must NOT mark the kind
         // loaded, or reopening the list would never auto-retry the error.
@@ -488,6 +527,8 @@ final class ResourcesViewModel: ObservableObject {
         invitationsFetchTask?.cancel()
         invitationsFetchTask = nil
         invitationsState = .idle
+        lastLoadedUsers = []
+        lastLoadedInvitations = []
         dependentsTask?.cancel()
         dependentsTask = nil
         dependentsCache = [:]
@@ -1067,10 +1108,10 @@ final class ResourcesViewModel: ObservableObject {
 
     // MARK: - User + invitation writes (Batch I, I3)
     //
-    // POST /v1/userInvitations (invite), PATCH /v1/users/{id} (roles),
-    // DELETE /v1/users/{id} (remove), resend = find pending invite by
-    // email → DELETE /v1/userInvitations/{id} → re-POST (no dedicated
-    // resend endpoint exists). Same WriteResult contract as above.
+    // POST /v1/userInvitations (invite), PATCH /v1/users/{id} (roles +
+    // app scope + provisioning), DELETE /v1/users/{id} (remove),
+    // resend = DELETE /v1/userInvitations/{id} → re-POST identical (no
+    // dedicated resend endpoint exists). Same WriteResult contract as above.
     // Removing users needs an Admin key — a TestFlight-only key 403s,
     // hence the write-specific hint.
 
@@ -1124,40 +1165,34 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
-    /// Resend an invitation: find the pending invite by email, delete it,
-    /// then re-create with the supplied details. Roles pass through as
-    /// raw strings so a role this client doesn't recognize is preserved
-    /// verbatim instead of being silently dropped. App-scoped invites
-    /// (allAppsVisible == false) are blocked: the pending invite's
-    /// visibleApps ids aren't reconstructable without an extra
-    /// include=visibleApps fetch, and recreating without them would
-    /// silently mis-scope the invite — revoke + new invite instead.
-    func resendInvitation(email: String,
-                          firstName: String,
-                          lastName: String,
-                          roles: [String],
-                          allAppsVisible: Bool,
-                          provisioningAllowed: Bool) async -> WriteResult {
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Resend an invitation: delete the pending invite and re-create it
+    /// with identical details. Roles pass through as raw strings so a
+    /// role this client doesn't recognize is preserved verbatim instead
+    /// of being silently dropped. Scoped invites reuse the hydrated
+    /// visibleApps ids (fetches use include=visibleApps); when the
+    /// linkage didn't hydrate the resend is blocked — recreating without
+    /// app ids would silently mis-scope the invite, so revoke + send a
+    /// new invite with the app picker instead.
+    func resendInvitation(_ invitation: UserInvitationModel) async -> WriteResult {
+        let trimmedEmail = (invitation.email ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
             return .failure("Enter a valid email address.")
         }
-        guard !allAppsVisible else {
-            return .failure("This invite is scoped to specific apps. Revoke it and send a new invite with the app picker instead.")
-        }
+        let roles = invitation.roles ?? []
         guard !roles.isEmpty else { return .failure("The invitation has no roles to re-create.") }
-        let resendKey = "resend-invitation-\(trimmedEmail.lowercased())"
+        let allAppsVisible = invitation.allAppsVisible ?? true
+        let visibleAppIds = invitation.visibleApps.map(\.id)
+        if !allAppsVisible, visibleAppIds.isEmpty {
+            return .failure("This invite is scoped to specific apps that couldn't be loaded. Revoke it and send a new invite with the app picker instead.")
+        }
+        let resendKey = "resend-invitation-\(invitation.id)"
         guard !isWriteInFlight(resendKey) else { return .ignored }
         writeInFlight.insert(resendKey)
         defer { writeInFlight.remove(resendKey) }
 
         do {
-            guard let pendingId = try await pendingInvitationId(forEmail: trimmedEmail) else {
-                return .failure("No pending invitation for \(trimmedEmail) — send a new invite instead.")
-            }
-            guard !Task.isCancelled else { return .ignored }
             guard let deleteRequest = APIClient.shared.getRequest(
-                api: .delete(name: .userInvitations, path: pendingId),
+                api: .delete(name: .userInvitations, path: invitation.id),
                 apiVersion: .v1) else {
                 return .failure("Couldn't build the resend request.")
             }
@@ -1171,12 +1206,12 @@ final class ResourcesViewModel: ObservableObject {
             }
             guard let createRequest = invitationCreateRequest(
                 email: trimmedEmail,
-                firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines),
-                lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines),
+                firstName: (invitation.firstName ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+                lastName: (invitation.lastName ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                 roles: roles,
                 allAppsVisible: allAppsVisible,
-                provisioningAllowed: provisioningAllowed,
-                visibleAppIds: []) else {
+                provisioningAllowed: invitation.provisioningAllowed ?? false,
+                visibleAppIds: visibleAppIds) else {
                 return .failure("The old invite was revoked, but the new one couldn't be built — send a fresh invite.")
             }
             do {
@@ -1211,7 +1246,7 @@ final class ResourcesViewModel: ObservableObject {
 
         guard let request = APIClient.shared.getRequest(
             api: .get(name: .userInvitations,
-                      queryParams: ["sort": "email", "limit": "200"]),
+                      queryParams: ["sort": "email", "limit": "200", "include": "visibleApps"]),
             apiVersion: .v1) else {
             invitationsState = .error("No team selected. Add a team to load invitations.")
             return
@@ -1222,6 +1257,7 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
             invitationsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            lastLoadedInvitations = model.data
             // Loaded rows changed — invalidate the shared users filter cache.
             dataVersion += 1
         } catch {
@@ -1251,6 +1287,7 @@ final class ResourcesViewModel: ObservableObject {
                   let index = invitations.firstIndex(where: { $0.id == id }) else { return .ignored }
             invitations.remove(at: index)
             invitationsState = invitations.isEmpty ? .empty : .loaded(invitations)
+            lastLoadedInvitations = invitations
             dataVersion += 1
             return .success
         } catch {
@@ -1258,19 +1295,6 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
-    }
-
-    private func pendingInvitationId(forEmail email: String) async throws -> String? {
-        guard let request = APIClient.shared.getRequest(
-            api: .get(name: .userInvitations,
-                      queryParams: ["filter[email]": email, "limit": "1"]),
-            apiVersion: .v1) else {
-            throw APIError.requestFailed
-        }
-        let data = try await APIClient.shared.callAPI(with: request)
-        guard !Task.isCancelled else { return nil }
-        let model = try getDecoder().decode(UserInvitationsDocument.self, from: data)
-        return model.data.first?.id
     }
 
     private func invitationCreateRequest(email: String,
@@ -1309,12 +1333,21 @@ final class ResourcesViewModel: ObservableObject {
             apiVersion: .v1)
     }
 
-    /// PATCH /v1/users/{id} — replace the user's roles. Roles the client
-    /// can't parse (a future Apple role) are preserved verbatim and
-    /// unioned into the outgoing array — editing one role must never
-    /// silently strip another.
-    func updateUserRoles(_ user: UserModel, roles: Set<UserRoleOption>) async -> WriteResult {
+    /// PATCH /v1/users/{id} — replace roles, app scope and provisioning
+    /// access (spec UserUpdateRequest: all three optional + visibleApps
+    /// linkage). Roles the client can't parse (a future Apple role) are
+    /// preserved verbatim and unioned into the outgoing array — editing
+    /// one role must never silently strip another. The PATCH response
+    /// carries no hydrated apps, so the row keeps its visibleApps names.
+    func updateUser(_ user: UserModel,
+                    roles: Set<UserRoleOption>,
+                    allAppsVisible: Bool,
+                    provisioningAllowed: Bool,
+                    visibleAppIds: [String] = []) async -> WriteResult {
         guard !roles.isEmpty else { return .failure("Pick at least one role.") }
+        if !allAppsVisible, visibleAppIds.isEmpty {
+            return .failure("Pick at least one app this user can access, or turn on \"All apps visible\".")
+        }
         guard !isWriteInFlight(user.id) else { return .ignored }
         writeInFlight.insert(user.id)
         defer { writeInFlight.remove(user.id) }
@@ -1328,28 +1361,40 @@ final class ResourcesViewModel: ObservableObject {
         guard let data = try? encoder.encode(UserUpdateRequest(
             data: UserUpdateData(
                 id: user.id,
-                attributes: UserUpdateAttributes(roles: outgoingRoles)
+                attributes: UserUpdateAttributes(
+                    roles: outgoingRoles,
+                    allAppsVisible: allAppsVisible,
+                    provisioningAllowed: provisioningAllowed
+                ),
+                relationships: allAppsVisible ? nil : UserUpdateRelationships(
+                    visibleApps: UserInvitationVisibleAppsRelationship(
+                        data: visibleAppIds.map { UserInvitationAppRef(id: $0) }
+                    )
+                )
             )
         )), let request = APIClient.shared.getRequest(
             api: .patch(name: .getUsers, body: data, path: user.id),
             apiVersion: .v1) else {
-            return .failure("Couldn't build the role update request.")
+            return .failure("Couldn't build the user update request.")
         }
 
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return .ignored }
-            let model = try getDecoder().decode(UserModel.self, from: responseData)
+            var model = try getDecoder().decode(UserModel.self, from: responseData)
+            // The PATCH response has no hydrated apps — keep the row's.
+            model.visibleApps = user.visibleApps
             // Re-locate after the await: the list may have changed
             // (refresh, pagination) since the edit started.
             guard case .loaded(var users) = usersState,
                   let index = users.firstIndex(where: { $0.id == user.id }) else { return .ignored }
             users[index] = model
             usersState = .loaded(users)
+            lastLoadedUsers = users
             dataVersion += 1
             return .success
         } catch {
-            resourcesLogger.error("Failed to update user roles: \(error.localizedDescription)")
+            resourcesLogger.error("Failed to update user: \(error.localizedDescription)")
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
@@ -1377,6 +1422,7 @@ final class ResourcesViewModel: ObservableObject {
                   let index = users.firstIndex(where: { $0.id == id }) else { return .ignored }
             users.remove(at: index)
             usersState = users.isEmpty ? .empty : .loaded(users)
+            lastLoadedUsers = users
             if let total = totals[.users] {
                 totals[.users] = max(0, total - 1)
             }

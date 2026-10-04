@@ -50,8 +50,10 @@ final class JSONDecodingTests: XCTestCase {
     }
 
     func testUsersDocumentDecodesRoles() throws {
+        // The relationships key is always present in real responses;
+        // swift-jsonapi requires it when a relationship is declared.
         let json = """
-        {"data":[{"type":"users","id":"user-1","attributes":{"username":"a@b.com","firstName":"Ada","lastName":"Lovelace","roles":["ADMIN","DEVELOPER"],"allAppsVisible":true,"provisioningAllowed":false}}],"meta":{"paging":{"total":1,"limit":50}}}
+        {"data":[{"type":"users","id":"user-1","attributes":{"username":"a@b.com","firstName":"Ada","lastName":"Lovelace","roles":["ADMIN","DEVELOPER"],"allAppsVisible":true,"provisioningAllowed":false},"relationships":{"visibleApps":{"data":[]}}}],"meta":{"paging":{"total":1,"limit":50}}}
         """
         let model = try getDecoder().decode(UsersDocument.self, from: Data(json.utf8))
         XCTAssertEqual(model.data[0].roles, ["ADMIN", "DEVELOPER"])
@@ -90,5 +92,42 @@ final class JSONDecodingTests: XCTestCase {
         XCTAssertEqual(model.data.count, 1)
         XCTAssertTrue(model.data[0].devices.isEmpty)
         XCTAssertTrue(model.data[0].certificates.isEmpty)
+    }
+
+    func testUsersDocumentHydratesIncludedVisibleApps() throws {
+        // GET /v1/users?include=visibleApps shape: linkage in
+        // relationships, app resources in included. Drives the App scope
+        // column, the edit-user chooser and the resend recap. The second
+        // user carries links-only linkage (unincluded shape) — that must
+        // decode to [], not fail the document.
+        let json = """
+        {"data":[{"type":"users","id":"user-1","attributes":{"username":"sarah.c@sky.net","firstName":"Sarah","lastName":"Connor","roles":["DEVELOPER"],"allAppsVisible":false,"provisioningAllowed":true},"relationships":{"visibleApps":{"data":[{"type":"apps","id":"app-1"},{"type":"apps","id":"app-2"}]}}},{"type":"users","id":"user-2","attributes":{"username":"john@apple.com","firstName":"John","lastName":"Appleseed","roles":["ACCOUNT_HOLDER"],"allAppsVisible":true,"provisioningAllowed":true},"relationships":{"visibleApps":{"links":{"self":"https://api.appstoreconnect.apple.com/v1/users/user-2/relationships/visibleApps","related":"https://api.appstoreconnect.apple.com/v1/users/user-2/visibleApps"}}}}],"included":[{"type":"apps","id":"app-1","attributes":{"name":"Orbit","bundleId":"com.acme.orbit"},"relationships":{"appStoreVersions":{"data":[]},"appStoreIcon":{"data":null}}},{"type":"apps","id":"app-2","attributes":{"name":"Atlas","bundleId":"com.acme.atlas"},"relationships":{"appStoreVersions":{"data":[]},"appStoreIcon":{"data":null}}}],"meta":{"paging":{"total":2,"limit":50}}}
+        """
+        let model = try getDecoder().decode(UsersDocument.self, from: Data(json.utf8))
+        XCTAssertEqual(model.data.count, 2)
+        XCTAssertEqual(model.data[0].visibleApps.map(\.id), ["app-1", "app-2"])
+        XCTAssertEqual(
+            ResourcesViewModel.appScopeLabel(
+                allAppsVisible: model.data[0].allAppsVisible,
+                visibleAppNames: model.data[0].visibleApps.map { $0.name ?? $0.id }),
+            "Orbit, Atlas")
+        XCTAssertTrue(model.data[1].visibleApps.isEmpty)
+        XCTAssertEqual(
+            ResourcesViewModel.appScopeLabel(
+                allAppsVisible: model.data[1].allAppsVisible,
+                visibleAppNames: []),
+            "All Apps")
+    }
+
+    func testUserInvitationsDocumentHydratesVisibleApps() throws {
+        // GET /v1/userInvitations?include=visibleApps shape: the pending
+        // list scope column + resend scope preservation read this.
+        let json = """
+        {"data":[{"type":"userInvitations","id":"invite-1","attributes":{"email":"jane.doe@acme.com","firstName":"Jane","lastName":"Doe","expirationDate":"2026-10-11T11:15:00-07:00","roles":["DEVELOPER"],"allAppsVisible":false,"provisioningAllowed":true},"relationships":{"visibleApps":{"data":[{"type":"apps","id":"app-1"}]}}}],"included":[{"type":"apps","id":"app-1","attributes":{"name":"Orbit","bundleId":"com.acme.orbit"},"relationships":{"appStoreVersions":{"data":[]},"appStoreIcon":{"data":null}}}],"meta":{"paging":{"total":1,"limit":200}}}
+        """
+        let model = try getDecoder().decode(UserInvitationsDocument.self, from: Data(json.utf8))
+        XCTAssertEqual(model.data.count, 1)
+        XCTAssertEqual(model.data[0].visibleApps.map(\.id), ["app-1"])
+        XCTAssertEqual(model.data[0].expirationDate, "2026-10-11T11:15:00-07:00")
     }
 }

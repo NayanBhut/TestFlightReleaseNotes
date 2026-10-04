@@ -93,7 +93,7 @@ struct ProfileModel: Equatable {
 }
 
 @ResourceWrapper(type: "users")
-struct UserModel: Equatable {
+struct UserModel: Equatable, Identifiable {
     static func == (lhs: UserModel, rhs: UserModel) -> Bool {
         return lhs.id == rhs.id
     }
@@ -106,6 +106,10 @@ struct UserModel: Equatable {
     @ResourceAttribute var roles: [String]?
     @ResourceAttribute var allAppsVisible: Bool?
     @ResourceAttribute var provisioningAllowed: Bool?
+    /// Apps this user can access — hydrated only with include=visibleApps
+    /// (app-scope labels, edit-user chooser). Links-only linkage on
+    /// unincluded fetches decodes to [], same as other relationships.
+    @ResourceRelationship var visibleApps: [AppsData]
 }
 
 // Documents: all five collections are cursor-paginated and return paging
@@ -547,10 +551,34 @@ enum UserRoleOption: String, CaseIterable {
             .capitalized
             .replacingOccurrences(of: " To ", with: " to ")
     }
+
+    /// One-line remit shown under each role checkbox in the invite and
+    /// edit-user flows (Figma 114-4499 / 114-4278 copy).
+    var description: String {
+        switch self {
+        case .ADMIN: return "All team administration."
+        case .APP_MANAGER: return "App lifecycle and metadata."
+        case .DEVELOPER: return "Development and TestFlight access."
+        case .MARKETING: return "Marketing metadata."
+        case .CUSTOMER_SUPPORT: return "Customer review responses."
+        case .FINANCE: return "Financial access."
+        case .SALES: return "Sales access."
+        case .ACCESS_TO_REPORTS: return "Report access is independent of app editing."
+        case .TECHNICAL: return "Technical role."
+        case .READ_ONLY: return "Read-only access."
+        case .ACCOUNT_HOLDER: return "Account Holder — protected, not editable here."
+        }
+    }
+
+    /// Roles the invite/edit checkboxes offer. Excludes ACCOUNT_HOLDER
+    /// (cannot be granted via the API) — the holder renders read-only.
+    static var grantableCases: [UserRoleOption] {
+        allCases.filter { $0 != .ACCOUNT_HOLDER }
+    }
 }
 
 @ResourceWrapper(type: "userInvitations")
-struct UserInvitationModel: Equatable {
+struct UserInvitationModel: Equatable, Identifiable {
     static func == (lhs: UserInvitationModel, rhs: UserInvitationModel) -> Bool {
         return lhs.id == rhs.id
     }
@@ -564,6 +592,9 @@ struct UserInvitationModel: Equatable {
     @ResourceAttribute var roles: [String]?
     @ResourceAttribute var allAppsVisible: Bool?
     @ResourceAttribute var provisioningAllowed: Bool?
+    /// Apps granted by this invitation — hydrated only with
+    /// include=visibleApps (pending-list scope column, resend recap).
+    @ResourceRelationship var visibleApps: [AppsData]
 }
 
 typealias UserInvitationsDocument = CompoundDocument<[UserInvitationModel], Meta>
@@ -576,10 +607,34 @@ struct UserUpdateData: Encodable {
     var type = "users"
     var id: String
     var attributes: UserUpdateAttributes
+    /// Present only when the app scope changes (selected-apps edit).
+    var relationships: UserUpdateRelationships?
 }
 
+/// Full PATCH body (spec UserUpdateRequest): roles, allAppsVisible and
+/// provisioningAllowed are all optional; absent keys are omitted so an
+/// edit never nulls a field it didn't touch.
 struct UserUpdateAttributes: Encodable {
-    var roles: [String]
+    var roles: [String]?
+    var allAppsVisible: Bool?
+    var provisioningAllowed: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case roles
+        case allAppsVisible
+        case provisioningAllowed
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(roles, forKey: .roles)
+        try container.encodeIfPresent(allAppsVisible, forKey: .allAppsVisible)
+        try container.encodeIfPresent(provisioningAllowed, forKey: .provisioningAllowed)
+    }
+}
+
+struct UserUpdateRelationships: Encodable {
+    var visibleApps: UserInvitationVisibleAppsRelationship
 }
 
 struct UserInvitationCreateRequest: Encodable {

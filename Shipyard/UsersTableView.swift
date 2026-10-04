@@ -2,11 +2,11 @@
 //  UsersTableView.swift
 //  App Store
 //
-//  Users table from the users-light Figma frame: toolbar (title + total
-//  pill, search, Invite User) over a Name / Email / Role / Status / Apps
-//  Access table. Pending invitations render inline with an Invited status.
-//  Invite/remove/resend reuse the shared view-model writes; role editing
-//  stays in the legacy sheet for now.
+//  Users & permissions from the Figma invite-users frames: Members /
+//  Pending scope toggle, member rows with tap-to-edit detail, pending
+//  invitations with inspector + resend/cancel, Account Holder protection,
+//  empty state, and the stale-cache error state (editing disabled until
+//  refresh succeeds).
 //
 
 import SwiftUI
@@ -14,75 +14,123 @@ import SwiftUI
 struct UsersTableView: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var apps: [AppsData] = []
+
+    private enum Scope {
+        case members
+        case pending
+    }
+
+    @State private var scope = Scope.members
     @State private var showInviteForm = false
-    @State private var removingUser: UserModel?
+    @State private var selectedUser: UserModel?
+    @State private var selectedInvitation: UserInvitationModel?
+    @State private var resendTarget: UserInvitationModel?
+    @State private var cancelTarget: UserInvitationModel?
+    @State private var removeTarget: UserModel?
     @State private var bannerError: String?
 
     private var users: [UserModel] { viewModel.filteredUsers }
-    private var invitations: [UserInvitationModel] { viewModel.filteredInvitations }
+    private var invitations: [UserInvitationModel] { viewModel.pendingInvitationsByRecency }
+
+    /// Editing is disabled while showing a stale cache (Figma 114-13286).
+    private var staleMembers: Bool {
+        if case .error = viewModel.usersState {
+            return !viewModel.lastLoadedUsers.isEmpty
+        }
+        return false
+    }
+
+    private var stalePending: Bool {
+        if case .error = viewModel.invitationsState {
+            return !viewModel.lastLoadedInvitations.isEmpty
+        }
+        return false
+    }
+
+    private var staleRows: [UserModel] {
+        viewModel.lastLoadedUsers.filter { matchesSearch([$0.username, $0.firstName, $0.lastName]) }
+    }
+
+    private var staleInvitations: [UserInvitationModel] {
+        viewModel.lastLoadedInvitations.filter { matchesSearch([$0.email, $0.firstName, $0.lastName]) }
+    }
+
+    private func matchesSearch(_ fields: [String?]) -> Bool {
+        let query = viewModel.searchText(for: .users).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        return fields.contains { $0?.localizedStandardContains(query) == true }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            if let bannerError {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(AppTheme.negative)
-                    Text(bannerError)
-                        .font(.system(size: 12))
-                        .foregroundColor(AppTheme.negative)
-                    Spacer()
-                    Button {
-                        self.bannerError = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss error")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+        if let selectedUser {
+            UserDetailView(
+                viewModel: viewModel,
+                user: selectedUser,
+                apps: apps,
+                onBack: { self.selectedUser = nil },
+                onRemoved: { self.selectedUser = nil })
+        } else {
+            VStack(spacing: 0) {
+                toolbar
                 Divider()
-            }
-            table
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ShipyardTheme.tableBackground)
-        .onAppear {
-            viewModel.load(.users)
-            viewModel.loadInvitations()
-        }
-        .sheet(isPresented: $showInviteForm) {
-            InviteUserForm(viewModel: viewModel, apps: apps) {
-                showInviteForm = false
-            }
-        }
-        .confirmationDialog(
-            "Remove this user from the team? They lose access immediately.",
-            isPresented: Binding(
-                get: { removingUser != nil },
-                set: { if !$0 { removingUser = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Remove User", role: .destructive) {
-                guard let user = removingUser else { return }
-                Task { @MainActor in
-                    if case .failure(let message) = await viewModel.removeUser(id: user.id) {
-                        bannerError = message
+                scopePicker
+                Divider()
+                if let bannerError {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(AppTheme.negative)
+                        Text(bannerError)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppTheme.negative)
+                        Spacer()
+                        Button {
+                            self.bannerError = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss error")
                     }
-                    removingUser = nil
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    Divider()
+                }
+                content
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(ShipyardTheme.tableBackground)
+            .onAppear {
+                viewModel.load(.users)
+                viewModel.loadInvitations()
+            }
+            .sheet(isPresented: $showInviteForm) {
+                InviteUserForm(viewModel: viewModel, apps: apps) {
+                    showInviteForm = false
                 }
             }
-            Button("Cancel", role: .cancel) {
-                removingUser = nil
+            .sheet(item: $resendTarget) { invitation in
+                ResendInvitationSheet(viewModel: viewModel, invitation: invitation) {
+                    resendTarget = nil
+                }
+            }
+            .sheet(item: $cancelTarget) { invitation in
+                CancelInvitationSheet(viewModel: viewModel, invitation: invitation) {
+                    cancelTarget = nil
+                }
+            }
+            .sheet(item: $removeTarget) { user in
+                RemoveUserSheet(
+                    user: user,
+                    appNames: userVisibleAppNames(user),
+                    viewModel: viewModel) {
+                        removeTarget = nil
+                    }
             }
         }
     }
 
-    // MARK: - Toolbar
+    // MARK: - Toolbar + scope
 
     private var toolbar: some View {
         HStack(spacing: 12) {
@@ -107,6 +155,7 @@ struct UsersTableView: View {
             .background(ShipyardTheme.accent)
             .cornerRadius(6)
             .buttonStyle(.plain)
+            .disabled(staleMembers || stalePending)
             .accessibilityLabel("Invite a user")
         }
         .padding(.horizontal, 16)
@@ -114,48 +163,79 @@ struct UsersTableView: View {
         .background(LaunchTheme.page)
     }
 
-    private var totalText: String {
-        if let total = viewModel.totals[.users] {
-            return "\(total) Total"
+    private var scopePicker: some View {
+        HStack(spacing: 12) {
+            Picker("", selection: $scope) {
+                Text("Members").tag(Scope.members)
+                Text("Pending (\(pendingCountText))").tag(Scope.pending)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            .labelsHidden()
+            Spacer()
         }
-        return "\(viewModel.loadedCount(for: .users)) Total"
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
-    // MARK: - Table
+    private var pendingCountText: String {
+        "\(viewModel.invitationsState.loadedValue?.count ?? viewModel.lastLoadedInvitations.count)"
+    }
+
+    private var totalText: String {
+        switch scope {
+        case .members:
+            if let total = viewModel.totals[.users] {
+                return "\(total) Total"
+            }
+            return "\(viewModel.loadedCount(for: .users)) Total"
+        case .pending:
+            return "\(invitations.count) Pending"
+        }
+    }
+
+    // MARK: - Content
 
     @ViewBuilder
-    private var table: some View {
+    private var content: some View {
+        switch scope {
+        case .members:
+            membersContent
+        case .pending:
+            pendingContent
+        }
+    }
+
+    // MARK: - Members (Figma 114-4278 lane, 114-13209, 114-13286)
+
+    @ViewBuilder
+    private var membersContent: some View {
         switch viewModel.usersState {
         case .idle, .loading:
-            VStack(spacing: 12) {
-                Spacer()
-                ProgressView()
-                Text("Loading users…")
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.body)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            loadingView(text: "Loading users…")
         case .error(let message):
-            ErrorRetryView(
-                title: "Couldn't Load Users",
-                message: message,
-                retryTitle: "Retry",
-                onRetry: { viewModel.retry(.users) }
-            )
+            if staleMembers {
+                staleMembersView(message: message)
+            } else {
+                ErrorRetryView(
+                    title: "Couldn't Load Users",
+                    message: message,
+                    retryTitle: "Retry",
+                    onRetry: { viewModel.retry(.users) })
+            }
         default:
-            if users.isEmpty && invitations.isEmpty {
-                emptyState
+            if users.isEmpty {
+                if viewModel.hasActiveSearch(for: .users) {
+                    noMembersMatchState
+                } else {
+                    usersEmptyState
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        headerRow
-                        ForEach(invitations, id: \.id) { invitation in
-                            invitationRow(invitation)
-                            ShipyardTheme.rowDivider.frame(height: 1)
-                        }
+                        membersHeaderRow
                         ForEach(users, id: \.id) { user in
-                            userRow(user)
+                            userRow(user, editingDisabled: false)
                             ShipyardTheme.rowDivider.frame(height: 1)
                         }
                         paginationFooter
@@ -165,26 +245,114 @@ struct UsersTableView: View {
         }
     }
 
-    private var emptyState: some View {
+    /// Figma 114-13286: stale cache stays visible, editing disabled.
+    private func staleMembersView(message: String) -> some View {
+        VStack(spacing: 0) {
+            DeviceStatusBanner(
+                variant: .error,
+                title: "Unable to refresh users",
+                message: "\(message) Cached data\(staleStamp) is retained below and marked stale.")
+                .padding(16)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    membersHeaderRow
+                    ForEach(staleRows, id: \.id) { user in
+                        userRow(user, editingDisabled: true)
+                        ShipyardTheme.rowDivider.frame(height: 1)
+                    }
+                }
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Text("Cached snapshot · stale · editing disabled until refresh succeeds")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button("Retry Refresh") { viewModel.retry(.users) }
+                    .buttonStyle(.launchPrimary)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 56)
+        }
+    }
+
+    private var staleStamp: String {
+        if let stamp = viewModel.lastSyncText(for: .users) {
+            return " (\(stamp.lowercased()))"
+        }
+        return ""
+    }
+
+    /// Figma 114-13209: no members beyond the protected Account Holder.
+    private var usersEmptyState: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Users · empty")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("Members except Account Holder")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                    DeviceStatusBanner(
+                        variant: .info,
+                        title: "No additional team members yet",
+                        message: "The Account Holder remains protected. No other members are shown in this scope.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Get started")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+                        Text("Invite Your First Team Member… opens the invitation flow.")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Text(viewModel.lastSyncText(for: .users) ?? "Not synced yet")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button("Invite Your First Team Member…") {
+                    showInviteForm = true
+                }
+                .buttonStyle(.launchPrimary)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 56)
+        }
+    }
+
+    private var noMembersMatchState: some View {
         VStack(spacing: 12) {
             Spacer()
-            Text("No Users")
+            Text("No matching members")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
-            Text("Invite people to collaborate on this team")
+            Text("No team members match this search.")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.body)
-            Button("Invite User") {
-                showInviteForm = true
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var headerRow: some View {
+    private func loadingView(text: String) -> some View {
+        VStack(spacing: 12) {
+            Spacer()
+            ProgressView()
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var membersHeaderRow: some View {
         HStack(spacing: 12) {
             Text("Name").frame(width: 180, alignment: .leading)
             Text("Email").frame(width: 240, alignment: .leading)
@@ -199,9 +367,9 @@ struct UsersTableView: View {
         .background(ShipyardTheme.tableHeader)
     }
 
-    private func userRow(_ user: UserModel) -> some View {
+    private func userRow(_ user: UserModel, editingDisabled: Bool) -> some View {
         HStack(spacing: 12) {
-            Text(userDisplayName(user))
+            Text(teamMemberDisplayName(user))
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)
                 .lineLimit(1)
@@ -216,7 +384,7 @@ struct UsersTableView: View {
                 .truncationMode(.middle)
                 .frame(width: 240, alignment: .leading)
 
-            Text(userRolesDisplay(user.roles))
+            Text(rolesSummary(user.roles))
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)
                 .lineLimit(1)
@@ -233,87 +401,279 @@ struct UsersTableView: View {
             }
             .frame(width: 120, alignment: .leading)
 
-            Text(userAppsAccess(user))
+            Text(ResourcesViewModel.appScopeLabel(
+                allAppsVisible: user.allAppsVisible,
+                visibleAppNames: userVisibleAppNames(user)))
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.body)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .frame(height: 38)
         .contentShape(Rectangle())
+        .onTapGesture {
+            if !editingDisabled { selectedUser = user }
+        }
         .contextMenu {
-            Button("Remove") {
-                removingUser = user
+            if !editingDisabled {
+                Button("Edit") { selectedUser = user }
+                Button("Remove") { removeTarget = user }
+                    .accessibilityLabel("Remove \(teamMemberDisplayName(user))")
             }
-            .accessibilityLabel("Remove \(userDisplayName(user))")
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(userDisplayName(user)), \(userRolesDisplay(user.roles))")
+        .accessibilityLabel("\(teamMemberDisplayName(user)), \(rolesSummary(user.roles))")
     }
 
-    private func invitationRow(_ invitation: UserInvitationModel) -> some View {
-        let name = [invitation.firstName, invitation.lastName]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        return HStack(spacing: 12) {
-            Text(name.isEmpty ? (invitation.email ?? "Invited user") : name)
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-                .lineLimit(1)
-                .frame(width: 180, alignment: .leading)
+    // MARK: - Pending (Figma 114-4654)
 
-            Text(invitation.email ?? "—")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(ShipyardTheme.body)
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: 240, alignment: .leading)
-
-            Text(userRolesDisplay(invitation.roles))
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-                .lineLimit(1)
-                .frame(width: 160, alignment: .leading)
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(ShipyardTheme.warning)
-                    .frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
-                Text("Invited")
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.title)
+    @ViewBuilder
+    private var pendingContent: some View {
+        switch viewModel.invitationsState {
+        case .idle, .loading:
+            loadingView(text: "Loading invitations…")
+        case .error(let message):
+            if stalePending {
+                stalePendingView(message: message)
+            } else {
+                ErrorRetryView(
+                    title: "Couldn't Load Invitations",
+                    message: message,
+                    retryTitle: "Retry",
+                    onRetry: { viewModel.loadInvitations() })
             }
-            .frame(width: 120, alignment: .leading)
+        default:
+            if invitations.isEmpty {
+                noPendingState
+            } else {
+                pendingSplitView(rows: invitations, editingDisabled: false)
+            }
+        }
+    }
 
-            Text("—")
+    private func stalePendingView(message: String) -> some View {
+        VStack(spacing: 0) {
+            DeviceStatusBanner(
+                variant: .error,
+                title: "Unable to refresh invitations",
+                message: "\(message) Cached data\(staleStamp) is retained below and marked stale.")
+                .padding(16)
+            pendingSplitView(rows: staleInvitations, editingDisabled: true)
+            Divider()
+            HStack(spacing: 12) {
+                Text("Cached snapshot · stale · editing disabled until refresh succeeds")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button("Retry Refresh") { viewModel.loadInvitations() }
+                    .buttonStyle(.launchPrimary)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 56)
+        }
+    }
+
+    private var noPendingState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Text("No Pending Invitations")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            Text("New invitations appear here until accepted.")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Invite User") {
+                showInviteForm = true
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            Spacer()
         }
-        .padding(.horizontal, 16)
-        .frame(height: 38)
-        .contentShape(Rectangle())
-        .contextMenu {
-            Button("Resend Invitation") {
-                Task { @MainActor in
-                    if case .failure(let message) = await viewModel.resendInvitation(
-                        email: invitation.email ?? "",
-                        firstName: invitation.firstName ?? "",
-                        lastName: invitation.lastName ?? "",
-                        roles: invitation.roles ?? [],
-                        allAppsVisible: invitation.allAppsVisible ?? false,
-                        provisioningAllowed: invitation.provisioningAllowed ?? false) {
-                        bannerError = message
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func pendingSplitView(rows: [UserInvitationModel], editingDisabled: Bool) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text("Status: Pending")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.title)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(LaunchTheme.page)
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(LaunchTheme.border, lineWidth: 1))
+                        Text("Sort: Date sent ↓")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(LaunchTheme.page)
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(LaunchTheme.border, lineWidth: 1))
+                            .accessibilityLabel("Sorted by date sent, newest first")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            pendingHeaderRow
+                            ForEach(rows, id: \.id) { invitation in
+                                invitationRow(invitation, editingDisabled: editingDisabled)
+                                ShipyardTheme.rowDivider.frame(height: 1)
+                            }
+                        }
                     }
                 }
+                Divider()
+                invitationInspector(editingDisabled: editingDisabled)
+                    .frame(width: 300)
+                    .background(LaunchTheme.page)
             }
+            Divider()
+            HStack(spacing: 12) {
+                Text(viewModel.lastSyncText(for: .users) ?? "Not synced yet")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button("Cancel Invitation…") {
+                    if let selectedInvitation { cancelTarget = selectedInvitation }
+                }
+                .buttonStyle(.launchSecondary)
+                .disabled(editingDisabled || selectedInvitation == nil)
+                Button("Resend Invitation…") {
+                    if let selectedInvitation { resendTarget = selectedInvitation }
+                }
+                .buttonStyle(.launchPrimary)
+                .disabled(editingDisabled || selectedInvitation == nil)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 56)
+        }
+    }
+
+    private var pendingHeaderRow: some View {
+        HStack(spacing: 12) {
+            Text("User").frame(width: 150, alignment: .leading)
+            Text("Role").frame(width: 130, alignment: .leading)
+            Text("App scope").frame(width: 150, alignment: .leading)
+            Text("Sent").frame(width: 100, alignment: .leading)
+            Text("Actions").frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundColor(ShipyardTheme.body)
+        .padding(.horizontal, 16)
+        .frame(height: 28)
+        .background(ShipyardTheme.tableHeader)
+    }
+
+    private func invitationRow(_ invitation: UserInvitationModel, editingDisabled: Bool) -> some View {
+        let isSelected = selectedInvitation?.id == invitation.id
+        return HStack(spacing: 12) {
+            Text(inviteeDisplayName(invitation))
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+                .lineLimit(1)
+                .frame(width: 150, alignment: .leading)
+
+            Text(rolesSummary(invitation.roles))
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+                .lineLimit(1)
+                .frame(width: 130, alignment: .leading)
+
+            Text(ResourcesViewModel.appScopeLabel(
+                allAppsVisible: invitation.allAppsVisible,
+                visibleAppNames: invitation.visibleApps.map { $0.name ?? $0.bundleId ?? $0.id }))
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+                .lineLimit(1)
+                .frame(width: 150, alignment: .leading)
+
+            Text(shortDateString(invitation.expirationDate))
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(width: 100, alignment: .leading)
+
+            HStack(spacing: 12) {
+                Button("Resend") { resendTarget = invitation }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
+                    .disabled(editingDisabled)
+                Button("Cancel") { cancelTarget = invitation }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
+                    .disabled(editingDisabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 38)
+        .background(isSelected ? ShipyardTheme.selectedRow : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectedInvitation = invitation
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(invitation.email ?? "invited user"), invited")
+        .accessibilityLabel("\(inviteeDisplayName(invitation)), invited")
     }
+
+    private func invitationInspector(editingDisabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("SELECTED INVITATION")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            Text("Pending users have not yet received the intended access. Resend does not change roles.")
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .fixedSize(horizontal: false, vertical: true)
+            if let selectedInvitation {
+                inspectorField(label: "Email", value: selectedInvitation.email ?? "—")
+                inspectorField(label: "Status", value: "Pending · not accepted")
+                inspectorField(label: "Grant", value: invitationGrantSummary(selectedInvitation))
+                if editingDisabled {
+                    Text("Editing disabled until refresh succeeds.")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+            } else {
+                Text("Select an invitation to inspect it.")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+            Spacer()
+        }
+        .padding(16)
+    }
+
+    private func inspectorField(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
+            Text(value)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ShipyardTheme.tableBackground)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Footer
 
     @ViewBuilder
     private var paginationFooter: some View {
@@ -342,30 +702,4 @@ struct UsersTableView: View {
             }
         }
     }
-}
-
-// MARK: - Display helpers
-
-private func userDisplayName(_ user: UserModel) -> String {
-    let full = [user.firstName, user.lastName]
-        .compactMap { $0 }
-        .filter { !$0.isEmpty }
-        .joined(separator: " ")
-    if !full.isEmpty { return full }
-    return user.username ?? "Unknown user"
-}
-
-private func userRolesDisplay(_ roles: [String]?) -> String {
-    guard let roles, !roles.isEmpty else { return "—" }
-    let display = roles.map { role in
-        UserRoleOption(rawValue: role)?.displayName ?? role
-    }
-    if display.count == 1 { return display[0] }
-    return "\(display[0]) +\(display.count - 1)"
-}
-
-/// The API carries visibility but no per-user app count, so access reads
-/// "All Apps" or "Limited" rather than Figma's counts.
-private func userAppsAccess(_ user: UserModel) -> String {
-    user.allAppsVisible == true ? "All Apps" : "Limited"
 }
