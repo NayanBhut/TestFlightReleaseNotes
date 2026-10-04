@@ -21,7 +21,7 @@ struct UsersTableView: View {
     }
 
     @State private var scope = Scope.members
-    @State private var showInviteForm = false
+    @State private var showInviteDetail = false
     @State private var selectedUser: UserModel?
     @State private var selectedInvitation: UserInvitationModel?
     @State private var resendTarget: UserInvitationModel?
@@ -69,6 +69,16 @@ struct UsersTableView: View {
                 apps: apps,
                 onBack: { self.selectedUser = nil },
                 onRemoved: { self.selectedUser = nil })
+        } else if showInviteDetail {
+            InviteUserDetailView(
+                viewModel: viewModel,
+                apps: apps,
+                onBack: { showInviteDetail = false },
+                onSent: {
+                    // The new invite lands in the pending list — show it.
+                    showInviteDetail = false
+                    scope = .pending
+                })
         } else {
             VStack(spacing: 0) {
                 toolbar
@@ -103,11 +113,6 @@ struct UsersTableView: View {
             .onAppear {
                 viewModel.load(.users)
                 viewModel.loadInvitations()
-            }
-            .sheet(isPresented: $showInviteForm) {
-                InviteUserForm(viewModel: viewModel, apps: apps) {
-                    showInviteForm = false
-                }
             }
             .sheet(item: $resendTarget) { invitation in
                 ResendInvitationSheet(viewModel: viewModel, invitation: invitation) {
@@ -146,7 +151,7 @@ struct UsersTableView: View {
             ShipyardSearchField(prompt: "Search Users", text: viewModel.searchBinding(for: .users))
 
             Button("Invite User") {
-                showInviteForm.toggle()
+                showInviteDetail = true
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundColor(.white)
@@ -317,7 +322,7 @@ struct UsersTableView: View {
                     .foregroundColor(ShipyardTheme.body)
                 Spacer()
                 Button("Invite Your First Team Member…") {
-                    showInviteForm = true
+                    showInviteDetail = true
                 }
                 .buttonStyle(.launchPrimary)
             }
@@ -484,7 +489,7 @@ struct UsersTableView: View {
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.body)
             Button("Invite User") {
-                showInviteForm = true
+                showInviteDetail = true
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
