@@ -314,7 +314,17 @@ struct BuildsTableView: View {
     @ViewBuilder
     private func buildStateCell(_ build: BuildsModel) -> some View {
         let state = build.processingState ?? ""
-        if state == "PROCESSING" {
+        // Expiry wins over processingState, matching the legacy
+        // BuildDisplayHelper.buildStatus order — an expired VALID build is
+        // not "Ready to Test".
+        if build.expired == true {
+            HStack(spacing: 6) {
+                ShipyardIcon(name: "ShipyardAlarm")
+                Text("Expired")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+        } else if state == "PROCESSING" {
             HStack(spacing: 6) {
                 ShipyardIcon(name: "ShipyardBuildX")
                 Text("Processing…")
@@ -335,13 +345,6 @@ struct BuildsTableView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(ShipyardTheme.danger)
             }
-        } else if build.expired == true {
-            HStack(spacing: 6) {
-                ShipyardIcon(name: "ShipyardAlarm")
-                Text("Expired")
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.body)
-            }
         } else {
             HStack(spacing: 6) {
                 Text(buildStateDisplayName(state))
@@ -353,8 +356,24 @@ struct BuildsTableView: View {
 
     @ViewBuilder
     private var paginationFooter: some View {
-        if let nextCursor = detailVM.nextPageCursor,
-           let version = detailVM.selectedVersion {
+        if detailVM.buildsPaginationFailed, let version = detailVM.selectedVersion {
+            HStack(spacing: 8) {
+                Text("Couldn't load more builds.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Button("Retry") {
+                    detailVM.buildsPaginationFailed = false
+                    detailVM.setSelectedVersionAndGetBuilds(
+                        selectedVersion: version, cursor: detailVM.nextPageCursor)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .buttonStyle(.plain)
+                .foregroundColor(ShipyardTheme.accent)
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+        } else if let nextCursor = detailVM.nextPageCursor,
+                  let version = detailVM.selectedVersion {
             HStack {
                 Spacer()
                 ProgressView()

@@ -358,7 +358,7 @@ final class BetaViewModel: ObservableObject {
             }
         } catch {
             if viewState == stateToken { viewState = ._none }
-            presentError(error)
+            presentWriteError(error)
         }
     }
 
@@ -400,7 +400,7 @@ final class BetaViewModel: ObservableObject {
             }
         } catch {
             if viewState == stateToken { viewState = ._none }
-            presentError(error)
+            presentWriteError(error)
         }
     }
 
@@ -430,7 +430,7 @@ final class BetaViewModel: ObservableObject {
             }
         } catch {
             if viewState == stateToken { viewState = ._none }
-            presentError(error)
+            presentWriteError(error)
         }
     }
 
@@ -466,7 +466,7 @@ final class BetaViewModel: ObservableObject {
         } catch {
             updatingTesterId = nil
             if viewState == stateToken { viewState = ._none }
-            presentError(error)
+            presentWriteError(error)
         }
     }
 
@@ -504,7 +504,7 @@ final class BetaViewModel: ObservableObject {
         } catch {
             updatingBuildId = nil
             if viewState == stateToken { viewState = ._none }
-            presentError(error)
+            presentWriteError(error)
         }
     }
 
@@ -935,10 +935,14 @@ final class BetaViewModel: ObservableObject {
         } catch {
             reviewLoadingBuildId = nil
             // 404 = no submission exists yet; treat as not submitted.
+            // Any other failure must surface — stamping UNKNOWN with no
+            // message looks like a stale read, not a failed fetch
+            // (BUG_SWEEP #15).
             if (error as? APIError)?.statusCode == 404 {
                 reviewStates[buildId] = "NO_SUBMISSION"
             } else {
                 reviewStates[buildId] = "UNKNOWN"
+                presentError(error)
             }
         }
     }
@@ -959,10 +963,13 @@ final class BetaViewModel: ObservableObject {
                 let submission = try getDecoder().decode(BetaAppReviewSubmissionModel.self, from: data)
                 reviewStates[buildId] = submission.betaReviewState ?? "WAITING_FOR_REVIEW"
             } catch {
+                // The POST response must carry the submission to confirm;
+                // claiming WAITING with an unparseable body would report a
+                // review-requested state nothing reached (BUG_SWEEP #15).
                 if let msg = serverMessage(from: data) {
                     presentMessage(msg)
                 } else {
-                    reviewStates[buildId] = "WAITING_FOR_REVIEW"
+                    presentMessage("Couldn't confirm the review submission — check the build's status on App Store Connect.")
                 }
             }
         } catch {

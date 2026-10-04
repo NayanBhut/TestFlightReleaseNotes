@@ -52,7 +52,11 @@ struct SubmittedSummaryCard: View {
 
 /// "What's New · {locale}" bullet card (05/06/07) or published notes (09).
 struct WhatsNewCard: View {
-    var title: String
+    /// Title without the locale suffix. The card appends the locale it
+    /// actually renders, so the heading can't contradict the body — the
+    /// previous per-call-site `localizations.first?.locale` titles picked
+    /// a different locale than the body on 4 of 5 screens (BUG_SWEEP #20).
+    var titlePrefix: String
     var localizations: [AppStoreVersionLocalizationsModel]
     var primaryLocale: String?
 
@@ -60,9 +64,14 @@ struct WhatsNewCard: View {
         localizations.first { $0.locale == primaryLocale } ?? localizations.first
     }
 
+    private var resolvedTitle: String {
+        guard let locale = localization?.locale else { return titlePrefix }
+        return "\(titlePrefix) · \(ReleasePrepareView.localeDisplay(locale))"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            Text(resolvedTitle)
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)
             if let text = localization?.whatsNew, !text.isEmpty {
@@ -147,7 +156,7 @@ struct WaitingVersionView: View {
                 detail: "Submitted \(releaseDayDisplay(reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)). Estimated review: 24–48 hours.")
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
             WhatsNewCard(
-                title: "What’s New · \(ReleasePrepareView.localeDisplay(localizations.first?.locale))",
+                titlePrefix: "What’s New",
                 localizations: localizations,
                 primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
@@ -174,7 +183,7 @@ struct InReviewVersionView: View {
                 .foregroundColor(ShipyardTheme.accent)
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
             WhatsNewCard(
-                title: "What’s New · \(ReleasePrepareView.localeDisplay(localizations.first?.locale))",
+                titlePrefix: "What’s New",
                 localizations: localizations,
                 primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
@@ -198,7 +207,7 @@ struct PendingReleaseVersionView: View {
                 detail: "\(version.versionString.map { "Version \($0) is ready to release. " } ?? "")You chose to manually release this version.")
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
             WhatsNewCard(
-                title: "What’s New · \(ReleasePrepareView.localeDisplay(localizations.first?.locale))",
+                titlePrefix: "What’s New",
                 localizations: localizations,
                 primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
@@ -313,7 +322,7 @@ struct LiveVersionView: View {
                 )
             }
             WhatsNewCard(
-                title: "Published release notes · \(ReleasePrepareView.localeDisplay(localizations.first?.locale))",
+                titlePrefix: "Published release notes",
                 localizations: localizations,
                 primaryLocale: primaryLocale)
             Text("Manual release · Phased release \(phased == nil ? "disabled" : (isPaused ? "paused" : "enabled"))")
@@ -455,7 +464,7 @@ struct LockedVersionView: View {
             ReleaseAlert(style: .neutral, title: copy.title, detail: copy.detail)
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
             WhatsNewCard(
-                title: "What’s New · \(ReleasePrepareView.localeDisplay(localizations.first?.locale))",
+                titlePrefix: "What’s New",
                 localizations: localizations,
                 primaryLocale: primaryLocale)
         }

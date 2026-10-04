@@ -11,7 +11,6 @@ Releasing a TestFlight build normally means: upload from Xcode → wait for proc
 - **Beta ops in one place:** invite a tester by email, assign the new build to the external group, toggle auto-notify, and submit the external review — without switching between TestFlight tabs.
 - **Store-listing fixes without the portal:** correct an app name, subtitle, keywords, or description inline (with Apple length validation up front) and export-compliance info, then reply to a 1-star customer review from the same window.
 - **Team hygiene:** register a test device, revoke a leaked certificate, create a provisioning profile, or invite a new developer — tasks otherwise buried across Certificates/Identifiers/Profiles/Users pages.
-- **Handoff-friendly:** export the builds table to Markdown/CSV for release notes, QA sign-off, or Slack updates.
 
 **Who is it for:** iOS developers, release managers, QA leads, and indie makers who ship via TestFlight weekly/daily and live in Xcode rather than the browser.
 
@@ -72,7 +71,6 @@ To manage another team/vendor, repeat steps 3–7 with a new Team Name — the s
 | Bundle IDs | ✅ list | ✅ create / rename / delete | Use throwaway IDs for tests |
 | Provisioning profiles | ✅ list | ✅ create (pick certs/devices/bundle) / delete | — |
 | Users & invitations | ✅ list | ✅ invite / edit roles / remove, resend invite | Admin key required |
-| Export | ✅ Markdown / CSV, copy / save / share / reveal | — | CSV formula-injection guarded; temp files purged after 24 h |
 | Build monitoring | ✅ menu-bar `PROCESSING` poll + notifications | — (Check now / Open App / Quit) | 120 s poll, 300 s backoff on error, 50-build cap |
 
 Not supported (Apple has no public API or it's web-only): sales/finance reports, screenshot/asset upload, review-submission create/cancel, phased releases, in-app events (deep-linked to the portal instead), webhooks.
@@ -106,8 +104,7 @@ Not supported (Apple has no public API or it's web-only): sales/finance reports,
 - Devices (register/enable/disable — disable revokes, there is no delete), certificates (create/revoke + CSR), bundle IDs, provisioning profiles, users and invitations.
 - Invite/edit-roles/remove users, resend invitations.
 
-### Export & Monitoring
-- Export builds to Markdown or CSV (formula-injection guarded), copy to clipboard, save/share file, or reveal in Finder.
+### Monitoring
 - Menu-bar build monitor polls `filter[processingState]=PROCESSING` every 120 s (300 s backoff on error) with count badge, per-build rows, and local notifications on `PROCESSING` → terminal-state transitions.
 
 ### Auth & Security
@@ -175,7 +172,7 @@ NavigationManager.swift   login state, ViewState<T>, ErrorRetryView
 AppConfigs.swift          page limits, poll intervals, sort/filter enums
 SideBarView/              apps + versions list, detail tabs (builds, beta, app info, reviews), team resources
 Model/JSONAPIModels/      APIClient, endpoints (APIMethod/APIName), JSON:API models
-Helper/                   Keychain storage, ExportManager, BuildProcessingMonitor, image cache, extensions
+Helper/                   Keychain storage, BuildProcessingMonitor, image cache, extensions
 JWT/                      ES256 signing (EC key, ASN.1, JWT encode/decode)
 View/OnBoarding/          Add-Team flow + view model
 App Store Tests/          XCTest: API methods, JSON decoding, view state, display helpers, validation

@@ -1310,7 +1310,10 @@ struct ReleaseTabView: View {
                     // Backstop: if a fetch is dropped without settling
                     // (cancelled with no successor), the screen would sit
                     // on the spinner forever with no recourse. Surface a
-                    // retry instead of stranding the user.
+                    // retry instead of stranding the user. A successful
+                    // load after this arms must clear the flag again —
+                    // otherwise the next .loading session inherits the old
+                    // banner (BUG_SWEEP #27).
                     try? await Task.sleep(nanoseconds: 20_000_000_000)
                     if reviewsVM.appStoreVersionsState.loadedValue == nil {
                         switch reviewsVM.appStoreVersionsState {
@@ -1320,6 +1323,9 @@ struct ReleaseTabView: View {
                             break
                         }
                     }
+                }
+                .onChange(of: reviewsVM.appStoreVersionsState.loadedValue == nil) { _, stillLoading in
+                    if !stillLoading { showStuckRetry = false }
                 }
                 Spacer()
             }
@@ -1383,11 +1389,23 @@ struct ReleaseTabView: View {
 
     // MARK: - Drafts + save
 
+    /// Server-side scheduled date, parsed once.
+    private var serverReleaseDate: Date? {
+        guard let raw = shownVersion?.earliestReleaseDate else { return nil }
+        return sharedISOFormatter.date(from: raw)
+    }
+
     private var isDirty: Bool {
         guard let version = shownVersion else { return false }
         if draftVersionString != (version.versionString ?? "") { return true }
-        if draftReleaseType.rawValue != (version.releaseType ?? "") { return true }
-        if draftReleaseType == .scheduled { return true }
+        let serverReleaseType = AppStoreVersionReleaseType(rawValue: version.releaseType ?? "") ?? .manual
+        if draftReleaseType != serverReleaseType { return true }
+        // Scheduled was previously always-dirty: every scheduled version
+        // re-PATCHed on every Save, never greying out. Compare the date
+        // against the server's parsed earliestReleaseDate instead; the
+        // one-minute granularity mirrors the DatePicker.
+        if draftReleaseType == .scheduled,
+           serverReleaseDate == nil || abs(draftReleaseDate.timeIntervalSince(serverReleaseDate!)) > 61 { return true }
         if let loc = draftLocale, draftWhatsNew != (loc.whatsNew ?? "") { return true }
         if let details = reviewDetailsValue, reviewDraftDirty(details) { return true }
         if reviewDetailsValue == nil,
@@ -1436,7 +1454,7 @@ struct ReleaseTabView: View {
         if version.build == nil {
             items.append("build")
         }
-        if draftReleaseType == .scheduled && version.earliestReleaseDate == nil {
+        if draftReleaseType == .scheduled && serverReleaseDate == nil {
             items.append("release date")
         }
         if reviewDetailsKnown {
@@ -1573,8 +1591,13 @@ struct ReleaseTabView: View {
                 return
             }
             let versionDirty = draftVersionString != (version.versionString ?? "")
-            let releaseDirty = draftReleaseType.rawValue != (version.releaseType ?? "")
-                || draftReleaseType == .scheduled
+            // Same comparison as isDirty: a scheduled version whose draft
+            // date equals the server's is not dirty (BUG_SWEEP #13).
+            let serverReleaseType = AppStoreVersionReleaseType(rawValue: version.releaseType ?? "") ?? .manual
+            let releaseDirty = draftReleaseType != serverReleaseType
+                || (draftReleaseType == .scheduled
+                    && (serverReleaseDate == nil
+                        || abs(draftReleaseDate.timeIntervalSince(serverReleaseDate!)) > 61))
             if versionDirty || releaseDirty {
                 let result = await reviewsVM.saveReleaseSettings(
                     versionId: version.id,

@@ -543,14 +543,18 @@ final class ReviewsViewModel: ObservableObject {
             guard !Task.isCancelled else { return false }
             let model = try getDecoder().decode(CustomerReviewResponseModel.self,
                                                 from: responseData)
-            // Optimistic update: set the response on the review row.
+            // Optimistic update: set the response on the review row. The
+            // reply still posted when the list isn't .loaded (e.g. state
+            // reset mid-flight) — success, just nothing to patch in place.
             guard case .loaded(var reviews) = reviewsState,
-                  let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return false }
+                  let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return true }
             reviews[index].response = model
             reviewsState = .loaded(reviews)
             return true
         } catch {
             reviewsLogger.error("Failed to reply to review: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return false }
+            writeError = writeMessage(for: error)
             return false
         }
     }

@@ -186,17 +186,18 @@ struct BuildDetailView: View {
     }
 
     private var statePill: some View {
-        let state = liveBuild.processingState ?? ""
+        let isExpired = liveBuild.expired == true
+        let state = isExpired ? "EXPIRED" : (liveBuild.processingState ?? "")
         return Text(state.isEmpty ? "—" : state)
             .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(state == "VALID" ? ShipyardTheme.accent : ShipyardTheme.body)
+            .foregroundColor(!isExpired && state == "VALID" ? ShipyardTheme.accent : ShipyardTheme.body)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(state == "VALID" ? ShipyardTheme.accent.opacity(0.12) : Color.gray.opacity(0.12))
+            .background(!isExpired && state == "VALID" ? ShipyardTheme.accent.opacity(0.12) : Color.gray.opacity(0.12))
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(state == "VALID" ? ShipyardTheme.accent.opacity(0.5) : Color.clear, lineWidth: 0.5)
+                    .stroke(!isExpired && state == "VALID" ? ShipyardTheme.accent.opacity(0.5) : Color.clear, lineWidth: 0.5)
             )
     }
 

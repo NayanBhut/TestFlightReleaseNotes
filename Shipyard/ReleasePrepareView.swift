@@ -39,6 +39,16 @@ struct ReleasePrepareView: View {
 
     @Environment(\.openURL) private var openURL
 
+    /// Unsaved What's New held while the user confirms a locale switch —
+    /// switching used to silently discard typed text (BUG_SWEEP #19).
+    @State private var pendingWhatsNew: String?
+    /// Locale the Picker asked for but that is NOT applied yet. Nothing is
+    /// committed until the user answers the confirmation.
+    @State private var pendingLocaleSwitch: String?
+    /// Set by `commitLocaleSwitch` so the `draftLocaleId` observer knows
+    /// the change was ours and must not re-seed from the server.
+    @State private var didCommitLocaleSwitch = false
+
     var body: some View {
         TopPinnedScrollView {
             HStack(alignment: .top, spacing: 20) {
@@ -95,7 +105,22 @@ struct ReleasePrepareView: View {
                 fieldLabel("What’s New * · \(Self.localeDisplay(draftLocale?.locale))")
                 Spacer(minLength: 0)
                 if localizations.count > 1 {
-                    Picker("", selection: $draftLocaleId) {
+                    Picker("", selection: Binding<String?>(
+                        get: { draftLocaleId },
+                        set: { newId in
+                            guard newId != draftLocaleId else { return }
+                            let oldLocale = localizations.first(where: { $0.id == draftLocaleId })
+                            let isDirty = oldLocale.map { draftWhatsNew != ($0.whatsNew ?? "") }
+                            if isDirty == true, let target = newId {
+                                // Don't switch yet — hold the target and the
+                                // unsaved text until the user answers the
+                                // confirmation.
+                                pendingWhatsNew = draftWhatsNew
+                                pendingLocaleSwitch = target
+                            } else {
+                                commitLocaleSwitch(to: newId, carrying: nil)
+                            }
+                        })) {
                         ForEach(localizations, id: \.id) { loc in
                             Text(Self.localeDisplay(loc.locale))
                                 .tag(Optional(loc.id))
@@ -106,10 +131,36 @@ struct ReleasePrepareView: View {
                     .frame(maxWidth: 160)
                 }
             }
-            .onChange(of: draftLocaleId) { _, _ in
-                if let loc = draftLocale {
-                    draftWhatsNew = loc.whatsNew ?? ""
+            .onChange(of: draftLocaleId) { _, newId in
+                // A switch we performed already seeded draftWhatsNew with
+                // either the carried draft or the new locale's text.
+                if didCommitLocaleSwitch {
+                    didCommitLocaleSwitch = false
+                    return
                 }
+                draftWhatsNew = localizations.first(where: { $0.id == newId })?.whatsNew ?? ""
+            }
+            .alert("Discard unsaved changes?",
+                   isPresented: Binding(
+                    get: { pendingLocaleSwitch != nil },
+                    set: { if !$0 {
+                        pendingLocaleSwitch = nil
+                        pendingWhatsNew = nil
+                    }}
+                   )) {
+                Button("Discard", role: .destructive) {
+                    guard let target = pendingLocaleSwitch else { return }
+                    // Take the new locale's stored text; the unsaved draft
+                    // is what the user chose to throw away.
+                    commitLocaleSwitch(to: target, carrying: nil)
+                }
+                Button("Keep", role: .cancel) {
+                    // Stay on the current locale with the text intact.
+                    pendingLocaleSwitch = nil
+                    pendingWhatsNew = nil
+                }
+            } message: {
+                Text("Switching locales would discard your unsaved What's New text.")
             }
             fieldBox(disabled: !canEdit || localizations.isEmpty, minHeight: 76) {
                 if localizations.isEmpty {
@@ -153,6 +204,21 @@ struct ReleasePrepareView: View {
             return localizations.first { $0.id == id }
         }
         return localizations.first
+    }
+
+    /// Single place where a locale switch is applied. `carrying` is the
+    /// unsaved text to keep in the editor (nil = load the target locale's
+    /// stored text). Setting `draftLocaleId` and the editor text together
+    /// keeps them consistent; the flag stops the `onChange` observer from
+    /// overwriting what we just seeded.
+    private func commitLocaleSwitch(to id: String?, carrying text: String?) {
+        didCommitLocaleSwitch = (id != draftLocaleId)
+        draftLocaleId = id
+        draftWhatsNew = text
+            ?? localizations.first(where: { $0.id == id })?.whatsNew
+            ?? ""
+        pendingWhatsNew = nil
+        pendingLocaleSwitch = nil
     }
 
     private var localesPlaceholder: String {

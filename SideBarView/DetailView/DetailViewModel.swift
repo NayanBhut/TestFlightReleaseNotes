@@ -61,6 +61,9 @@ class DetailViewModel: ObservableObject {
     @Published var versionsNextCursor: String?
     @Published var versionsMeta: Meta?
     @Published var versionsPaginationFailed = false
+    /// Mirrors versionsPaginationFailed for builds: a failed page fetch
+    /// must offer a Retry instead of an endless spinner (BUG_SWEEP #17).
+    @Published var buildsPaginationFailed = false
     @Published var isLoadingMoreVersions = false
 
     /// In-flight save keys ("buildId|locale") — per-locale so saving locale B
@@ -316,10 +319,19 @@ extension DetailViewModel {
 
     func fetchBuilds(app: AppsData, version: PreReleaseVersionsModel, cursor: String? = nil, generation: Int? = nil) async {
         let isPaginating = cursor != nil
+        buildsPaginationFailed = false
         if isPaginating {
             isPaginatingBuilds = true
         } else {
+            // A fresh fetch (version switch, retry) must not inherit the
+            // previous page's cursor/meta (BUG_SWEEP #16): the footer
+            // would otherwise keep paging the old version's builds while
+            // the new one is .loading. Only the app-switch sink did this
+            // before, so a version switch within one app kept the stale
+            // cursor.
             buildsState = .loading
+            nextPageCursor = nil
+            meta = nil
         }
         defer {
             if isPaginating { isPaginatingBuilds = false }
@@ -386,9 +398,14 @@ extension DetailViewModel {
             // its failure or overwrite the newer state.
             guard !Task.isCancelled, generation == nil || generation == buildsFetchGeneration else { return }
             detailLogger.error("Failed to load builds: \(error.localizedDescription)")
-            if !isPaginating {
+            if isPaginating {
+                // Keep the loaded list intact; flag the failure so the
+                // footer offers Retry instead of an endless spinner.
+                buildsPaginationFailed = true
+            } else {
                 selectedVersion = version
                 meta = nil
+                nextPageCursor = nil
                 buildsState = .error(FriendlyErrorMessage.message(for: error))
             }
         }
@@ -1390,28 +1407,39 @@ extension DetailViewModel {
               let localization = build.betaBuildLocalizations.first(where: { $0.locale == locale }),
               localization.whatsNew != nil else { return }
 
+        // A successful save for this build/locale must not leave a stale
+        // banner from an earlier failure (BUG_SWEEP #22).
+        if saveError?.buildId == buildId, saveError?.locale == locale {
+            saveError = nil
+        }
         createOrUpdate(buildId: buildId, buildLocalization: localization, localization: localization.whatsNew ?? "", locale: locale)
     }
 
     /// Per-locale completeness matrix for the selected version.
-  /// Returns (locale, [buildId: hasNotes]) for every supported locale.
-  /// Used by the Locales popover in BuildDetailsView.
-  func localeCompleteness() -> [(locale: String, builds: [(buildId: String, hasNotes: Bool)])] {
-    guard case .loaded(let builds) = buildsState else { return [] }
-    guard selectedVersion != nil else { return [] }
-    let buildIds = builds.map { $0.id }
-    var result: [(String, [(String, Bool)])] = []
-    for locale in BetaLocalizationLocales.supported {
-      let buildStatus = buildIds.map { buildId in
-        let hasNotes = builds.contains { $0.id == buildId &&
-          $0.betaBuildLocalizations.contains { $0.locale == locale && !($0.whatsNew?.isEmpty ?? true) }
+    /// Returns (locale, [buildId: hasNotes]) for every supported locale.
+    /// Only saved, non-empty-after-trim text counts as done — temp drafts
+    /// and whitespace would otherwise show complete (BUG_SWEEP #9).
+    func localeCompleteness() -> [(locale: String, builds: [(buildId: String, hasNotes: Bool)])] {
+        guard case .loaded(let builds) = buildsState else { return [] }
+        guard selectedVersion != nil else { return [] }
+        let buildIds = builds.map { $0.id }
+        var result: [(String, [(String, Bool)])] = []
+        for locale in BetaLocalizationLocales.supported {
+            let buildStatus = buildIds.map { buildId in
+                let hasNotes = builds.contains { build in
+                    build.id == buildId &&
+                    build.betaBuildLocalizations.contains { loc in
+                        guard loc.locale == locale, !loc.id.hasPrefix(Self.tempLocalizationPrefix) else { return false }
+                        let text = loc.whatsNew ?? ""
+                        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                }
+                return (buildId, hasNotes)
+            }
+            result.append((locale, buildStatus))
         }
-        return (buildId, hasNotes)
-      }
-      result.append((locale, buildStatus))
+        return result
     }
-    return result
-  }
 
   /// Count of locales that have notes on every build.
   func completeLocaleCount() -> (complete: Int, total: Int) {
@@ -1715,8 +1743,14 @@ extension DetailViewModel {
         }
     }
 
+    /// Release-notes writes need a TestFlight-capable key; 409 names the
+    /// blocking state itself, so it passes through untouched (same
+    /// contract as the App Info hint, BUG_SWEEP #23).
     private func friendlySaveMessage(for error: Error) -> String {
         if let apiError = error as? APIError {
+            if apiError.statusCode == 403 {
+                return "\(apiError.details) — saving release notes needs an API key with the TestFlight (or App Manager) role."
+            }
             return apiError.details
         }
         return error.localizedDescription

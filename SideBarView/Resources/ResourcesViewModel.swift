@@ -1803,7 +1803,14 @@ final class ResourcesViewModel: ObservableObject {
 
     private func prependProfile(_ model: ProfileModel) {
         guard case .loaded(var profiles) = profilesState else {
-            retry(.profiles)
+            // Same contract as prependCertificate: keep the server-confirmed
+            // model visible, no racing retry (BUG_SWEEP #12).
+            profilesState = .loaded([model])
+            if let total = totals[.profiles] {
+                totals[.profiles] = total + 1
+            }
+            searchTexts[.profiles] = nil
+            dataVersion += 1
             return
         }
         profiles.removeAll { $0.id == model.id }
@@ -1855,7 +1862,21 @@ final class ResourcesViewModel: ObservableObject {
 
     private func prependCertificate(_ model: CertificateModel) {
         guard case .loaded(var certificates) = certificatesState else {
-            retry(.certificates)
+            // The create POST already returned a server-confirmed model, so
+            // seed the list with it instead of dropping it (BUG_SWEEP #12).
+            // Dropping it left the create form stuck with no error — and
+            // since the CSR's private key is gone by then, the .cer was
+            // unreachable from the app entirely.
+            //
+            // No retry() here on purpose: `fetch` calls `setLoading`, which
+            // would clear the seed before the create form's success step
+            // reads it. The full page returns on the next tab load/refresh.
+            certificatesState = .loaded([model])
+            if let total = totals[.certificates] {
+                totals[.certificates] = total + 1
+            }
+            searchTexts[.certificates] = nil
+            dataVersion += 1
             return
         }
         certificates.removeAll { $0.id == model.id }

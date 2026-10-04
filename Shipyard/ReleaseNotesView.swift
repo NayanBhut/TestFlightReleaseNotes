@@ -26,6 +26,11 @@ struct ReleaseNotesView: View {
     /// locales without an entry yet, never overwritten while typing.
     @State private var drafts: [String: String] = [:]
     @State private var localeSignature = ""
+    /// Locales staged by a row-tap (`""` draft, no server call) that the
+    /// user never typed into. Viewing away must drop these so they don't
+    /// persist as phantom locales (BUG_SWEEP #18); typing into one clears
+    /// it from this set.
+    @State private var tapStagedLocales: Set<String> = []
 
     private var locales: [String] {
         detailVM.getAllLocales(for: buildId)
@@ -80,9 +85,27 @@ struct ReleaseNotesView: View {
             selectedLocale = BetaLocalizationLocales.defaultLocale
             drafts = [:]
             localeSignature = ""
+            tapStagedLocales.removeAll()
             syncDrafts()
         }
         .onChange(of: locales) { _, _ in syncDrafts() }
+        .onDisappear { dropUntouchedTapStages() }
+    }
+
+    /// Drops tap-staged locales the user never typed into. Those are
+    /// navigation residue, not intent (BUG_SWEEP #18) — a staged locale
+    /// must survive the locale-list change its own staging triggers, so
+    /// this runs on navigation (leave / build switch), never from
+    /// `syncDrafts()`. Anything the user typed into already left the set
+    /// via `draftText.set`.
+    private func dropUntouchedTapStages() {
+        guard !tapStagedLocales.isEmpty else { return }
+        let stages = tapStagedLocales
+        tapStagedLocales.removeAll()
+        for locale in stages where (drafts[locale] ?? "").isEmpty {
+            drafts.removeValue(forKey: locale)
+            detailVM.removeLocale(buildId: buildId, locale: locale)
+        }
     }
 
     /// Seeds drafts for locales without one and keeps the selection valid.
@@ -153,10 +176,12 @@ struct ReleaseNotesView: View {
         let hasText = !(drafts[locale] ?? savedText(locale)).isEmpty
         return Button {
             if !staged {
-                // Stage an empty localization so it joins the build's list;
-                // Save persists it to the server.
+                // Stage an empty localization so it joins the build's
+                // list; Save persists it to the server. Typed into or
+                // saved, it graduates out of the auto-drop set.
                 detailVM.updateBuildWhatsNew(buildId: buildId, locale: locale, whatsNew: "")
                 drafts[locale] = ""
+                tapStagedLocales.insert(locale)
                 localeSignature = ""
                 syncDrafts()
             }
@@ -198,7 +223,15 @@ struct ReleaseNotesView: View {
     private var draftText: Binding<String> {
         Binding(
             get: { drafts[selectedLocale] ?? savedText(selectedLocale) },
-            set: { drafts[selectedLocale] = $0 }
+            // Clamped so over-limit text can never sit in the draft —
+            // matches the legacy BuildRowView prefix(maxLength) behavior
+            // and keeps Save reachable (BUG_SWEEP #4). Typing into a
+            // tap-staged locale takes it out of the auto-drop set (the
+            // user committed real intent — BUG_SWEEP #18).
+            set: {
+                tapStagedLocales.remove(selectedLocale)
+                drafts[selectedLocale] = String($0.prefix(releaseNotesCharacterLimit))
+            }
         )
     }
 
@@ -264,6 +297,12 @@ struct ReleaseNotesView: View {
     }
 
     private var saveStateText: String {
+        // Only claim the limit when there's actually something to save —
+        // a saved note that happens to be exactly at the cap is "Saved".
+        if draftText.wrappedValue.count >= releaseNotesCharacterLimit,
+           isDirty(selectedLocale) {
+            return "Character limit reached."
+        }
         if isDirty(selectedLocale) { return "Unsaved changes" }
         return savedText(selectedLocale).isEmpty ? "No notes yet" : "Saved"
     }
