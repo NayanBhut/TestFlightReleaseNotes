@@ -175,12 +175,12 @@ struct UsersTableView: View {
                 Text("Pending (\(pendingCountText))").tag(Scope.pending)
             }
             .pickerStyle(.segmented)
-            .frame(width: 260)
             .labelsHidden()
+            .fixedSize()
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.trailing, 16)
+        .padding(.vertical, 4)
     }
 
     private var pendingCountText: String {
