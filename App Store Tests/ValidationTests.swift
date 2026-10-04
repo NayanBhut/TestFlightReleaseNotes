@@ -336,4 +336,83 @@ final class ValidationTests: XCTestCase {
     // would read the developer's real keychain. Covering it needs a
     // keychain seam (protocol + injected store), which is out of scope
     // for this batch.
+
+    // MARK: - Device CSV import (Devices empty state)
+
+    func testCSVParsesCommaRowsWithHeader() {
+        let content = """
+        name,udid,platform
+        John's iPhone 16 Pro,00008101-001C25D40,IOS
+        iPad Air,abcdef1234567890abcdef1234567890abcd1234,
+        """
+        let parsed = DeviceCSVImport.parse(content)
+        XCTAssertEqual(parsed.rejected, 0)
+        XCTAssertEqual(parsed.rows.count, 2)
+        XCTAssertEqual(parsed.rows[0], DeviceCSVRow(name: "John's iPhone 16 Pro", udid: "00008101-001C25D40", platform: .IOS))
+        // Blank platform defaults to iOS (same default as the form).
+        XCTAssertEqual(parsed.rows[1].platform, .IOS)
+    }
+
+    func testCSVSkipsCommentsBlanksAndRejectsBadRows() {
+        let content = """
+        # team devices
+        Legacy iPhone 12\t00008030-001A2B3C4\tMAC_OS
+
+        nameless,,IOS
+        bad-udid,not-a-udid,IOS
+        mystery,00008101-001C25D40,WATCH_OS
+        single-field-only
+        """
+        let parsed = DeviceCSVImport.parse(content)
+        XCTAssertEqual(parsed.rows.count, 1)
+        XCTAssertEqual(parsed.rows[0].platform, .MAC_OS)
+        XCTAssertEqual(parsed.rejected, 4)
+    }
+
+    func testCSVPlatformAliases() {
+        let content = """
+        a,00008101-001C25D40,macos
+        b,00008101-001C25D40,universal
+        c,00008101-001C25D40,MAC
+        """
+        let parsed = DeviceCSVImport.parse(content)
+        XCTAssertEqual(parsed.rows.map(\.platform), [.MAC_OS, .UNIVERSAL, .MAC_OS])
+        XCTAssertEqual(parsed.rejected, 0)
+    }
+
+    func testCSVLoadRejectsMissingFile() {
+        XCTAssertThrowsError(try DeviceCSVImport.load(from: URL(fileURLWithPath: "/nonexistent-devices.csv")))
+    }
+
+    // MARK: - Device PATCH bodies (rename + enable/disable)
+
+    func testDeviceRenameBodyOmitsStatus() throws {
+        let request = DeviceUpdateRequest(
+            data: DeviceUpdateData(
+                id: "device-1",
+                attributes: DeviceUpdateAttributes(name: "New Name", status: nil)
+            )
+        )
+        let data = try JSONEncoder().encode(request)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payload = try XCTUnwrap(root["data"] as? [String: Any])
+        // PATCH must not send `"status": null` — only the renamed attribute
+        // (a null would fail the [String: String] cast below).
+        XCTAssertEqual(payload["id"] as? String, "device-1")
+        XCTAssertEqual(payload["type"] as? String, "devices")
+        XCTAssertEqual(payload["attributes"] as? [String: String], ["name": "New Name"])
+    }
+
+    func testDeviceStatusBodyOmitsName() throws {
+        let request = DeviceUpdateRequest(
+            data: DeviceUpdateData(
+                id: "device-1",
+                attributes: DeviceUpdateAttributes(name: nil, status: "DISABLED")
+            )
+        )
+        let data = try JSONEncoder().encode(request)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payload = try XCTUnwrap(root["data"] as? [String: Any])
+        XCTAssertEqual(payload["attributes"] as? [String: String], ["status": "DISABLED"])
+    }
 }

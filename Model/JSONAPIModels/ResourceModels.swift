@@ -82,6 +82,14 @@ struct ProfileModel: Equatable {
     /// Base64 .mobileprovision. Only present on GET /v1/profiles/{id} —
     /// never in list responses.
     @ResourceAttribute var profileContent: String?
+    /// Devices embedded in this profile — hydrated only when the fetch
+    /// uses include=devices (dependent-profile lookup); empty linkage
+    /// decodes to []. The relationships key itself is required by the
+    /// decoder when declared — real list responses always carry linkage
+    /// (same exposure as BuildsModel relationships on unincluded fetches).
+    @ResourceRelationship var devices: [DeviceModel]
+    /// Signing certificates — hydrated only with include=certificates.
+    @ResourceRelationship var certificates: [CertificateModel]
 }
 
 @ResourceWrapper(type: "users")
@@ -165,6 +173,171 @@ struct DeviceUpdateData: Encodable {
 struct DeviceUpdateAttributes: Encodable {
     var name: String?
     var status: String?
+
+    // PATCH semantics: only the supplied attribute is sent. Synthesized
+    // Encodable would emit `"status": null` on a rename (and `"name":
+    // null` on an enable/disable) — omit absent keys instead.
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case status
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(status, forKey: .status)
+    }
+}
+
+/// One provisioning profile that embeds a given device, for the device
+/// detail's "Dependent profiles" table (Figma 114-3013). There is no
+/// GET /v1/devices/{id}/profiles endpoint, so these are resolved by
+/// scanning GET /v1/profiles?include=devices,certificates and matching
+/// hydrated device ids (see ResourcesViewModel.loadDependentProfiles).
+/// Signing-certificate names come from include=certificates.
+struct DependentProfile: Equatable {
+    var profile: ProfileModel
+    /// displayName ?? name per signing certificate on the profile.
+    var certificateNames: [String]
+
+    var profileTypeDisplayName: String {
+        ProfileTypeOption(rawValue: profile.profileType ?? "")?.displayName
+            ?? profile.profileType ?? "—"
+    }
+}
+
+/// One parsed row of a devices CSV/text import file: `name,udid[,platform]`.
+/// There is no bulk-register endpoint — the view model registers rows one
+/// POST /v1/devices at a time and reports per-row failures.
+struct DeviceCSVRow: Equatable {
+    var name: String
+    var udid: String
+    var platform: DevicePlatform
+}
+
+/// Client-side parser for the devices empty-state "import a CSV / text
+/// file" flow (Figma 114-12528). Pure logic, no API key needed. Rules:
+/// one device per line, comma- or tab-separated `name,udid[,platform]`;
+/// blank lines and `#` comments skipped; a leading `name,udid,...` header
+/// skipped; blank platform defaults to iOS; rows with a blank name, an
+/// unparseable UDID, or an unknown platform are rejected (counted, not
+/// thrown, so the preview can report them).
+enum DeviceCSVImport {
+    /// Files larger than this are refused before parsing (1 MB ≈ 10k+
+    /// devices; a real list is a few KB).
+    private static let maxCSVFileSize = 1_024 * 1_024
+
+    static func parse(_ content: String) -> (rows: [DeviceCSVRow], rejected: Int) {
+        var rows: [DeviceCSVRow] = []
+        var rejected = 0
+        var isFirstLine = true
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            // Header row (`name,udid,platform`, any case) is skipped.
+            if isFirstLine, isHeader(line) {
+                isFirstLine = false
+                continue
+            }
+            isFirstLine = false
+            let fields = line.components(separatedBy: ",").count >= 2
+                ? line.components(separatedBy: ",")
+                : line.components(separatedBy: "\t")
+            guard fields.count >= 2 else {
+                rejected += 1
+                continue
+            }
+            let name = fields[0].trimmingCharacters(in: .whitespaces)
+            let udid = fields[1].trimmingCharacters(in: .whitespaces)
+            let platformToken = fields.count >= 3
+                ? fields[2].trimmingCharacters(in: .whitespaces).uppercased()
+                : ""
+            guard !name.isEmpty,
+                  ProvisioningWriteValidation.isValidUDID(udid),
+                  let platform = platform(matching: platformToken) else {
+                rejected += 1
+                continue
+            }
+            rows.append(DeviceCSVRow(name: name, udid: udid, platform: platform))
+        }
+        return (rows, rejected)
+    }
+
+    /// Loads import-file text from a user-picked .csv/.txt file: checks
+    /// size, reads as UTF-8, rejects empty content. Throws user-facing
+    /// errors so the form just displays `errorDescription`.
+    static func load(from url: URL) throws -> String {
+        // Security-scoped URLs (open panel) need explicit access.
+        let didStart = url.startAccessingSecurityScopedResource()
+        defer { if didStart { url.stopAccessingSecurityScopedResource() } }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        guard fileSize > 0, fileSize <= maxCSVFileSize else {
+            throw CSVFileLoadError.tooLarge
+        }
+        guard let data = try? Data(contentsOf: url),
+              !data.isEmpty else {
+            throw CSVFileLoadError.unreadable
+        }
+        let content = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else {
+            throw CSVFileLoadError.unreadable
+        }
+        return content
+    }
+
+    private static func isHeader(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        return lowered.contains("name") && lowered.contains("udid")
+    }
+
+    /// Blank defaults to iOS (same default as the register form); known
+    /// aliases map to the spec's BundleIdPlatform values (IOS, MAC_OS).
+    /// UNIVERSAL is accepted — the register form offers it — but note the
+    /// devices list filter only documents IOS/MAC_OS.
+    private static func platform(matching token: String) -> DevicePlatform? {
+        switch token {
+        case "", "IOS", "IPHONE", "IPAD":
+            return .IOS
+        case "MAC_OS", "MACOS", "MAC":
+            return .MAC_OS
+        case "UNIVERSAL":
+            return .UNIVERSAL
+        default:
+            return nil
+        }
+    }
+}
+
+/// File-picker failures for device CSV import. Messages are shown verbatim.
+enum CSVFileLoadError: Error, LocalizedError, Equatable {
+    case unreadable
+    case tooLarge
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable:
+            return "Couldn't read that file. Pick a .csv or .txt file with one device per line."
+        case .tooLarge:
+            return "That file is too large to be a device list (max 1 MB)."
+        }
+    }
+}
+
+/// One CSV row that failed to register, with the server/client message.
+struct DeviceCSVFailure: Equatable {
+    var row: DeviceCSVRow
+    var message: String
+}
+
+/// Outcome of a CSV import run: sequential POSTs, so successes and
+/// per-row failures are both reported in the result sheet.
+struct DeviceCSVImportResult: Equatable, Identifiable {
+    var registered: Int
+    var failures: [DeviceCSVFailure]
+
+    var id: String { "import-\(registered)-\(failures.count)" }
 }
 
 /// Certificate types (spec enum CertificateType, v4.4.1) for the create

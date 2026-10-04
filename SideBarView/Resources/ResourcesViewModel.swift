@@ -35,6 +35,7 @@ final class ResourcesViewModel: ObservableObject {
         // A stuck network call must not keep the VM alive.
         for task in fetchTasks.values { task.cancel() }
         invitationsFetchTask?.cancel()
+        dependentsTask?.cancel()
     }
 
     // MARK: - Kinds
@@ -464,6 +465,8 @@ final class ResourcesViewModel: ObservableObject {
         // Staleness only on success: a failed load must NOT mark the kind
         // loaded, or reopening the list would never auto-retry the error.
         loadedKinds.insert(kind)
+        // Successful fetch — stamps Figma's "Last synced …" action bars.
+        lastSyncDates[kind] = Date()
         // Loaded arrays changed — invalidate filter caches (review fix).
         dataVersion += 1
     }
@@ -485,6 +488,11 @@ final class ResourcesViewModel: ObservableObject {
         invitationsFetchTask?.cancel()
         invitationsFetchTask = nil
         invitationsState = .idle
+        dependentsTask?.cancel()
+        dependentsTask = nil
+        dependentsCache = [:]
+        dependentProfilesState = .idle
+        importProgress = nil
         loadedKinds = []
         devicesState = .idle
         certificatesState = .idle
@@ -493,6 +501,7 @@ final class ResourcesViewModel: ObservableObject {
         usersState = .idle
         nextCursors = [:]
         totals = [:]
+        lastSyncDates = [:]
         paginationFailedKinds = []
         searchTexts = [:]
         isPaginatingKinds = []
@@ -632,6 +641,194 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
+    }
+
+    /// PATCH /v1/devices/{id} with a new name (Figma device detail's Save
+    /// Name — Apple docs "Modify a Registered Device": name and status are
+    /// both updatable attributes). Passing status nil leaves it untouched.
+    /// Same WriteResult contract as setDeviceEnabled.
+    func renameDevice(_ device: DeviceModel, to name: String) async -> WriteResult {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("Enter a device name.") }
+        guard trimmed != (device.name ?? "") else { return .ignored }
+        guard !isWriteInFlight(device.id) else { return .ignored }
+        writeInFlight.insert(device.id)
+        defer { writeInFlight.remove(device.id) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(DeviceUpdateRequest(
+            data: DeviceUpdateData(
+                id: device.id,
+                attributes: DeviceUpdateAttributes(
+                    name: trimmed,
+                    status: nil
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .patch(name: .devices, body: data, path: device.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the rename request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(DeviceModel.self, from: responseData)
+            guard case .loaded(var devices) = devicesState,
+                  let index = devices.firstIndex(where: { $0.id == device.id }) else { return .ignored }
+            devices[index] = model
+            devicesState = .loaded(devices)
+            dataVersion += 1
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to rename device: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    // MARK: - Dependent profiles (device detail)
+
+    /// Dependent-profiles lookup for one device (Figma 114-3013/3123).
+    /// There is no GET /v1/devices/{id}/profiles endpoint (verified in the
+    /// OpenAPI spec — devices expose no relationships), so this scans
+    /// GET /v1/profiles?include=devices,certificates and matches hydrated
+    /// device ids. Caveat: limit[devices]=50 caps the included devices per
+    /// profile, so a device past the first 50 on a huge profile is missed
+    /// (vendor limitation, surfaced in the UI copy).
+    @Published var dependentProfilesState: ViewState<[DependentProfile]> = .idle
+    /// Memoized per device id so reopening a detail never refetches; a
+    /// device enable/disable/rename invalidates nothing here (membership
+    /// only changes via profile edits), but team switch clears it.
+    private var dependentsCache: [String: [DependentProfile]] = [:]
+    private var dependentsTask: Task<Void, Never>?
+
+    /// Pure matcher, unit-tested: profiles whose hydrated devices contain
+    /// the id, paired with their signing-certificate display names.
+    /// Nonisolated (pure function of its arguments) so tests and views
+    /// can call it off the main actor.
+    nonisolated static func dependents(matching deviceId: String, in profiles: [ProfileModel]) -> [DependentProfile] {
+        profiles.compactMap { profile in
+            guard profile.devices.contains(where: { $0.id == deviceId }) else { return nil }
+            let certNames = profile.certificates.map { $0.displayName ?? $0.name ?? "—" }
+            return DependentProfile(profile: profile, certificateNames: certNames)
+        }
+    }
+
+    func loadDependentProfiles(for device: DeviceModel) {
+        if let cached = dependentsCache[device.id] {
+            dependentProfilesState = cached.isEmpty ? .empty : .loaded(cached)
+            return
+        }
+        dependentsTask?.cancel()
+        dependentsTask = Task { await fetchDependentProfiles(for: device) }
+    }
+
+    func retryDependentProfiles(for device: DeviceModel) {
+        dependentsCache.removeValue(forKey: device.id)
+        loadDependentProfiles(for: device)
+    }
+
+    private func fetchDependentProfiles(for device: DeviceModel) async {
+        guard !Task.isCancelled else { return }
+        dependentProfilesState = .loading
+        // Fields trimmed to what the table renders; relationships must be
+        // named in fields[profiles] or the server drops them. Sort verified
+        // against the spec (inventing a sort field 400s the request).
+        let baseParams = [
+            "include": "devices,certificates",
+            "limit": "50",
+            "limit[devices]": "50",
+            "limit[certificates]": "50",
+            "sort": "name",
+            "fields[profiles]": "name,profileType,profileState,devices,certificates",
+            "fields[devices]": "name",
+            "fields[certificates]": "name,displayName",
+        ]
+        var all: [ProfileModel] = []
+        var cursor: String? = nil
+        // Profiles are few; the cap stops a runaway drain, not real data.
+        for _ in 0..<20 {
+            guard !Task.isCancelled else { return }
+            var queryParams = baseParams
+            if let cursor {
+                queryParams["cursor"] = cursor
+            }
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: .getProfiles, queryParams: queryParams),
+                apiVersion: .v1) else {
+                dependentProfilesState = .error("No team selected. Add a team to load profiles.")
+                return
+            }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled else { return }
+                let page = try getDecoder().decode(ProfilesDocument.self, from: data)
+                all += page.data
+                if let next = page.meta.paging.nextCursor, !next.isEmpty {
+                    cursor = next
+                } else {
+                    break
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                resourcesLogger.error("Failed to load dependent profiles: \(error.localizedDescription)")
+                dependentProfilesState = .error(friendlyMessage(for: error))
+                return
+            }
+        }
+        let matches = Self.dependents(matching: device.id, in: all)
+        dependentsCache[device.id] = matches
+        dependentProfilesState = matches.isEmpty ? .empty : .loaded(matches)
+    }
+
+    // MARK: - Last sync (device action bars)
+
+    /// Last successful fetch per kind, for Figma's "Last synced …" action
+    /// bars. Client-side only — the API exposes no sync timestamps.
+    @Published var lastSyncDates: [Kind: Date] = [:]
+
+    private static let syncFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        return formatter
+    }()
+
+    func lastSyncText(for kind: Kind) -> String? {
+        guard let date = lastSyncDates[kind] else { return nil }
+        return "Last synced \(Self.syncFormatter.string(from: date))"
+    }
+
+    // MARK: - CSV import (devices empty state)
+
+    /// Progress of a running CSV import (done/total), nil when idle.
+    /// Published so the import sheet can render a progress bar.
+    @Published var importProgress: (done: Int, total: Int)?
+
+    /// Registers parsed CSV rows one POST /v1/devices at a time — there is
+    /// no bulk-register endpoint. Sequential awaits keep yearly-limit
+    /// failures attributable per row; the loop stops early on task
+    /// cancellation. Returns counts + per-row failures for the summary.
+    func importDevices(_ rows: [DeviceCSVRow]) async -> DeviceCSVImportResult {
+        var registered = 0
+        var failures: [DeviceCSVFailure] = []
+        importProgress = (done: 0, total: rows.count)
+        defer { importProgress = nil }
+        for row in rows {
+            guard !Task.isCancelled else { break }
+            let result = await registerDevice(name: row.name, platform: row.platform, udid: row.udid)
+            switch result {
+            case .success:
+                registered += 1
+            case .failure(let message):
+                failures.append(DeviceCSVFailure(row: row, message: message))
+            case .ignored:
+                failures.append(DeviceCSVFailure(row: row, message: "Skipped — another registration was already in flight."))
+            }
+            importProgress = (done: registered + failures.count, total: rows.count)
+        }
+        return DeviceCSVImportResult(registered: registered, failures: failures)
     }
 
     /// POST /v1/certificates — create from a CSR file's content (loaded
