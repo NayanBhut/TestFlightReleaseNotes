@@ -217,7 +217,6 @@ struct ShipyardAppInfoView: View {
                     Text("Localization: \(BetaLocalizationLocales.displayName(for: locale))")
                         .font(.system(size: 11))
                         .foregroundColor(ShipyardTheme.body)
-                    ShipyardIcon(name: "ShipyardChevron", size: 10)
                 }
                 .padding(.horizontal, 8)
                 .frame(height: 24)
@@ -453,6 +452,10 @@ struct ShipyardAppInfoView: View {
                 }
                 .padding(24)
 
+                screenshotsSection
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+
                 if let saveError {
                     Text(saveError)
                         .font(.system(size: 12))
@@ -465,6 +468,40 @@ struct ShipyardAppInfoView: View {
             inspector
             }
         }
+    }
+
+    // MARK: - Screenshots
+
+    /// Per-locale screenshot sets, ported from the legacy App Info view:
+    /// thumbnails per version localization, with set creation, image
+    /// upload (DetailViewModel's reserve → PUT → complete pipeline), and
+    /// delete — all gated on the same `isEditable` as metadata.
+    private var screenshotsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Screenshots")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            if versionId == nil {
+                Text("Loading versions…")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+            } else {
+                ScreenshotsGroupView(
+                    title: "Version \(selectedVersionString)",
+                    viewModel: detailVM,
+                    state: detailVM.versionLocalizationsState,
+                    isEditable: isEditable,
+                    primaryLocale: app.primaryLocale,
+                    retry: { detailVM.retryVersionLocalizations() })
+            }
+        }
+    }
+
+    private var selectedVersionString: String {
+        guard let versionId,
+              let version = reviewsVM.appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId })
+        else { return "—" }
+        return version.versionString ?? version.id
     }
 
     // MARK: - Fields

@@ -478,6 +478,13 @@ enum ProfileTypeOption: String, CaseIterable {
             .replacingOccurrences(of: "Ios", with: "iOS")
             .replacingOccurrences(of: "Tvos", with: "tvOS")
     }
+
+    /// Only development and ad-hoc profiles embed devices. Store,
+    /// in-house and direct-distribution profiles reject the devices
+    /// relationship (409 ENTITY_ERROR.RELATIONSHIP.NOT_ALLOWED).
+    var allowsDevices: Bool {
+        rawValue.hasSuffix("_DEVELOPMENT") || rawValue.hasSuffix("_ADHOC")
+    }
 }
 
 struct ProfileCreateRequest: Encodable {

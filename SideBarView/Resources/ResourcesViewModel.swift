@@ -1232,9 +1232,11 @@ final class ResourcesViewModel: ObservableObject {
                     certificates: ProfileCreateArrayRelationship(
                         data: certificateIds.sorted().map { ProfileCreateRef(type: "certificates", id: $0) }
                     ),
-                    devices: deviceIds.isEmpty ? nil : ProfileCreateArrayRelationship(
+                    // Store/in-house/direct profiles reject devices (409) —
+                    // only development and ad-hoc types embed them.
+                    devices: profileType.allowsDevices && !deviceIds.isEmpty ? ProfileCreateArrayRelationship(
                         data: deviceIds.sorted().map { ProfileCreateRef(type: "devices", id: $0) }
-                    )
+                    ) : nil
                 )
             )
         )), let request = APIClient.shared.getRequest(

@@ -251,6 +251,7 @@ struct AppsTableView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(name), \(app.currentState)")
+        .accessibilityHint("Opens this app's builds")
     }
 
     /// Real artwork via the shared disk/memory-cached loader (2x pixels);
