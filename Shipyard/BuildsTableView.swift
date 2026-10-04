@@ -78,7 +78,6 @@ struct BuildsTableView: View {
                         Text("v\(detailVM.selectedVersion?.version ?? "")")
                             .font(.system(size: 11))
                             .foregroundColor(ShipyardTheme.body)
-                        ShipyardIcon(name: "ShipyardChevron", size: 10)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -309,6 +308,7 @@ struct BuildsTableView: View {
             onManage(build)
         }
         .accessibilityLabel("Build \(build.version ?? ""), \(buildStateDisplayName(build.processingState ?? ""))")
+        .accessibilityHint("Opens build details")
     }
 
     @ViewBuilder

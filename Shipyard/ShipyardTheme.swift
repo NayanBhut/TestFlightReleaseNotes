@@ -120,11 +120,6 @@ struct ShipyardMenuLabel: View {
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
                 .lineLimit(1)
-            Image("ShipyardChevron")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 10, height: 10)
-                .accessibilityHidden(true)
         }
         .padding(.horizontal, 8)
         .frame(height: 24)

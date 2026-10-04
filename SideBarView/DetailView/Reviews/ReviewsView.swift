@@ -594,6 +594,34 @@ struct StateChip: View {
     }
 }
 
+// MARK: - Reusable card
+
+/// A bordered, read-only grouping used across the Reviews tabs (moved here
+/// from the removed legacy App Info view, its other consumer).
+/// Scoped name (`InfoCard`, not `Card`) so it can't collide with
+/// other generic card views in the module.
+struct InfoCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.subheader)
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.secondaryBackground)
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(AppTheme.border, lineWidth: 1)
+        )
+    }
+}
+
 #Preview {
     ReviewsView(reviewsViewModel: ReviewsViewModel(), selectedApp: nil)
 }
