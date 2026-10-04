@@ -127,7 +127,20 @@ struct ShipyardShell: View {
             case .monitoring:
                 MonitoringView(monitor: monitor)
             case .devices:
-                DevicesView(viewModel: resourcesVM, fixedSize: false)
+                DevicesView(
+                    viewModel: resourcesVM,
+                    fixedSize: false,
+                    onOpenProfile: { profile in
+                        // Figma "Open Profile →": land on the Profiles
+                        // section filtered to that profile.
+                        resourcesVM.searchTexts[.profiles] = profile.name ?? ""
+                        section = .profiles
+                    },
+                    onOpenProfilesList: {
+                        resourcesVM.searchTexts[.profiles] = nil
+                        section = .profiles
+                    }
+                )
             case .certificates:
                 CertificatesTableView(viewModel: resourcesVM)
             case .bundleIDs:
