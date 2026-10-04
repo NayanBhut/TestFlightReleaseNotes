@@ -340,6 +340,212 @@ struct ChooseAppsSheet: View {
     }
 }
 
+// MARK: - Invite user detail (Figma 114-4499, full screen)
+
+/// Full-screen invite flow: identity fields, multi-select role checkboxes,
+/// all/selected-apps radios with the shared chooser, team-wide provisioning
+/// toggle, and a pending-grant summary. The invitation grants no access
+/// until accepted. Needs an Admin key role; a TestFlight-only key 403s.
+struct InviteUserDetailView: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    /// Team apps for scoped invites (allAppsVisible == false).
+    var apps: [AppsData] = []
+    var onBack: () -> Void
+    var onSent: () -> Void
+    @State private var email = ""
+    @State private var firstName = ""
+    @State private var lastName = ""
+    @State private var roles: Set<UserRoleOption> = [.DEVELOPER]
+    @State private var allAppsVisible = true
+    @State private var selectedAppIds: Set<String> = []
+    @State private var provisioningAllowed = false
+    @State private var showChooseApps = false
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var isBusy: Bool { isSaving }
+
+    /// App ids for the invite body: empty = all apps.
+    private var visibleAppIds: [String] {
+        guard !allAppsVisible else { return [] }
+        return selectedAppIds.sorted()
+    }
+
+    private var selectedSummary: String {
+        let names = apps
+            .filter { selectedAppIds.contains($0.id) }
+            .map { $0.name ?? $0.bundleId ?? $0.id }
+        if names.isEmpty { return "No apps picked yet." }
+        return names.joined(separator: " and ") + " only."
+    }
+
+    private var summaryRows: [(key: String, value: String)] {
+        let scope = allAppsVisible
+            ? "All apps"
+            : ResourcesViewModel.appScopeLabel(
+                allAppsVisible: false,
+                visibleAppNames: apps.filter { selectedAppIds.contains($0.id) }
+                    .map { $0.name ?? $0.bundleId ?? $0.id }) + " only"
+        return [
+            ("Role", rolesSummary(roles.map(\.rawValue))),
+            ("Apps", scope),
+            ("Provisioning", provisioningAllowed ? "Allowed · team-wide" : "Not allowed"),
+            ("Status after sending", "Pending invitation"),
+        ]
+    }
+
+    private var canSubmit: Bool {
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !lastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !roles.isEmpty
+            && (allAppsVisible || !selectedAppIds.isEmpty)
+            && !isBusy
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button(action: onBack) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Users")
+                                    .font(.system(size: 13))
+                            }
+                            .foregroundColor(ShipyardTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back to users")
+                        Text("Invite user · role and access choices")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(ShipyardTheme.title)
+                        Text("Send an Apple Developer team invitation. The invitation grants no access until accepted.")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+
+                    HStack(spacing: 12) {
+                        inviteDetailField(label: "First Name", text: $firstName, prompt: "Jane")
+                        inviteDetailField(label: "Last Name", text: $lastName, prompt: "Doe")
+                    }
+                    inviteDetailField(label: "Email Address", text: $email, prompt: "jane.doe@acme.com")
+
+                    HStack(alignment: .top, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Roles")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(ShipyardTheme.title)
+                            RoleCheckboxList(roles: $roles, disabled: isBusy)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("App access")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(ShipyardTheme.title)
+                            Text("The invitation grants no access until accepted.")
+                                .font(.system(size: 12))
+                                .foregroundColor(ShipyardTheme.body)
+                            AppAccessPicker(
+                                allAppsVisible: $allAppsVisible,
+                                provisioningAllowed: $provisioningAllowed,
+                                selectedSummary: selectedSummary,
+                                onChooseApps: { showChooseApps = true },
+                                disabled: isBusy)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .onChange(of: allAppsVisible) { _, newValue in
+                        // Turning all-apps back on drops the per-app picks so
+                        // stale ids can never leak into an all-apps invite.
+                        if newValue { selectedAppIds = [] }
+                    }
+
+                    PermissionSummaryTable(
+                        title: "Invitation permission summary",
+                        keyHeader: "Setting", valueHeader: "Pending grant",
+                        rows: summaryRows)
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppTheme.negative)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(24)
+            }
+
+            Divider()
+            HStack(spacing: 12) {
+                Text(viewModel.lastSyncText(for: .users) ?? "Not synced yet")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button("Back to Users") { onBack() }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(isBusy)
+                Button("Choose Apps…") { showChooseApps = true }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(isBusy || allAppsVisible)
+                if isSaving {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Button("Send Invitation") {
+                        Task { @MainActor in await runInvite() }
+                    }
+                    .buttonStyle(.launchPrimary)
+                    .disabled(!canSubmit)
+                }
+            }
+            .padding(.horizontal, 24)
+            .frame(height: 56)
+            .background(LaunchTheme.page)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ShipyardTheme.tableBackground)
+        .sheet(isPresented: $showChooseApps) {
+            ChooseAppsSheet(apps: apps, selectedIds: $selectedAppIds) {
+                showChooseApps = false
+            }
+        }
+    }
+
+    private func inviteDetailField(label: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
+            TextField(prompt, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13))
+                .disabled(isBusy)
+        }
+    }
+
+    private func runInvite() async {
+        isSaving = true
+        defer { isSaving = false }
+        errorMessage = nil
+        let result = await viewModel.inviteUser(
+            email: email, firstName: firstName, lastName: lastName,
+            roles: roles, allAppsVisible: allAppsVisible,
+            provisioningAllowed: provisioningAllowed,
+            visibleAppIds: visibleAppIds)
+        switch result {
+        case .success:
+            onSent()
+        case .failure(let message):
+            errorMessage = message
+        case .ignored:
+            break
+        }
+    }
+}
+
 // MARK: - User detail / edit (Figma 114-4278, 114-4857)
 
 /// Edit roles, app scope and provisioning for a team member. Save is
