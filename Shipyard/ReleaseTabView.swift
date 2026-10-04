@@ -230,6 +230,18 @@ struct ReleaseTabView: View {
                 featureTab = .allVersions
             }
         }
+        // App switch while mounted (tap another app, same tab): the view
+        // does NOT remount, so without this the old app's versions, drafts
+        // and selection stick around and writes could hit the wrong app.
+        // A plain struct `app` is correct here (@ObservedObject needs a
+        // class) — reactivity comes from reloading on the id change.
+        .onChange(of: app.id) { _, _ in
+            resetAppScopedState()
+            reviewsVM.load(app: app)
+            syncDrafts()
+            loadPhased()
+            loadVersionData()
+        }
         .onChange(of: shownVersion?.id) {
             syncDrafts()
             loadPhased()
@@ -1444,8 +1456,36 @@ struct ReleaseTabView: View {
         return "Add \(missingItems.joined(separator: ", "))."
     }
 
-    private func syncDrafts() {
-        guard let version = shownVersion, syncedVersionId != version.id else { return }
+    /// Clears everything scoped to one app (selection, drafts, toasts,
+    /// errors) so an app switch never shows or saves another app's data.
+    /// The VM's own reset happens inside reviewsVM.load(app:) when the id
+    /// changes; this covers the view's @State the VM can't see.
+    private func resetAppScopedState() {
+        shownVersionId = nil
+        n1SelectedId = nil
+        featureTab = .allVersions
+        draftVersionString = ""
+        draftWhatsNew = ""
+        draftLocaleId = nil
+        draftReleaseType = AppStoreVersionReleaseType.manual
+        draftReleaseDate = Date()
+        draftFirstName = ""
+        draftLastName = ""
+        draftPhone = ""
+        draftEmail = ""
+        draftDemoRequired = false
+        draftDemoUser = ""
+        draftDemoPass = ""
+        draftNotes = ""
+        syncedVersionId = nil
+        lastLocaleDefault = nil
+        lastReviewDefault = ReleaseTabView.emptyReviewJoin
+        saveError = nil
+        toastTitle = nil
+        toastDetail = nil
+    }
+
+    private func syncDrafts() {        guard let version = shownVersion, syncedVersionId != version.id else { return }
         syncedVersionId = version.id
         saveError = nil
         draftVersionString = version.versionString ?? ""
