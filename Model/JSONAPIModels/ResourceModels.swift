@@ -422,6 +422,14 @@ enum CertificateTypeOption: String, CaseIterable {
             .replacingOccurrences(of: "Nfc", with: "NFC")
     }
 
+    /// Signing identities usable in provisioning profiles: the
+    /// DEVELOPMENT/DISTRIBUTION families. Apple Pay, Pass Type ID,
+    /// Identity Access and Developer ID certificates can't be embedded
+    /// in profiles — the wizard hides them instead of listing them as
+    /// excluded rows.
+    var isSigningIdentity: Bool {
+        rawValue.contains("DEVELOPMENT") || rawValue.contains("DISTRIBUTION")
+    }
     /// Wizard eligibility (Figma 114-3438 "matching type enforced"):
     /// development profile kinds only accept *DEVELOPMENT* certs,
     /// everything else only *DISTRIBUTION* certs. The legacy unprefixed

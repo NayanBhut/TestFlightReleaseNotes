@@ -262,6 +262,18 @@ final class ValidationTests: XCTestCase {
     }
 
     func testCertificateEligibility() {
+        // Only signing identities belong in profiles — Apple Pay, Pass,
+        // Identity Access and Developer ID certs are hidden, not listed.
+        XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.isSigningIdentity)
+        XCTAssertTrue(CertificateTypeOption.IOS_DISTRIBUTION.isSigningIdentity)
+        XCTAssertTrue(CertificateTypeOption.DEVELOPMENT.isSigningIdentity)
+        XCTAssertTrue(CertificateTypeOption.DISTRIBUTION.isSigningIdentity)
+        XCTAssertTrue(CertificateTypeOption.MAC_APP_DEVELOPMENT.isSigningIdentity)
+        XCTAssertFalse(CertificateTypeOption.APPLE_PAY.isSigningIdentity)
+        XCTAssertFalse(CertificateTypeOption.APPLE_PAY_MERCHANT_IDENTITY.isSigningIdentity)
+        XCTAssertFalse(CertificateTypeOption.PASS_TYPE_ID.isSigningIdentity)
+        XCTAssertFalse(CertificateTypeOption.IDENTITY_ACCESS.isSigningIdentity)
+        XCTAssertFalse(CertificateTypeOption.DEVELOPER_ID_APPLICATION.isSigningIdentity)
         // Kind matching: development kinds take *DEVELOPMENT* only.
         XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.matchesKind(development: true))
         XCTAssertFalse(CertificateTypeOption.IOS_DEVELOPMENT.matchesKind(development: false))

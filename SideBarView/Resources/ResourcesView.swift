@@ -641,12 +641,25 @@ struct CreateProfileForm: View {
         }
     }
 
+    /// Certificates shown in the wizard picker: signing identities
+    /// only (Apple Pay / Pass / Identity Access / Developer ID certs
+    /// can't be embedded in profiles, so they're hidden, not listed as
+    /// excluded rows).
+    private var signingCertificates: [CertificateModel] {
+        certificates.filter { cert in
+            guard let option = cert.certificateType.flatMap(CertificateTypeOption.init(rawValue:)) else {
+                return false
+            }
+            return option.isSigningIdentity
+        }
+    }
+
     /// Certificates selectable for the resolved type: matching kind +
     /// platform, and not expired (an expired cert guarantees a 409).
     private var eligibleCertificates: [CertificateModel] {
         guard let resolved = resolvedType else { return [] }
         let development = resolved.needsDevelopmentCertificates
-        return certificates.filter { cert in
+        return signingCertificates.filter { cert in
             guard let option = cert.certificateType.flatMap(CertificateTypeOption.init(rawValue:)),
                   option.matchesKind(development: development),
                   option.matchesPlatform(profileBundlePlatform) else { return false }
@@ -1074,13 +1087,37 @@ struct CreateProfileForm: View {
     private var certificatesStep: some View {
             ScrollView {
                 LazyVStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Text(certificateIds.isEmpty
+                             ? "CERTIFICATES" : "CERTIFICATES (\(certificateIds.count) SELECTED)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(ShipyardTheme.body)
+                        Spacer(minLength: 0)
+                        Button("Select All") {
+                            certificateIds = Set(eligibleCertificates.map(\.id))
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.accent)
+                        .disabled(isSaving || eligibleCertificates.isEmpty)
+                        .accessibilityLabel("Select all eligible certificates")
+                        Button("Clear") {
+                            certificateIds = []
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.body)
+                        .disabled(isSaving || certificateIds.isEmpty)
+                    }
+                    .padding([.horizontal, .top], 12)
                     if !(resolvedType?.needsDevelopmentCertificates ?? true) {
                         Text("App Store and ad-hoc profiles use distribution certificates — development certificates are excluded below.")
                             .font(.system(size: 11))
                             .foregroundColor(ShipyardTheme.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding([.horizontal, .top], 12)
                     }
-                    ForEach(certificates, id: \.id) { certificate in
+                    ForEach(signingCertificates, id: \.id) { certificate in
                         if let reason = certificateExclusionReason(certificate) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -1111,8 +1148,8 @@ struct CreateProfileForm: View {
                             )
                         }
                     }
-                    if certificates.isEmpty {
-                        Text("No certificates found. Create one first.")
+                    if signingCertificates.isEmpty {
+                        Text("No signing certificates found. Create a development or distribution certificate first.")
                             .font(.system(size: 12))
                             .foregroundColor(ShipyardTheme.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1162,9 +1199,11 @@ struct CreateProfileForm: View {
                     .foregroundColor(ShipyardTheme.body)
                     .disabled(isSaving || deviceIds.isEmpty)
                 }
+                .padding([.horizontal, .top], 12)
                 Text("Development and Ad Hoc profiles include selected enabled devices.")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.body)
+                    .padding(.horizontal, 12)
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(devices, id: \.id) { device in
