@@ -61,6 +61,7 @@
 		C47A005CC47A005C001A9E5C /* ReleaseDialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */; };
 		C47A005DC47A005D001A9E5D /* ReleasePrepareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */; };
 		C47A005EC47A005E001A9E5E /* ReleaseStatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */; };
+		C47A0060C47A0060001A9E60 /* UserPermissionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A005FC47A005F001A9E5F /* UserPermissionViews.swift */; };
 		C47A0057C47A0057001A9E57 /* FriendlyErrorMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0056C47A0056001A9E56 /* FriendlyErrorMessage.swift */; };
 		B47A0029B47A0029001A9E29 /* ScreenshotsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */; };
 		CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */; };
@@ -143,6 +144,7 @@
 		C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDialogs.swift; sourceTree = "<group>"; };
 		C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleasePrepareView.swift; sourceTree = "<group>"; };
 		C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseStatusViews.swift; sourceTree = "<group>"; };
+		C47A005FC47A005F001A9E5F /* UserPermissionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserPermissionViews.swift; sourceTree = "<group>"; };
 		C47A0056C47A0056001A9E56 /* FriendlyErrorMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendlyErrorMessage.swift; sourceTree = "<group>"; };
 		B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotsSheet.swift; sourceTree = "<group>"; };
 		BB40D7D4CBB6E103228660E6 /* AppTheme.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
@@ -278,6 +280,7 @@
 				C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */,
 				C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */,
 				C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */,
+				C47A005FC47A005F001A9E5F /* UserPermissionViews.swift */,
 			);
 			path = Shipyard;
 			sourceTree = "<group>";
@@ -598,6 +601,7 @@
 				C47A005CC47A005C001A9E5C /* ReleaseDialogs.swift in Sources */,
 				C47A005DC47A005D001A9E5D /* ReleasePrepareView.swift in Sources */,
 				C47A005EC47A005E001A9E5E /* ReleaseStatusViews.swift in Sources */,
+				C47A0060C47A0060001A9E60 /* UserPermissionViews.swift in Sources */,
 				D4E5F6071A2B3C4D5E6F7082 /* BuildProcessingMonitor.swift in Sources */,
 				7ACA666481D2A0898E7A65E2 /* AppFont.swift in Sources */,
 				A146172690C3077743D6AD5E /* AppTheme.swift in Sources */,

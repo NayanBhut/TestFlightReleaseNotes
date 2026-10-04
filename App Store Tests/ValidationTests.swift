@@ -144,6 +144,66 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(json.contains("whatsNew"))
     }
 
+    // MARK: - User update body + scope labels (users flow)
+
+    func testUserUpdateBodyOmitsAbsentKeys() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        // Roles-only edit omits scope keys — never nulls untouched fields.
+        let rolesOnly = UserUpdateRequest(
+            data: UserUpdateData(
+                id: "user-1",
+                attributes: UserUpdateAttributes(
+                    roles: ["DEVELOPER"], allAppsVisible: nil, provisioningAllowed: nil),
+                relationships: nil))
+        let rolesJSON = String(data: try encoder.encode(rolesOnly), encoding: .utf8) ?? ""
+        XCTAssertTrue(rolesJSON.contains("\"roles\":[\"DEVELOPER\"]"))
+        XCTAssertFalse(rolesJSON.contains("allAppsVisible"))
+        XCTAssertFalse(rolesJSON.contains("provisioningAllowed"))
+        XCTAssertFalse(rolesJSON.contains("relationships"))
+
+        // Full edit sends all three + the visibleApps linkage.
+        let full = UserUpdateRequest(
+            data: UserUpdateData(
+                id: "user-1",
+                attributes: UserUpdateAttributes(
+                    roles: ["APP_MANAGER"], allAppsVisible: false, provisioningAllowed: true),
+                relationships: UserUpdateRelationships(
+                    visibleApps: UserInvitationVisibleAppsRelationship(
+                        data: [UserInvitationAppRef(id: "app-1")]))))
+        let fullJSON = String(data: try encoder.encode(full), encoding: .utf8) ?? ""
+        XCTAssertTrue(fullJSON.contains("\"allAppsVisible\":false"))
+        XCTAssertTrue(fullJSON.contains("\"provisioningAllowed\":true"))
+        XCTAssertTrue(fullJSON.contains("\"app-1\""))
+    }
+
+    func testAppScopeLabels() {
+        XCTAssertEqual(
+            ResourcesViewModel.appScopeLabel(allAppsVisible: true, visibleAppNames: []),
+            "All Apps")
+        XCTAssertEqual(
+            ResourcesViewModel.appScopeLabel(allAppsVisible: nil, visibleAppNames: []),
+            "All Apps")
+        XCTAssertEqual(
+            ResourcesViewModel.appScopeLabel(allAppsVisible: false, visibleAppNames: ["Orbit", "Atlas"]),
+            "Orbit, Atlas")
+        // Unhydrated linkage never renders blank.
+        XCTAssertEqual(
+            ResourcesViewModel.appScopeLabel(allAppsVisible: false, visibleAppNames: []),
+            "Selected apps")
+    }
+
+    func testRoleGrantableCasesExcludeAccountHolder() {
+        XCTAssertFalse(UserRoleOption.grantableCases.contains(.ACCOUNT_HOLDER))
+        XCTAssertEqual(UserRoleOption.grantableCases.count, UserRoleOption.allCases.count - 1)
+        // Every offered role has description copy for the checkboxes.
+        for role in UserRoleOption.grantableCases {
+            XCTAssertFalse(role.displayName.isEmpty)
+            XCTAssertFalse(role.description.isEmpty)
+        }
+    }
+
     // MARK: - Invite body relationships (Batch I fix)
 
     func testInviteBodyVisibleApps() throws {

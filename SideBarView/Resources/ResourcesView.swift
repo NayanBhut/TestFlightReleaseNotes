@@ -596,14 +596,15 @@ struct CreateBundleIdForm: View {
 
 
 
-/// POST /v1/userInvitations — email, names and at least one role are
-/// required. Resend re-issues a pending invite with the form's details
-/// (find by email → delete → re-create; no dedicated resend endpoint).
+/// POST /v1/userInvitations — Figma 114-4499 role and access choices:
+/// multi-select role checkboxes, all/selected-apps radios with the shared
+/// chooser, team-wide provisioning toggle, and a pending-grant summary.
+/// The invitation grants no access until accepted.
 /// Needs an Admin key role; a TestFlight-only key 403s.
 /// Internal (not private) so the Figma users table reuses the same form.
 struct InviteUserForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
-    /// Team apps for single-app invites (allAppsVisible == false).
+    /// Team apps for scoped invites (allAppsVisible == false).
     var apps: [AppsData] = []
     var onDone: () -> Void
     @State private var email = ""
@@ -613,14 +614,10 @@ struct InviteUserForm: View {
     @State private var allAppsVisible = true
     @State private var selectedAppIds: Set<String> = []
     @State private var provisioningAllowed = false
+    @State private var showChooseApps = false
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var noticeMessage: String?
-
-    /// The Figma sheet picks a single role; the API takes a set.
-    private var selectedRole: UserRoleOption {
-        roles.first ?? .DEVELOPER
-    }
 
     private var isBusy: Bool { isSaving }
 
@@ -630,13 +627,36 @@ struct InviteUserForm: View {
         return selectedAppIds.sorted()
     }
 
+    private var selectedSummary: String {
+        let names = apps
+            .filter { selectedAppIds.contains($0.id) }
+            .map { $0.name ?? $0.bundleId ?? $0.id }
+        if names.isEmpty { return "No apps picked yet." }
+        return names.joined(separator: " and ") + " only."
+    }
+
+    private var summaryRows: [(key: String, value: String)] {
+        let scope = allAppsVisible
+            ? "All apps"
+            : ResourcesViewModel.appScopeLabel(
+                allAppsVisible: false,
+                visibleAppNames: apps.filter { selectedAppIds.contains($0.id) }
+                    .map { $0.name ?? $0.bundleId ?? $0.id }) + " only"
+        return [
+            ("Role", rolesSummary(roles.map(\.rawValue))),
+            ("Apps", scope),
+            ("Provisioning", provisioningAllowed ? "Allowed · team-wide" : "Not allowed"),
+            ("Status after sending", "Pending invitation"),
+        ]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Invite User")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(ShipyardTheme.title)
-                Text("Send an Apple Developer team invitation to grant immediate access.")
+                Text("Send an Apple Developer team invitation. The invitation grants no access until accepted.")
                     .font(.system(size: 13))
                     .foregroundColor(ShipyardTheme.body)
             }
@@ -649,80 +669,38 @@ struct InviteUserForm: View {
 
                 inviteField(label: "Email Address", text: $email, prompt: "jane.doe@acme.com")
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Role")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.title)
-                    Menu {
-                        ForEach(UserRoleOption.allCases, id: \.self) { option in
-                            Button(option.displayName) {
-                                roles = [option]
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Text(selectedRole.displayName)
-                                .font(.system(size: 13))
-                                .foregroundColor(ShipyardTheme.title)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(LaunchTheme.field)
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(LaunchTheme.border, lineWidth: 1)
-                        )
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Roles")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+                        RoleCheckboxList(roles: $roles, disabled: isBusy)
                     }
-                    .menuStyle(.borderlessButton)
-                    .disabled(isBusy)
-                    .accessibilityLabel("Select role")
-                    Text(roleDescription(selectedRole))
-                        .font(.system(size: 11))
-                        .foregroundColor(ShipyardTheme.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("App access")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+                        AppAccessPicker(
+                            allAppsVisible: $allAppsVisible,
+                            provisioningAllowed: $provisioningAllowed,
+                            selectedSummary: selectedSummary,
+                            onChooseApps: { showChooseApps = true },
+                            disabled: isBusy)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: allAppsVisible) { _, newValue in
+                    // Turning all-apps back on drops the per-app picks so
+                    // stale ids can never leak into an all-apps invite.
+                    if newValue { selectedAppIds = [] }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("App Access")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.title)
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle("All Apps (Including New)", isOn: $allAppsVisible)
-                            .font(.system(size: 12))
-                            .toggleStyle(.checkbox)
-                            .disabled(isBusy)
-                            .onChange(of: allAppsVisible) { _, newValue in
-                                // Turning all-apps back on drops the per-app
-                                // picks so stale ids can never leak into an
-                                // all-apps invite.
-                                if newValue { selectedAppIds = [] }
-                            }
-                        ForEach(apps, id: \.id) { app in
-                            Toggle("\(app.name ?? app.bundleId ?? app.id) (\(app.bundleId ?? ""))", isOn: Binding(
-                                get: { selectedAppIds.contains(app.id) },
-                                set: { checked in
-                                    if checked { selectedAppIds.insert(app.id) }
-                                    else { selectedAppIds.remove(app.id) }
-                                }
-                            ))
-                            .font(.system(size: 12))
-                            .toggleStyle(.checkbox)
-                            .disabled(isBusy || allAppsVisible)
-                        }
-                        if apps.isEmpty {
-                            Text("No apps loaded — apps appear here once the Apps table loads.")
-                                .font(.system(size: 11))
-                                .foregroundColor(ShipyardTheme.body)
-                        }
-                    }
-                    .padding(12)
-                    .background(LaunchTheme.page)
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(LaunchTheme.border, lineWidth: 1)
-                    )
-                }
+                PermissionSummaryTable(
+                    title: "Invitation permission summary",
+                    keyHeader: "Setting", valueHeader: "Pending grant",
+                    rows: summaryRows)
             }
 
             if let noticeMessage {
@@ -746,6 +724,9 @@ struct InviteUserForm: View {
                     ProgressView()
                         .scaleEffect(0.7)
                 } else {
+                    Button("Choose Apps…") { showChooseApps = true }
+                        .buttonStyle(.launchSecondary)
+                        .disabled(allAppsVisible)
                     Button("Send Invitation") {
                         Task { @MainActor in
                             await runInvite()
@@ -758,7 +739,12 @@ struct InviteUserForm: View {
             .padding(.top, 12)
         }
         .padding(24)
-        .frame(minWidth: 480, idealWidth: 560, maxWidth: 640)
+        .frame(minWidth: 560, idealWidth: 680, maxWidth: 760)
+        .sheet(isPresented: $showChooseApps) {
+            ChooseAppsSheet(apps: apps, selectedIds: $selectedAppIds) {
+                showChooseApps = false
+            }
+        }
     }
 
     private var canSubmit: Bool {
@@ -809,23 +795,6 @@ struct InviteUserForm: View {
                         .stroke(LaunchTheme.border, lineWidth: 1)
                 )
                 .disabled(isBusy)
-        }
-    }
-
-    /// One-line remit per role for the hint under the picker.
-    private func roleDescription(_ role: UserRoleOption) -> String {
-        switch role {
-        case .ADMIN: return "Admins manage everything: apps, users, certificates, and agreements."
-        case .ACCOUNT_HOLDER: return "The account holder has ultimate legal and financial responsibility."
-        case .APP_MANAGER: return "App Managers edit store listings, versions, and TestFlight details."
-        case .DEVELOPER: return "Developers have access to write code, create sandbox profiles, and download builds."
-        case .MARKETING: return "Marketing roles manage promotional artwork and store copy."
-        case .FINANCE: return "Finance roles access sales, payments, and tax reports."
-        case .SALES: return "Sales roles manage customers and pricing."
-        case .CUSTOMER_SUPPORT: return "Customer support roles reply to reviews and manage users."
-        case .TECHNICAL: return "Technical roles manage certificates, devices, and provisioning."
-        case .READ_ONLY: return "Read-only access to apps, builds, and reports."
-        case .ACCESS_TO_REPORTS: return "Access to sales and finance reports only."
         }
     }
 }
