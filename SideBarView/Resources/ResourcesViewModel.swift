@@ -25,6 +25,7 @@
 import SwiftUI
 import JSONAPI
 import OSLog
+import Security
 import UniformTypeIdentifiers
 
 private let resourcesLogger = Logger(subsystem: "com.appstore.release-notes", category: "Resources")
@@ -261,7 +262,8 @@ final class ResourcesViewModel: ObservableObject {
 
     var filteredProfiles: [ProfileModel] {
         cachedFilter(&profilesFilterCache, kind: .profiles, source: profilesState.loadedValue ?? []) {
-            [$0.name, $0.uuid, $0.profileType, $0.profileState, $0.platform]
+            [$0.name, $0.uuid, $0.profileType, $0.profileState, $0.platform,
+             $0.bundleId.flatMap(\.identifier), $0.bundleId.flatMap(\.name)]
         }
     }
 
@@ -429,6 +431,11 @@ final class ResourcesViewModel: ObservableObject {
             // chooser, resend recap). spec: include=visibleApps is valid
             // on GET /v1/users; links-only linkage decodes to [].
             queryParams["include"] = "visibleApps"
+        }
+        if kind == .profiles {
+            // Hydrate bundle names for the Bundle ID column (Figma 3-5273)
+            // and the profile detail inspector. spec: include=bundleId.
+            queryParams["include"] = "bundleId"
         }
 
         guard let request = APIClient.shared.getRequest(
@@ -1518,14 +1525,8 @@ final class ResourcesViewModel: ObservableObject {
             _ = try await APIClient.shared.callAPI(with: request)
             guard !Task.isCancelled else { return .ignored }
             // Re-locate after the await: the list may have changed.
-            guard case .loaded(var profiles) = profilesState,
-                  let index = profiles.firstIndex(where: { $0.id == id }) else { return .ignored }
-            profiles.remove(at: index)
-            profilesState = profiles.isEmpty ? .empty : .loaded(profiles)
-            if let total = totals[.profiles] {
-                totals[.profiles] = max(0, total - 1)
-            }
-            dataVersion += 1
+            dropProfileLocally(id: id)
+            guard case .loaded = profilesState else { return .ignored }
             return .success
         } catch {
             resourcesLogger.error("Failed to delete profile: \(error.localizedDescription)")
@@ -1543,29 +1544,261 @@ final class ResourcesViewModel: ObservableObject {
         writeInFlight.insert(key)
         defer { writeInFlight.remove(key) }
 
-        guard let request = APIClient.shared.getRequest(
+        guard APIClient.shared.getRequest(
             api: .get(name: .getProfiles, path: profile.id),
-            apiVersion: .v1) else {
+            apiVersion: .v1) != nil else {
             return .failure("Couldn't build the download request.")
         }
 
         do {
-            let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return .ignored }
-            let model = try getDecoder().decode(ProfileModel.self, from: responseData)
-            guard let base64 = model.profileContent,
-                  let fileData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+            guard let (fileData, fileName) = try await profileFileData(profile) else {
                 return .failure("Apple didn't return profile data for this profile.")
             }
             guard !Task.isCancelled else { return .ignored }
             return saveDownloadedFile(data: fileData,
-                                     suggestedName: safeFileName(profile.name) + ".mobileprovision",
-                                     fileExtension: "mobileprovision")
+                                      suggestedName: fileName,
+                                      fileExtension: "mobileprovision")
         } catch {
             resourcesLogger.error("Failed to download profile: \(error.localizedDescription)")
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
+    }
+
+    /// GET /v1/profiles/{id}?include=bundleId,certificates,devices —
+    /// one fetch hydrating everything the detail inspector shows
+    /// (Figma 114-3781). Ephemeral: no list state, the caller owns the
+    /// result. Throws user-facing errors via writeErrorMessage wording.
+    func fetchProfileDetail(id: String) async throws -> ProfileModel {
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getProfiles,
+                      queryParams: ["include": "bundleId,certificates,devices"],
+                      path: id),
+            apiVersion: .v1) else {
+            throw APIError.requestFailed
+        }
+        let responseData = try await APIClient.shared.callAPI(with: request)
+        guard !Task.isCancelled else { throw CancellationError() }
+        return try getDecoder().decode(ProfileModel.self, from: responseData)
+    }
+
+    /// GET /v1/profiles/{id} → decoded profileContent bytes + file name.
+    /// Shared by Download and Install-for-Xcode so both read one path.
+    /// Returns nil when Apple sends no profile data (caller reports it).
+    func profileFileData(_ profile: ProfileModel) async throws -> (data: Data, fileName: String)? {
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getProfiles, path: profile.id),
+            apiVersion: .v1) else {
+            throw APIError.requestFailed
+        }
+        let responseData = try await APIClient.shared.callAPI(with: request)
+        guard !Task.isCancelled else { throw CancellationError() }
+        let model = try getDecoder().decode(ProfileModel.self, from: responseData)
+        guard let base64 = model.profileContent,
+              let fileData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+            return nil
+        }
+        let fileName = safeFileName(profile.name) + ".mobileprovision"
+        return (fileData, fileName)
+    }
+
+    /// Regenerate (Figma 114-4103/4164): DELETE the old profile, then POST
+    /// a same-type replacement with a new certificate + device set. There
+    /// is no update endpoint for profiles — delete-and-recreate is the
+    /// only path, and the review sheet says so. Mirrors resendInvitation's
+    /// partial-failure handling: when the create fails after the delete,
+    /// the message says the old profile is already gone.
+    func regenerateProfile(profileId: String,
+                           name: String,
+                           profileType: ProfileTypeOption,
+                           bundleIdId: String,
+                           certificateIds: Set<String>,
+                           deviceIds: Set<String>) async -> WriteResult {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the replacement profile.") }
+        guard !certificateIds.isEmpty else { return .failure("Pick at least one certificate.") }
+        let key = "regenerate-profile-\(profileId)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        do {
+            guard let deleteRequest = APIClient.shared.getRequest(
+                api: .delete(name: .getProfiles, path: profileId),
+                apiVersion: .v1) else {
+                return .failure("Couldn't build the regenerate request.")
+            }
+            _ = try await APIClient.shared.callAPI(with: deleteRequest)
+            guard !Task.isCancelled else { return .ignored }
+            dropProfileLocally(id: profileId)
+
+            let createResult = await createProfile(
+                name: trimmedName, profileType: profileType, bundleIdId: bundleIdId,
+                certificateIds: certificateIds, deviceIds: deviceIds)
+            switch createResult {
+            case .success:
+                return .success
+            case .failure(let message):
+                return .failure("\(message) The old profile was already deleted — no replacement exists yet.")
+            case .ignored:
+                return .failure("The old profile was deleted, but the replacement was not created — run the wizard again.")
+            }
+        } catch {
+            resourcesLogger.error("Failed to regenerate profile: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// Drops a row locally without a network call (shared by delete and
+    /// regenerate-after-delete).
+    private func dropProfileLocally(id: String) {
+        guard case .loaded(var profiles) = profilesState,
+              let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles.remove(at: index)
+        profilesState = profiles.isEmpty ? .empty : .loaded(profiles)
+        if let total = totals[.profiles] {
+            totals[.profiles] = max(0, total - 1)
+        }
+        dataVersion += 1
+    }
+
+    /// Install-for-Xcode outcome (Figma 114-3716/3746): the result sheet
+    /// needs the file name + install location, which WriteResult can't
+    /// carry.
+    enum ProfileInstallOutcome {
+        case success(fileName: String, directory: URL, fileURL: URL)
+        case failure(String)
+        case ignored
+    }
+
+    /// Install for Xcode (Figma 114-3716): fetch the .mobileprovision and
+    /// save it via a panel rooted at Xcode's provisioning-profiles
+    /// directory (~/Library/MobileDevice/Provisioning Profiles/). A save
+    /// panel carries user consent, so this works under the app sandbox —
+    /// a silent copy would not. Cancel reports .ignored.
+    func installProfileForXcode(_ profile: ProfileModel) async -> ProfileInstallOutcome {
+        let key = "install-profile-\(profile.id)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        do {
+            guard let (fileData, fileName) = try await profileFileData(profile) else {
+                return .failure("Apple didn't return profile data for this profile.")
+            }
+            guard !Task.isCancelled else { return .ignored }
+            let profilesDir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/MobileDevice/Provisioning Profiles", isDirectory: true)
+            let panel = NSSavePanel()
+            panel.directoryURL = profilesDir
+            panel.nameFieldStringValue = fileName
+            panel.canCreateDirectories = true
+            if let fileType = UTType(filenameExtension: "mobileprovision") {
+                panel.allowedContentTypes = [fileType]
+            }
+            panel.message = "Save into Provisioning Profiles so Xcode picks it up automatically."
+            guard panel.runModal() == .OK, let url = panel.url else { return .ignored }
+            try fileData.write(to: url, options: .atomic)
+            return .success(fileName: url.lastPathComponent,
+                            directory: url.deletingLastPathComponent(), fileURL: url)
+        } catch {
+            guard !Task.isCancelled else { return .ignored }
+            resourcesLogger.error("Failed to install profile: \(error.localizedDescription)")
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// Local private-key check for the detail's signing-chain inspector
+    /// (Figma 114-3781 "7168F2F9 · found locally"): true when the login
+    /// keychain holds an identity whose certificate serial matches.
+    /// Best-effort — any keychain error reads as "not found", never
+    /// thrown, so a locked keychain degrades to honest copy.
+    nonisolated static func hasLocalIdentity(serialNumber: String?) -> Bool {
+        guard let serial = serialNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !serial.isEmpty else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassIdentity,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnRef as String: true,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let identities = result as? [SecIdentity] else { return false }
+        for identity in identities {
+            var cert: SecCertificate?
+            guard SecIdentityCopyCertificate(identity, &cert) == errSecSuccess,
+                  let cert, let data = SecCertificateCopyData(cert) as Data? else { continue }
+            if certificateSerialNumber(der: data).uppercased() == serial.uppercased() { return true }
+        }
+        return false
+    }
+
+    /// DER serial-number parse: INTEGER tag, length, bytes → hex. Returns
+    /// "" when the shape is unexpected (caller compares, never crashes).
+    nonisolated private static func certificateSerialNumber(der: Data) -> String {
+        // First certificate in the chain: outer SEQUENCE, tbsCertificate
+        // SEQUENCE, then [0] version (optional), then serial INTEGER.
+        var index = der.startIndex
+        func readLength() -> Int? {
+            guard index < der.endIndex else { return nil }
+            let first = Int(der[index]); index = der.index(after: index)
+            if first & 0x80 == 0 { return first }
+            let count = first & 0x7F
+            guard count <= 4 else { return nil }
+            var length = 0
+            for _ in 0..<count {
+                guard index < der.endIndex else { return nil }
+                length = (length << 8) | Int(der[index]); index = der.index(after: index)
+            }
+            return length
+        }
+        func readTL(expectedTag: UInt8) -> Data? {
+            guard index < der.endIndex, der[index] == expectedTag else { return nil }
+            index = der.index(after: index)
+            guard let length = readLength(), length >= 0,
+                  let end = der.index(index, offsetBy: length, limitedBy: der.endIndex) else { return nil }
+            defer { index = end }
+            return der[index..<end]
+        }
+        guard let _ = readTL(expectedTag: 0x30),
+              let tbs = readTL(expectedTag: 0x30) else { return "" }
+        var inner = tbs.startIndex
+        // Optional [0] EXPLICIT version wrapper.
+        if tbs[inner] == 0xA0 {
+            inner = tbs.index(after: inner)
+            guard inner < tbs.endIndex else { return "" }
+            var len = Int(tbs[inner]); inner = tbs.index(after: inner)
+            if len & 0x80 != 0 {
+                let count = len & 0x7F
+                guard count <= 2 else { return "" }
+                len = 0
+                for _ in 0..<count {
+                    guard inner < tbs.endIndex else { return "" }
+                    len = (len << 8) | Int(tbs[inner]); inner = tbs.index(after: inner)
+                }
+            }
+            guard let end = tbs.index(inner, offsetBy: len, limitedBy: tbs.endIndex) else { return "" }
+            inner = end
+        }
+        guard inner < tbs.endIndex, tbs[inner] == 0x02 else { return "" }
+        inner = tbs.index(after: inner)
+        guard inner < tbs.endIndex else { return "" }
+        var serialLen = Int(tbs[inner]); inner = tbs.index(after: inner)
+        if serialLen & 0x80 != 0 {
+            let count = serialLen & 0x7F
+            guard count <= 2 else { return "" }
+            serialLen = 0
+            for _ in 0..<count {
+                guard inner < tbs.endIndex else { return "" }
+                serialLen = (serialLen << 8) | Int(tbs[inner]); inner = tbs.index(after: inner)
+            }
+        }
+        guard let end = tbs.index(inner, offsetBy: serialLen, limitedBy: tbs.endIndex) else { return "" }
+        var bytes = tbs[inner..<end]
+        // Strip leading zero pad (DER pads negatives).
+        while bytes.count > 1, bytes.first == 0x00 { bytes = bytes.dropFirst() }
+        return bytes.map { String(format: "%02X", $0) }.joined()
     }
 
     private func prependProfile(_ model: ProfileModel) {

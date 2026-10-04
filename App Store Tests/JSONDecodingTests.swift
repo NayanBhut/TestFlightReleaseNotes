@@ -65,10 +65,11 @@ final class JSONDecodingTests: XCTestCase {
         // relationships, resources in included. The dependent-profiles
         // lookup matches on these hydrated ids.
         let json = """
-        {"data":[{"type":"profiles","id":"profile-1","attributes":{"name":"Orbit Development","profileType":"IOS_APP_DEVELOPMENT","profileState":"ACTIVE"},"relationships":{"devices":{"data":[{"type":"devices","id":"device-1"}]},"certificates":{"data":[{"type":"certificates","id":"cert-1"}]}}}],"included":[{"type":"devices","id":"device-1","attributes":{"name":"Dev iPhone","platform":"IOS","udid":"00008101-001C25D40"}},{"type":"certificates","id":"cert-1","attributes":{"displayName":"Apple Development: Ada (ABC123)","certificateType":"IOS_DEVELOPMENT"}}],"meta":{"paging":{"total":1,"limit":50}}}
+        {"data":[{"type":"profiles","id":"profile-1","attributes":{"name":"Orbit Development","profileType":"IOS_APP_DEVELOPMENT","profileState":"ACTIVE"},"relationships":{"devices":{"data":[{"type":"devices","id":"device-1"}]},"certificates":{"data":[{"type":"certificates","id":"cert-1"}]},"bundleId":{"data":{"type":"bundleIds","id":"bundle-1"}}}}],"included":[{"type":"devices","id":"device-1","attributes":{"name":"Dev iPhone","platform":"IOS","udid":"00008101-001C25D40"}},{"type":"certificates","id":"cert-1","attributes":{"displayName":"Apple Development: Ada (ABC123)","certificateType":"IOS_DEVELOPMENT"}},{"type":"bundleIds","id":"bundle-1","attributes":{"name":"Orbit","identifier":"com.acme.orbit","platform":"IOS"}}],"meta":{"paging":{"total":1,"limit":50}}}
         """
         let model = try getDecoder().decode(ProfilesDocument.self, from: Data(json.utf8))
         XCTAssertEqual(model.data.count, 1)
+        XCTAssertEqual(model.data[0].bundleId?.identifier, "com.acme.orbit")
         XCTAssertEqual(model.data[0].devices.map(\.id), ["device-1"])
         XCTAssertEqual(model.data[0].devices[0].udid, "00008101-001C25D40")
         XCTAssertEqual(model.data[0].certificates.map(\.id), ["cert-1"])
@@ -86,10 +87,11 @@ final class JSONDecodingTests: XCTestCase {
         // (The relationships key itself is always present in real
         // responses; swift-jsonapi requires it when declared.)
         let json = """
-        {"data":[{"type":"profiles","id":"profile-2","attributes":{"name":"Orbit Store","profileType":"IOS_APP_STORE","profileState":"ACTIVE"},"relationships":{"devices":{"data":[]},"certificates":{"data":[]}}}],"meta":{"paging":{"total":1,"limit":50}}}
+        {"data":[{"type":"profiles","id":"profile-2","attributes":{"name":"Orbit Store","profileType":"IOS_APP_STORE","profileState":"ACTIVE"},"relationships":{"devices":{"data":[]},"certificates":{"data":[]},"bundleId":{"data":null}}}],"meta":{"paging":{"total":1,"limit":50}}}
         """
         let model = try getDecoder().decode(ProfilesDocument.self, from: Data(json.utf8))
         XCTAssertEqual(model.data.count, 1)
+        XCTAssertNil(model.data[0].bundleId)
         XCTAssertTrue(model.data[0].devices.isEmpty)
         XCTAssertTrue(model.data[0].certificates.isEmpty)
     }

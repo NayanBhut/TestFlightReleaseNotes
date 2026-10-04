@@ -146,7 +146,20 @@ struct ShipyardShell: View {
             case .bundleIDs:
                 BundleIDsTableView(viewModel: resourcesVM)
             case .profiles:
-                ProfilesTableView(viewModel: resourcesVM)
+                ProfilesTableView(
+                    viewModel: resourcesVM,
+                    onOpenCertificate: { query in
+                        resourcesVM.searchTexts[.certificates] = query
+                        section = .certificates
+                    },
+                    onOpenBundleId: { query in
+                        resourcesVM.searchTexts[.bundleIds] = query
+                        section = .bundleIDs
+                    },
+                    onOpenDevice: { query in
+                        resourcesVM.searchTexts[.devices] = query
+                        section = .devices
+                    })
             case .users:
                 UsersTableView(viewModel: resourcesVM, apps: loadedApps)
             case .reviews:

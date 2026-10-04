@@ -2,79 +2,87 @@
 //  ProfilesTableView.swift
 //  App Store
 //
-//  Profiles table in the Figma table language (no Figma screen exists for
-//  this kind — columns follow the API model): toolbar (title + total pill,
-//  search, New Profile) over a Name / Type / Platform / State / Expiration
-//  table. Deletion runs from the row context menu with a confirmation;
-//  creation reuses the shared CreateProfileForm.
+//  Profiles flow from the Figma frames: toolbar (title + total pill,
+//  Type/Status filters, search, Create Profile) over a Name / Type /
+//  Bundle ID / Expiration / Status / Platform table (3-5273). Rows tap
+//  through to the full-screen detail; deletion runs from the row context
+//  menu with the type-to-confirm sheet; creation reuses the shared
+//  CreateProfileForm wizard.
 //
 
 import SwiftUI
 
 struct ProfilesTableView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    var onOpenCertificate: (String) -> Void = { _ in }
+    var onOpenBundleId: (String) -> Void = { _ in }
+    var onOpenDevice: (String) -> Void = { _ in }
     @State private var showCreateForm = false
+    @State private var selectedProfile: ProfileModel?
     @State private var deleting: ProfileModel?
+    @State private var downloadingId: String?
     @State private var bannerError: String?
+    @State private var typeFilter: String? = nil
+    @State private var statusFilter: ProfileComputedStatus? = nil
 
-    private var profiles: [ProfileModel] { viewModel.filteredProfiles }
+    private var profiles: [ProfileModel] {
+        viewModel.filteredProfiles.filter { profile in
+            if let typeFilter, profile.profileType != typeFilter { return false }
+            if let statusFilter, profile.computedStatus != statusFilter { return false }
+            return true
+        }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            if let bannerError {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(AppTheme.negative)
-                    Text(bannerError)
-                        .font(.system(size: 12))
-                        .foregroundColor(AppTheme.negative)
-                    Spacer()
-                    Button {
-                        self.bannerError = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss error")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+        if let selectedProfile {
+            ProfileDetailView(
+                viewModel: viewModel,
+                profile: selectedProfile,
+                onBack: { self.selectedProfile = nil },
+                onOpenCertificate: onOpenCertificate,
+                onOpenBundleId: onOpenBundleId,
+                onOpenDevice: onOpenDevice)
+        } else {
+            VStack(spacing: 0) {
+                toolbar
                 Divider()
-            }
-            table
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ShipyardTheme.tableBackground)
-        .onAppear {
-            viewModel.load(.profiles)
-        }
-        .sheet(isPresented: $showCreateForm) {
-            CreateProfileForm(viewModel: viewModel) {
-                showCreateForm = false
-            }
-        }
-        .confirmationDialog(
-            "Delete this provisioning profile? Builds signed with it stop installing.",
-            isPresented: Binding(
-                get: { deleting != nil },
-                set: { if !$0 { deleting = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete Profile", role: .destructive) {
-                guard let profile = deleting else { return }
-                Task { @MainActor in
-                    if case .failure(let message) = await viewModel.deleteProfile(id: profile.id) {
-                        bannerError = message
+                if let bannerError {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(AppTheme.negative)
+                        Text(bannerError)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppTheme.negative)
+                        Spacer()
+                        Button {
+                            self.bannerError = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss error")
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    Divider()
+                }
+                table
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(ShipyardTheme.tableBackground)
+            .onAppear {
+                viewModel.load(.profiles)
+            }
+            .sheet(isPresented: $showCreateForm) {
+                CreateProfileForm(viewModel: viewModel) {
+                    showCreateForm = false
+                }
+            }
+            .sheet(item: $deleting) { profile in
+                DeleteProfileSheet(viewModel: viewModel, profile: profile) {
                     deleting = nil
                 }
-            }
-            Button("Cancel", role: .cancel) {
-                deleting = nil
             }
         }
     }
@@ -94,7 +102,30 @@ struct ProfilesTableView: View {
 
             ShipyardSearchField(prompt: "Search Profiles", text: viewModel.searchBinding(for: .profiles))
 
-            Button("New Profile") {
+            Menu {
+                Button("All") { typeFilter = nil }
+                ForEach(ProfileTypeOption.allCases, id: \.self) { option in
+                    Button(option.displayName) { typeFilter = option.rawValue }
+                }
+            } label: {
+                filterChipLabel(typeFilter.map { ProfileTypeOption(rawValue: $0)?.displayName ?? $0 } ?? "All",
+                                prefix: "Type")
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("Filter by profile type")
+
+            Menu {
+                Button("All") { statusFilter = nil }
+                Button("Active") { statusFilter = .active }
+                Button("Expired") { statusFilter = .expired }
+                Button("Invalid") { statusFilter = .invalid }
+            } label: {
+                filterChipLabel(statusFilter?.displayName ?? "All", prefix: "Status")
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("Filter by profile status")
+
+            Button("Create Profile") {
                 showCreateForm.toggle()
             }
             .font(.system(size: 11, weight: .semibold))
@@ -109,6 +140,24 @@ struct ProfilesTableView: View {
         .padding(.horizontal, 16)
         .frame(height: 44)
         .background(LaunchTheme.page)
+    }
+
+    private func filterChipLabel(_ value: String, prefix: String) -> some View {
+        HStack(spacing: 4) {
+            Text("\(prefix): \(value)")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+            Text("⌄")
+                .font(.system(size: 10))
+                .foregroundColor(ShipyardTheme.body)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(Color.white)
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(LaunchTheme.border, lineWidth: 1))
     }
 
     private var totalText: String {
@@ -161,13 +210,14 @@ struct ProfilesTableView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer()
-            Text("No Profiles")
+            Text(viewModel.hasActiveSearch(for: .profiles) || typeFilter != nil || statusFilter != nil
+                 ? "No Matching Profiles" : "No Profiles")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
             Text("Create a profile to bind a bundle ID, certificates and devices")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.body)
-            Button("New Profile") {
+            Button("Create Profile") {
                 showCreateForm = true
             }
             .buttonStyle(.borderedProminent)
@@ -179,11 +229,12 @@ struct ProfilesTableView: View {
 
     private var headerRow: some View {
         HStack(spacing: 12) {
-            Text("Name").frame(width: 240, alignment: .leading)
-            Text("Type").frame(width: 200, alignment: .leading)
-            Text("Platform").frame(width: 120, alignment: .leading)
-            Text("State").frame(width: 140, alignment: .leading)
-            Text("Expiration").frame(maxWidth: .infinity, alignment: .leading)
+            Text("Name").frame(width: 200, alignment: .leading)
+            Text("Type").frame(width: 140, alignment: .leading)
+            Text("Bundle ID").frame(width: 200, alignment: .leading)
+            Text("Expiration").frame(width: 120, alignment: .leading)
+            Text("Status").frame(width: 110, alignment: .leading)
+            Text("Platform").frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundColor(ShipyardTheme.body)
@@ -193,65 +244,85 @@ struct ProfilesTableView: View {
     }
 
     private func profileRow(_ profile: ProfileModel) -> some View {
-        let state = profileStateDisplay(profile.profileState)
+        let status = profile.computedStatus
+        let bundleLabel = profile.bundleId.flatMap(\.identifier)
+            ?? profile.bundleId.flatMap(\.name) ?? "—"
         return HStack(spacing: 12) {
             Text(profile.name ?? "Unknown profile")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(width: 240, alignment: .leading)
-
-            Text(profileTypeDisplay(profile.profileType))
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.title)
-                .lineLimit(1)
                 .frame(width: 200, alignment: .leading)
 
-            Text(shipyardPlatformDisplay(profile.platform ?? ""))
+            Text(profileTypeName(profile.profileType))
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+                .lineLimit(1)
+                .frame(width: 140, alignment: .leading)
+
+            Text(bundleLabel)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(ShipyardTheme.body)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 200, alignment: .leading)
+
+            Text(profileDateText(profile.expirationDate))
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(width: 120, alignment: .leading)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(profileStatusColor(status))
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                Text(status.displayName)
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.title)
+            }
+            .frame(width: 110, alignment: .leading)
+
+            Text(profilePlatformChip(profile.platform))
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(ShipyardTheme.body)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Color.gray.opacity(0.12))
                 .cornerRadius(4)
-                .frame(width: 120, alignment: .leading)
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(state.color)
-                    .frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
-                Text(state.text)
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.title)
-            }
-            .frame(width: 140, alignment: .leading)
-
-            Text(profileExpiryDisplay(profile.expirationDate))
-                .font(.system(size: 13))
-                .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .frame(height: 38)
         .contentShape(Rectangle())
+        .onTapGesture {
+            selectedProfile = profile
+        }
         .contextMenu {
-            Button("Download") {
-                Task { @MainActor in
-                    if case .failure(let message) = await viewModel.downloadProfile(profile) {
-                        bannerError = message
+            Button("Open") { selectedProfile = profile }
+            if downloadingId == profile.id {
+                Text("Downloading…")
+            } else {
+                Button("Download") {
+                    Task { @MainActor in
+                        downloadingId = profile.id
+                        defer { downloadingId = nil }
+                        if case .failure(let message) = await viewModel.downloadProfile(profile) {
+                            bannerError = message
+                        }
                     }
                 }
+                .accessibilityLabel("Download \(profile.name ?? "profile")")
             }
-            .accessibilityLabel("Download \(profile.name ?? "profile")")
             Button("Delete", role: .destructive) {
                 deleting = profile
             }
             .accessibilityLabel("Delete \(profile.name ?? "profile")")
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(profile.name ?? "profile"), \(state.text)")
+        .accessibilityLabel("\(profile.name ?? "profile"), \(status.displayName)")
     }
 
     @ViewBuilder
@@ -281,59 +352,4 @@ struct ProfilesTableView: View {
             }
         }
     }
-}
-
-// MARK: - Display helpers
-
-private struct ProfileStateDisplay {
-    let color: Color
-    let text: String
-}
-
-private func profileStateDisplay(_ raw: String?) -> ProfileStateDisplay {
-    switch raw {
-    case "ACTIVE":
-        return ProfileStateDisplay(color: ShipyardTheme.success, text: "Active")
-    case "PROCESSING":
-        return ProfileStateDisplay(color: ShipyardTheme.warning, text: "Processing")
-    case "INVALID":
-        return ProfileStateDisplay(color: ShipyardTheme.danger, text: "Invalid")
-    case nil:
-        return ProfileStateDisplay(color: ShipyardTheme.body, text: "—")
-    default:
-        return ProfileStateDisplay(color: ShipyardTheme.body, text: raw ?? "—")
-    }
-}
-
-/// "IOS_APP_DEVELOPMENT" → "iOS App Development" via the picker's own
-/// display name; unknown codes pass through prettified.
-private func profileTypeDisplay(_ raw: String?) -> String {
-    guard let raw, !raw.isEmpty else { return "—" }
-    if let option = ProfileTypeOption(rawValue: raw) {
-        return option.displayName
-    }
-    return raw
-        .replacingOccurrences(of: "_", with: " ")
-        .capitalized
-        .replacingOccurrences(of: "Ios", with: "iOS")
-        .replacingOccurrences(of: "Tvos", with: "tvOS")
-}
-
-/// "Sep 28, 2026"; unparseable values pass through untouched.
-private func profileExpiryDisplay(_ raw: String?) -> String {
-    guard let raw, !raw.isEmpty else { return "—" }
-    if let date = sharedProfileDate(raw) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, yyyy"
-        return formatter.string(from: date)
-    }
-    return raw
-}
-
-private func sharedProfileDate(_ raw: String) -> Date? {
-    if let date = ISO8601DateFormatter().date(from: raw) { return date }
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXXXX"
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    return formatter.date(from: raw)
 }
