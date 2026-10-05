@@ -455,87 +455,107 @@ struct CreateSuccessView: View {
 
 /// POST /v1/bundleIds — name, identifier and platform are required;
 /// seedId is optional. Needs an Admin key role; a TestFlight-only key 403s.
-/// Internal (not private) so the Figma bundle-IDs table reuses the form.
+///
+/// The sheet is a three-step machine so it never nests sheets:
+/// register (Figma 114-2194 explicit / 114-2239 wildcard) → registered
+/// confirmation (114-2284) → optionally the profile form (the new bundle ID
+/// is preselected). Internal (not private) so the Figma bundle-IDs table
+/// reuses the form.
 struct CreateBundleIdForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
+    /// Deep-links the new bundle ID into its detail after "Open Bundle ID".
+    var onOpenBundleId: ((String) -> Void)?
+    /// Team label in the registered confirmation explanation (114-2284).
+    private var teamName: String {
+        CredentialStorage.shared.selectedTeam?.key ?? "this team"
+    }
+
+    /// Registered resource, or nil while the form is still open. Mirrors
+    /// CreateProfileForm's `createdProfile` gate.
+    @State private var createdBundleId: BundleIdModel?
+    @State private var showProfileForm = false
     @State private var name = ""
     @State private var identifier = ""
     @State private var platform: BundleIdPlatformOption = .IOS
+    @State private var identifierKind: BundleIdIdentifierKind = .explicit
     @State private var seedId = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Create Bundle ID")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(ShipyardTheme.title)
-                .frame(maxWidth: .infinity)
-                .padding(16)
-                .background(ShipyardTheme.sidebarBackground)
-                .overlay(
-                    ShipyardTheme.rowDivider.frame(height: 1),
-                    alignment: .bottom
-                )
-
-            VStack(alignment: .leading, spacing: 20) {
-                sheetField(label: "NAME", text: $name, prompt: "My App", mono: false)
-                sheetField(
-                    label: "IDENTIFIER",
-                    text: $identifier,
-                    prompt: "com.example.app",
-                    mono: true)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("PLATFORM")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(ShipyardTheme.body)
-                    Menu {
-                        ForEach(BundleIdPlatformOption.allCases, id: \.self) { option in
-                            Button(option.displayName) {
-                                platform = option
+            BundleIDSheetChrome(title: sheetTitle, onClose: onDone) {
+                if let created = createdBundleId {
+                    // "Create Profile…" steps sideways instead of pushing a
+                    // second sheet, so the confirmation is still on the
+                    // stack when the profile form closes.
+                    if showProfileForm {
+                        CreateProfileForm(
+                            viewModel: viewModel,
+                            onDone: { showProfileForm = false },
+                            presetBundleIdId: created.id
+                        )
+                    } else {
+                        BundleIDRegisteredSheet(
+                            bundleId: created,
+                            teamName: teamName,
+                            onCreateProfile: { showProfileForm = true },
+                            onOpenBundleId: {
+                                onOpenBundleId?(created.id)
+                                onDone()
                             }
-                        }
-                    } label: {
-                        HStack {
-                            Text(platform.displayName)
-                                .font(.system(size: 13))
-                                .foregroundColor(ShipyardTheme.title)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(LaunchTheme.field)
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(LaunchTheme.border, lineWidth: 1)
                         )
                     }
-                    .menuStyle(.borderlessButton)
-                    .disabled(isSaving)
-                    .accessibilityLabel("Select platform")
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    sheetField(
-                        label: "SEED ID (OPTIONAL)",
-                        text: $seedId,
-                        prompt: "Team seed identifier",
-                        mono: true)
-                    Text("Leave blank unless Apple assigned a seed ID to this identifier.")
-                        .font(.system(size: 11))
-                        .foregroundColor(ShipyardTheme.body)
-                }
-
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.system(size: 12))
-                        .foregroundColor(AppTheme.negative)
-                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    registerForm
                 }
             }
-            .padding(24)
+        }
+        .frame(width: 680)
+    }
 
-            HStack {
+    // MARK: - Register (114-2194 explicit / 114-2239 wildcard)
+
+    private var registerForm: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            BundleIDFormSection(title: "Identifier details") {
+                VStack(alignment: .leading, spacing: 12) {
+                    labelledField(label: "Name", text: $name, prompt: "Orbit Companion", mono: false)
+                    platformField
+                    // Both choices always stay on screen: 114-2239 shows
+                    // the wildcard variant with wildcard preselected, but
+                    // hiding Explicit here made it a one-way door with no
+                    // way back once tapped.
+                    identifierChoice(.explicit)
+                    identifierChoice(.wildcard)
+                    VStack(alignment: .leading, spacing: 5) {
+                        labelledField(
+                            label: "Bundle identifier",
+                            text: $identifier,
+                            prompt: identifierKind == .wildcard
+                                ? "com.acme.orbit.*"
+                                : "com.acme.orbit.companion",
+                            mono: false)
+                        Text("Reverse-DNS notation. Identifier is immutable after registration.")
+                            .font(.system(size: 11))
+                            .foregroundColor(ShipyardTheme.body)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    seedIdField
+                    if let errorMessage {
+                        BundleIDStatusMessage(
+                            symbol: "exclamationmark.triangle.fill",
+                            tint: ShipyardTheme.dangerBorder,
+                            surface: ShipyardTheme.dangerSurface,
+                            title: "Couldn't register this bundle ID",
+                            message: errorMessage
+                        )
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
                 Spacer()
                 Button("Cancel") { onDone() }
                     .buttonStyle(.launchSecondary)
@@ -544,62 +564,215 @@ struct CreateBundleIdForm: View {
                     ProgressView()
                         .scaleEffect(0.7)
                 } else {
-                    Button("Create") {
-                        Task { @MainActor in
-                            isSaving = true
-                            defer { isSaving = false }
-                            let result = await viewModel.createBundleId(
-                                name: name,
-                                identifier: identifier,
-                                platform: platform,
-                                seedId: seedId)
-                            if case .success = result {
-                                onDone()
-                            } else if case .failure(let message) = result {
-                                // .ignored: duplicate in flight / cancelled —
-                                // keep the form open, nothing was created.
-                                errorMessage = message
-                            }
-                        }
-                    }
-                    .buttonStyle(.launchPrimary)
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              || identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Register Bundle ID") { register() }
+                        .buttonStyle(.launchPrimary)
+                        .disabled(!canRegister)
                 }
             }
-            .padding(16)
-            .background(ShipyardTheme.sidebarBackground)
-            .overlay(
-                ShipyardTheme.rowDivider.frame(height: 1),
-                alignment: .top
-            )
         }
-        .frame(width: 560)
     }
 
-    private func sheetField(label: String, text: Binding<String>, prompt: String, mono: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    /// The chrome renders the heading, so the title tracks the current
+    /// step: the register variant (114-2194 / 114-2239), the registered
+    /// confirmation (114-2284), or the sideways-stepped profile wizard.
+    /// 114-2239 shows the wildcard variant with wildcard preselected, but
+    /// both radios stay on screen in that variant so Explicit is always
+    /// reachable again.
+    private var sheetTitle: String {
+        if showProfileForm { return "Create a profile" }
+        if createdBundleId != nil { return "Bundle identifier registered" }
+        return identifierKind == .wildcard
+            ? "Register a wildcard bundle identifier"
+            : "Register an explicit bundle identifier"
+    }
+
+    private var canRegister: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func identifierChoice(_ kind: BundleIdIdentifierKind) -> some View {
+        let isSelected = identifierKind == kind
+        return Button {
+            identifierKind = kind
+            if kind == .wildcard, !identifier.hasSuffix("*") {
+                // Wildcards are the trailing-* form; keep the reverse-DNS
+                // prefix the user typed and append it rather than dropping
+                // their input on the toggle.
+                let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    identifier = "com.example.*"
+                } else if !trimmed.contains("*") {
+                    identifier = trimmed + ".*"
+                }
+            } else if kind == .explicit {
+                identifier = identifier.replacingOccurrences(of: ".*", with: "")
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundColor(isSelected ? ShipyardTheme.accent : ShipyardTheme.body)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(kind.displayName)
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text(kind.explanation)
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSaving)
+        .accessibilityLabel("\(kind.displayName) identifier")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+    }
+
+    /// Apple only honours `seedId` for wildcard identifiers, so the field
+    /// is wildcard-only and the explicit request drops it.
+    @ViewBuilder
+    private var seedIdField: some View {
+        if identifierKind == .wildcard {
+            VStack(alignment: .leading, spacing: 5) {
+                labelledField(
+                    label: "Seed ID (optional)",
+                    text: $seedId,
+                    prompt: "Team seed identifier",
+                    mono: false)
+                Text("Leave blank unless Apple assigned a seed ID to this identifier.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var platformField: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Platform")
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
+            Menu {
+                ForEach(BundleIdPlatformOption.allCases, id: \.self) { option in
+                    Button(option.displayName) { platform = option }
+                }
+            } label: {
+                HStack {
+                    Text(platform.displayName)
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.title)
+                    Spacer()
+                    Text("\u{2304}")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(minHeight: 30)
+                .background(ShipyardTheme.tableBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(ShipyardTheme.rowDivider, lineWidth: 1)
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(isSaving)
+            .accessibilityLabel("Platform")
+        }
+    }
+
+    private func labelledField(label: String, text: Binding<String>, prompt: String, mono: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
             Text(label)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(ShipyardTheme.body)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
             TextField(prompt, text: text)
                 .textFieldStyle(.plain)
                 .font(mono ? .system(size: 13, design: .monospaced) : .system(size: 13))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(LaunchTheme.field)
-                .cornerRadius(6)
+                .foregroundColor(ShipyardTheme.title)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(minHeight: 30)
+                .background(ShipyardTheme.tableBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(LaunchTheme.border, lineWidth: 1)
+                        .stroke(ShipyardTheme.rowDivider, lineWidth: 1)
                 )
                 .disabled(isSaving)
         }
     }
+
+    private func register() {
+        Task { @MainActor in
+            isSaving = true
+            errorMessage = nil
+            defer { isSaving = false }
+            let result = await viewModel.createBundleId(
+                name: name,
+                identifier: identifier,
+                platform: platform,
+                seedId: identifierKind == .wildcard ? seedId : nil
+            )
+            switch result {
+            case .value(let bundleId):
+                createdBundleId = bundleId
+            case .failure(let message):
+                // .ignored: duplicate in flight / cancelled — keep the
+                // form open, nothing was created.
+                errorMessage = message
+            case .ignored:
+                break
+            }
+        }
+    }
+
 }
 
+/// Figma 114-2284 — confirmation after a successful register. Reports the
+/// three properties Apple returns on the created resource and offers the
+/// two follow-on actions: continue to a profile, or open the new detail.
+struct BundleIDRegisteredSheet: View {
+    let bundleId: BundleIdModel
+    let teamName: String
+    var onCreateProfile: () -> Void
+    var onOpenBundleId: () -> Void
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            BundleIDStatusMessage(
+                symbol: "checkmark.circle.fill",
+                tint: ShipyardTheme.successBorder,
+                surface: ShipyardTheme.successSurface,
+                title: "\(bundleId.name ?? "Bundle ID") · \(bundlePlatformDisplay(bundleId.platform))",
+                message: "\(bundleId.identifier ?? "This identifier") is registered for \(teamName)."
+            )
 
+            BundleIDResourceTable(
+                headers: ["Property", "Value"],
+                rows: [
+                    ["Identifier type", bundleId.identifierKind.displayName],
+                    ["Seed / team ID", bundleId.seedId ?? "None"],
+                    // A freshly registered identifier has no capability
+                    // rows yet; the detail view is where they get enabled.
+                    ["Capabilities", "None enabled yet"]
+                ]
+            )
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Create Profile…", action: onCreateProfile)
+                    .buttonStyle(.launchSecondary)
+                Button("Open Bundle ID", action: onOpenBundleId)
+                    .buttonStyle(.launchPrimary)
+            }
+        }
+    }
+}
 
 /// POST /v1/profiles — name, type, bundle ID and at least one
 /// certificate; devices optional (required server-side only for
@@ -610,6 +783,10 @@ struct CreateBundleIdForm: View {
 struct CreateProfileForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
+    /// Preselected bundle ID. Set when the form is reached from the
+    /// bundle-IDs "Create Profile…" action (Figma 114-2284), where the
+    /// profile must belong to the identifier that was just registered.
+    var presetBundleIdId: String?
     @State private var name = ""
     /// Figma 114-3320: platform picker + distribution-kind radios resolve
     /// to a concrete type; `otherType` covers In-House/Direct/Catalyst
@@ -618,6 +795,7 @@ struct CreateProfileForm: View {
     @State private var kind: ProfileTypeOption.DistributionKind? = .development
     @State private var otherType: ProfileTypeOption?
     @State private var bundleIdId: String?
+    @State private var didApplyPreset = false
     @State private var certificateIds: Set<String> = []
     @State private var deviceIds: Set<String> = []
     @State private var isSaving = false
@@ -813,6 +991,16 @@ struct CreateProfileForm: View {
             viewModel.loadAllPages(.bundleIds)
             viewModel.loadAllPages(.certificates)
             viewModel.loadAllPages(.devices)
+            // Preselect once: re-applying on a later appear would stomp a
+            // deliberate re-pick after the profile form reports an error.
+            if let presetBundleIdId, !didApplyPreset {
+                didApplyPreset = true
+                bundleIdId = presetBundleIdId
+                if let match = bundleIds.first(where: { $0.id == presetBundleIdId }),
+                   let matchPlatform = match.platform {
+                    platformCode = matchPlatform
+                }
+            }
         }
     }
 

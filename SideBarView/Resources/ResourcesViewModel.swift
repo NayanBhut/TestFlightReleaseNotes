@@ -144,6 +144,23 @@ final class ResourcesViewModel: ObservableObject {
         case ignored
     }
 
+    /// Payload-carrying sibling of `WriteResult` for the two parallel
+    /// pre-check fetches behind the delete sheets, where a failure must
+    /// keep its message instead of collapsing to a bare `.ignored`.
+    enum FetchResult<T> {
+        case value(T)
+        case failure(String)
+    }
+
+    /// Payload-carrying `WriteResult`. Registering a bundle ID has to hand
+    /// the created resource back: the confirmation sheet (Figma 114-2284)
+    /// reads its identifier type / seed ID and offers "Open Bundle ID".
+    enum WriteValueResult<T> {
+        case value(T)
+        case failure(String)
+        case ignored
+    }
+
     /// In-flight write keys: device/certificate ids for row actions plus
     /// one key per create form — per-item so saving one row never blocks
     /// another (same rule as DetailViewModel.updatingSaveKeys).
@@ -540,6 +557,12 @@ final class ResourcesViewModel: ObservableObject {
         dependentsTask = nil
         dependentsCache = [:]
         dependentProfilesState = .idle
+        // Bundle ID detail state belongs to the old team too.
+        bundleIdProfilesCache = [:]
+        bundleIdCapabilitiesCache = [:]
+        bundleIdProfilesState = .idle
+        bundleIdCapabilitiesState = .idle
+        bundleIdDependenciesState = .idle
         importProgress = nil
         loadedKinds = []
         devicesState = .idle
@@ -996,10 +1019,15 @@ final class ResourcesViewModel: ObservableObject {
 
     /// POST /v1/bundleIds — register a bundle ID. On success the search
     /// filter is cleared and the row is prepended (same as devices).
+    ///
+    /// Returns the created resource rather than a bare `.success`: the
+    /// register sheet swaps to the "Bundle identifier registered"
+    /// confirmation (Figma 114-2284), which reads the identifier type and
+    /// seed ID off the response and can deep-link into the new detail.
     func createBundleId(name: String,
                         identifier: String,
                         platform: BundleIdPlatformOption,
-                        seedId: String?) async -> WriteResult {
+                        seedId: String?) async -> WriteValueResult<BundleIdModel> {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSeedId = (seedId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1031,7 +1059,7 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             let model = try getDecoder().decode(BundleIdModel.self, from: responseData)
             prependBundleId(model)
-            return .success
+            return .value(model)
         } catch {
             resourcesLogger.error("Failed to create bundle ID: \(error.localizedDescription)")
             guard !Task.isCancelled else { return .ignored }
@@ -1111,6 +1139,388 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
+    }
+
+    // MARK: - Bundle ID detail (Module 04)
+    //
+    // Contracts verified against Apple's OpenAPI spec (developer.apple.com
+    // sample-code download):
+    // - GET /v1/bundleIds/{id}/profiles is a real related-resource route
+    //   (devices have none, hence the scan in loadDependentProfiles). It
+    //   accepts only limit + fields[profiles] — no `include` — so signing
+    //   certificate names are NOT available for bundle-ID dependents.
+    // - GET /v1/apps?filter[bundleId]= finds the apps that block a delete.
+    //   Apps have no appleId attribute, so dependency rows carry the app
+    //   name only (Figma 114-2665 shows an Apple ID we cannot render).
+    // - DELETE /v1/bundleIds/{id} documents 204/400/401/403/404/429 —
+    //   NO 409. So "blocked by dependencies" (Figma 114-2665) cannot be
+    //   detected from the status code and is decided by pre-checking
+    //   dependencies; a delete can still 400 if state changed meanwhile,
+    //   which is why the unused-sheet copy warns about that.
+
+    /// One row of the delete-blocked dependency table (Figma 114-2665).
+    struct BundleIdDependency: Equatable, Identifiable {
+        enum Kind: Equatable { case app, profile }
+
+        var kind: Kind
+        var name: String
+        /// "App association blocks deletion" / "Active profile".
+        var reason: String
+        /// Target for the row's "Open Profile →" jump; nil for apps,
+        /// which jump by name into the Apps list.
+        var profileId: String?
+
+        var id: String {
+            switch kind {
+            case .app: return "app-\(name)"
+            case .profile: return "profile-\(profileId ?? name)"
+            }
+        }
+
+        var jumpLabel: String {
+            switch kind {
+            case .app: return "Open App →"
+            case .profile: return "Open Profile →"
+            }
+        }
+    }
+
+    /// Pure mapper, unit-tested like `dependents(matching:in:)` above.
+    nonisolated static func bundleIdDependencies(apps: [AppsData],
+                                                  profiles: [ProfileModel]) -> [BundleIdDependency] {
+        var rows: [BundleIdDependency] = []
+        for app in apps {
+            rows.append(BundleIdDependency(
+                kind: .app,
+                name: app.name ?? "Untitled app",
+                reason: "App association blocks deletion",
+                profileId: nil))
+        }
+        for profile in profiles {
+            rows.append(BundleIdDependency(
+                kind: .profile,
+                name: profile.name ?? "Untitled profile",
+                // Design copy distinguishes live profiles; a non-ACTIVE
+                // state is still a dependency, so say what it is.
+                reason: (profile.profileState ?? "").uppercased() == "ACTIVE"
+                    ? "Active profile"
+                    : "Profile (\(profile.profileType ?? "unknown"))",
+                profileId: profile.id))
+        }
+        return rows
+    }
+
+    @Published var bundleIdProfilesState: ViewState<[ProfileModel]> = .idle
+    @Published var bundleIdCapabilitiesState: ViewState<[BundleIdCapabilityModel]> = .idle
+    @Published var bundleIdDependenciesState: ViewState<[BundleIdDependency]> = .idle
+
+    /// Profiles per bundle id; a rename does not change membership, but a
+    /// profile delete/create does, so the delete paths evict their entry.
+    private var bundleIdProfilesCache: [String: [ProfileModel]] = [:]
+    private var bundleIdCapabilitiesCache: [String: [BundleIdCapabilityModel]] = [:]
+
+    /// Loads both detail panes. Separate states so the Dependent-profiles
+    /// table can retry without refetching capabilities, and vice versa.
+    func loadBundleIdDetail(for bundleId: BundleIdModel) {
+        loadBundleIdProfiles(for: bundleId)
+        loadBundleIdCapabilities(for: bundleId)
+    }
+
+    func loadBundleIdProfiles(for bundleId: BundleIdModel) {
+        if let cached = bundleIdProfilesCache[bundleId.id] {
+            bundleIdProfilesState = cached.isEmpty ? .empty : .loaded(cached)
+            return
+        }
+        Task { await fetchBundleIdProfiles(for: bundleId) }
+    }
+
+    func retryBundleIdProfiles(for bundleId: BundleIdModel) {
+        bundleIdProfilesCache.removeValue(forKey: bundleId.id)
+        loadBundleIdProfiles(for: bundleId)
+    }
+
+    func loadBundleIdCapabilities(for bundleId: BundleIdModel) {
+        if let cached = bundleIdCapabilitiesCache[bundleId.id] {
+            bundleIdCapabilitiesState = cached.isEmpty ? .empty : .loaded(cached)
+            return
+        }
+        Task { await fetchBundleIdCapabilities(for: bundleId) }
+    }
+
+    func retryBundleIdCapabilities(for bundleId: BundleIdModel) {
+        bundleIdCapabilitiesCache.removeValue(forKey: bundleId.id)
+        loadBundleIdCapabilities(for: bundleId)
+    }
+
+    /// Query params for GET /v1/bundleIds/{id}/profiles. Kept as a named
+    /// constant because the "no `limit`, no `cursor`" rule is the whole
+    /// contract for this route and is asserted in the validation suite.
+    static let bundleIdProfilesParams = [
+        "fields[profiles]": "name,platform,profileType,profileState",
+    ]
+
+    /// Query params for GET /v1/bundleIds/{id}/bundleIdCapabilities — same
+    /// rule, see `bundleIdProfilesParams`.
+    static let bundleIdCapabilitiesParams = [
+        "fields[bundleIdCapabilities]": "capabilityType",
+    ]
+
+    /// Params for the delete pre-check's profile fetch. Deliberately not
+    /// `bundleIdProfilesParams`: the blocked-delete rows need no `platform`.
+    static let bundleIdProfilesForDeleteParams = [
+        "fields[profiles]": "name,profileType,profileState",
+    ]
+
+    /// GET /v1/bundleIds/{id}/profiles — single request.
+    ///
+    /// The live service 400s `limit` on this to-many-related route
+    /// (PARAMETER_ERROR.ILLEGAL, "This relationship does not support this
+    /// parameter") even though Apple's published spec still lists it.
+    /// `fields[...]` is the only parameter it accepts, so there is no way
+    /// to request a page size and no paging loop to run. Verified against
+    /// the service, not inferred from the spec — and note the spec's
+    /// silence on `cursor` is not evidence either way, since it omits
+    /// cursor from every route including the paginated /v1/apps.
+    private func fetchBundleIdProfiles(for bundleId: BundleIdModel) async {
+        bundleIdProfilesState = .loading
+        // No `include` on this route, so no devices/certificates.
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getBundleIds, queryParams: Self.bundleIdProfilesParams, path: "\(bundleId.id)/profiles"),
+            apiVersion: .v1) else {
+            bundleIdProfilesState = .error("No team selected. Add a team to load profiles.")
+            return
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let page = try getDecoder().decode(BundleIdProfilesDocument.self, from: data)
+            finishBundleIdProfiles(page.data.map { $0.asProfileModel() }, for: bundleId)
+        } catch {
+            guard !Task.isCancelled else { return }
+            resourcesLogger.error("Failed to load bundle ID profiles: \(error.localizedDescription)")
+            bundleIdProfilesState = .error(friendlyMessage(for: error))
+        }
+    }
+
+    private func finishBundleIdProfiles(_ profiles: [ProfileModel], for bundleId: BundleIdModel) {
+        bundleIdProfilesCache[bundleId.id] = profiles
+        bundleIdProfilesState = profiles.isEmpty ? .empty : .loaded(profiles)
+    }
+
+    /// GET /v1/bundleIds/{id}/bundleIdCapabilities — single request.
+    /// Same live-service contract as the sibling profiles route: `limit`
+    /// 400s with PARAMETER_ERROR.ILLEGAL on this relationship despite the
+    /// published spec listing it, so `fields[...]` is all it accepts. No
+    /// `include`, no `sort` — so ordering is local, by display name. A
+    /// capability is "enabled" simply by existing; there is no status
+    /// attribute.
+    private func fetchBundleIdCapabilities(for bundleId: BundleIdModel) async {
+        bundleIdCapabilitiesState = .loading
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getBundleIds, queryParams: Self.bundleIdCapabilitiesParams, path: "\(bundleId.id)/bundleIdCapabilities"),
+            apiVersion: .v1) else {
+            bundleIdCapabilitiesState = .error("No team selected. Add a team to load capabilities.")
+            return
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let page = try getDecoder().decode(BundleIdCapabilitiesDocument.self, from: data)
+            finishBundleIdCapabilities(page.data, for: bundleId)
+        } catch {
+            guard !Task.isCancelled else { return }
+            resourcesLogger.error("Failed to load bundle ID capabilities: \(error.localizedDescription)")
+            bundleIdCapabilitiesState = .error(friendlyMessage(for: error))
+        }
+    }
+
+    private func finishBundleIdCapabilities(_ capabilities: [BundleIdCapabilityModel],
+                                            for bundleId: BundleIdModel) {
+        let sorted = capabilities.sorted {
+            Self.capabilitySortKey($0) < Self.capabilitySortKey($1)
+        }
+        bundleIdCapabilitiesCache[bundleId.id] = sorted
+        bundleIdCapabilitiesState = sorted.isEmpty ? .empty : .loaded(sorted)
+    }
+
+    nonisolated private static func capabilitySortKey(_ capability: BundleIdCapabilityModel) -> String {
+        let raw = capability.capabilityType ?? ""
+        return CapabilityTypeOption(rawValue: raw)?.displayName ?? raw
+    }
+
+    /// Dependency pre-check for the delete sheets (Figma 114-2665 /
+    /// 114-2700). Either fetch failing surfaces as an error state rather
+    /// than silently reporting "unused" and offering a destructive sheet.
+    func loadBundleIdDependencies(for bundleId: BundleIdModel) {
+        bundleIdDependenciesState = .loading
+        // Sequential, not async let: the results would cross an actor
+        // boundary as non-Sendable payloads (Swift 6 warning), and two
+        // GETs behind a user-initiated Delete tap is not worth that.
+        Task { @MainActor in
+            let appResult = await fetchApps(bundleIdId: bundleId.id)
+            guard !Task.isCancelled else { return }
+            if case .failure(let message) = appResult {
+                bundleIdDependenciesState = .error(message)
+                return
+            }
+            let profileResult = await fetchBundleIdProfilesForDelete(bundleId.id)
+            guard !Task.isCancelled else { return }
+            if case .failure(let message) = profileResult {
+                bundleIdDependenciesState = .error(message)
+                return
+            }
+            let rows: [BundleIdDependency]
+            switch (appResult, profileResult) {
+            case (.value(let apps), .value(let profiles)):
+                rows = Self.bundleIdDependencies(apps: apps, profiles: profiles)
+            default:
+                rows = []
+            }
+            bundleIdDependenciesState = rows.isEmpty ? .empty : .loaded(rows)
+        }
+    }
+
+    /// Apps attached to the identifier. Capped at `AppConfigs`' own page
+    /// budget (20 × 50) — but a cap reached *with* a cursor left is a
+    /// failure, not a short list: reporting "unused" from truncated data
+    /// would send the user to a destructive confirm sheet on bad
+    /// information.
+    private func fetchApps(bundleIdId: String) async -> FetchResult<[AppsData]> {
+        var all: [AppsData] = []
+        var cursor: String?
+        for _ in 0..<20 {
+            guard !Task.isCancelled else { return .failure("Cancelled.") }
+            // filter[bundleId] is a real array filter on /v1/apps (verified).
+            var params = [
+                "filter[bundleId]": bundleIdId,
+                "limit": "50",
+                "fields[apps]": "name",
+            ]
+            if let cursor { params["cursor"] = cursor }
+            guard let request = APIClient.shared.getRequest(
+                api: .get(name: .getAllApps, queryParams: params),
+                apiVersion: .v1) else {
+                return .failure("No team selected. Add a team to load apps.")
+            }
+            do {
+                let data = try await APIClient.shared.callAPI(with: request)
+                guard !Task.isCancelled else { return .failure("Cancelled.") }
+                let page = try getDecoder().decode(AppsDocument.self, from: data)
+                all += page.data
+                guard let next = page.meta.paging.nextCursor, !next.isEmpty else {
+                    return .value(all)
+                }
+                cursor = next
+            } catch {
+                guard !Task.isCancelled else { return .failure("Cancelled.") }
+                resourcesLogger.error("Failed to load apps for bundle ID: \(error.localizedDescription)")
+                return .failure(friendlyMessage(for: error))
+            }
+        }
+        return .failure("This identifier has more dependent apps than can be listed at once. Remove them in Apple, then retry.")
+    }
+
+    /// Profiles attached to the identifier for the delete pre-check. Same
+    /// unpaginated route as fetchBundleIdProfiles, so single request and no
+    /// `limit`/`cursor`. There is no `include` here either, so
+    /// signing-certificate names are unavailable for the rows.
+    private func fetchBundleIdProfilesForDelete(_ bundleIdId: String) async -> FetchResult<[ProfileModel]> {
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getBundleIds, queryParams: Self.bundleIdProfilesForDeleteParams, path: "\(bundleIdId)/profiles"),
+            apiVersion: .v1) else {
+            return .failure("No team selected. Add a team to load profiles.")
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .failure("Cancelled.") }
+            let page = try getDecoder().decode(BundleIdProfilesDocument.self, from: data)
+            return .value(page.data.map { $0.asProfileModel() })
+        } catch {
+            guard !Task.isCancelled else { return .failure("Cancelled.") }
+            resourcesLogger.error("Failed to load bundle ID profiles: \(error.localizedDescription)")
+            return .failure(friendlyMessage(for: error))
+        }
+    }
+
+    /// DELETE /v1/bundleIdCapabilities/{id} — disable a capability. The
+    /// detail list is refetched rather than patched locally: the server
+    /// owns the remaining settings, and the "Advanced setup · manual"
+    /// column depends on what survives.
+    func disableCapability(_ capability: BundleIdCapabilityModel,
+                           for bundleId: BundleIdModel) async -> WriteResult {
+        let key = "capability-\(capability.id)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .bundleIdCapabilities, path: capability.id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the capability request.")
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            bundleIdCapabilitiesCache.removeValue(forKey: bundleId.id)
+            await fetchBundleIdCapabilities(for: bundleId)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to disable capability: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// POST /v1/bundleIdCapabilities — enable a capability on the
+    /// identifier. Apple's "Enable a capability" endpoint, 201 Created.
+    ///
+    /// The create body must carry `relationships.bundleId` (unlike every
+    /// other write in this module, which keys off `path`), so this is
+    /// built from the model rather than a query-param APIMethod.
+    ///
+    /// Lists are refetched rather than patched locally, matching
+    /// disableCapability: the server owns the resulting capability id and
+    /// its settings, and the disable rows depend on both.
+    func enableCapability(_ option: CapabilityTypeOption,
+                          for bundleId: BundleIdModel) async -> WriteResult {
+        let key = "capability-enable-\(bundleId.id)-\(option.rawValue)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        let body = BundleIdCapabilityCreateRequest(
+            data: BundleIdCapabilityCreateData(
+                attributes: BundleIdCapabilityCreateAttributes(capabilityType: option.rawValue),
+                relationships: BundleIdCapabilityCreateRelationships(
+                    bundleId: BundleIdCapabilityBundleIdRef(
+                        data: BundleIdCapabilityBundleIdData(id: bundleId.id))))
+        )
+        guard let encoded = try? JSONEncoder().encode(body) else {
+            return .failure("Couldn't build the capability request.")
+        }
+        guard let request = APIClient.shared.getRequest(
+            api: .post(name: .bundleIdCapabilities, body: encoded),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the capability request.")
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            bundleIdCapabilitiesCache.removeValue(forKey: bundleId.id)
+            await fetchBundleIdCapabilities(for: bundleId)
+            return .success
+        } catch {
+            resourcesLogger.error("Failed to enable capability: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// A profile row disappearing changes both the detail table and the
+    /// delete pre-check, so both caches are evicted.
+    func invalidateBundleIdDetail(for bundleIdId: String) {
+        bundleIdProfilesCache.removeValue(forKey: bundleIdId)
+        bundleIdCapabilitiesCache.removeValue(forKey: bundleIdId)
     }
 
     // MARK: - User + invitation writes (Batch I, I3)

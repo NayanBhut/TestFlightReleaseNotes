@@ -145,7 +145,19 @@ struct ShipyardShell: View {
             case .certificates:
                 CertificatesTableView(viewModel: resourcesVM)
             case .bundleIDs:
-                BundleIDsTableView(viewModel: resourcesVM)
+                BundleIDsTableView(
+                    viewModel: resourcesVM,
+                    onOpenApp: { name in
+                        // Figma "Open App →" from the blocked-delete
+                        // dependency table: land on Apps filtered to it.
+                        sidebarVM.searchText = name
+                        section = .apps
+                    },
+                    onOpenProfile: { query in
+                        resourcesVM.searchTexts[.profiles] = query
+                        section = .profiles
+                    }
+                )
             case .profiles:
                 ProfilesTableView(
                     viewModel: resourcesVM,

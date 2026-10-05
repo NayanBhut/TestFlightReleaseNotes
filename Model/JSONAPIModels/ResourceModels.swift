@@ -85,8 +85,13 @@ struct ProfileModel: Equatable, Identifiable {
     /// Devices embedded in this profile — hydrated only when the fetch
     /// uses include=devices (dependent-profile lookup); empty linkage
     /// decodes to []. The relationships key itself is required by the
-    /// decoder when declared — real list responses always carry linkage
-    /// (same exposure as BuildsModel relationships on unincluded fetches).
+    /// decoder when declared.
+    ///
+    /// NOT every route sends it. `GET /v1/bundleIds/{id}/profiles`
+    /// (dependent-profile lookup on the Bundle ID detail) returns bare
+    /// resources with no `relationships` object at all — verified against
+    /// a live payload — so that route decodes `BundleIdProfileResource`
+    /// instead. Do not "simplify" this by pointing that route back here.
     @ResourceRelationship var devices: [DeviceModel]
     /// Signing certificates — hydrated only with include=certificates.
     @ResourceRelationship var certificates: [CertificateModel]
@@ -162,6 +167,44 @@ typealias DevicesDocument = CompoundDocument<[DeviceModel], Meta>
 typealias CertificatesDocument = CompoundDocument<[CertificateModel], Meta>
 typealias BundleIdsDocument = CompoundDocument<[BundleIdModel], Meta>
 typealias ProfilesDocument = CompoundDocument<[ProfileModel], Meta>
+
+/// One profile on `GET /v1/bundleIds/{id}/profiles`.
+///
+/// The Bundle ID → profiles relationship returns resources with *no*
+/// `relationships` object, so `ProfileModel` cannot decode them (its three
+/// non-optional `@ResourceRelationship` properties each need a key that
+/// isn't there and fail with "The data couldn't be read because it is
+/// missing"). This model carries only what the route actually returns.
+/// Fields are pinned to that route's `fields[profiles]` request.
+@ResourceWrapper(type: "profiles")
+struct BundleIdProfileResource: Equatable, Identifiable {
+    static func == (lhs: BundleIdProfileResource, rhs: BundleIdProfileResource) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var name: String?
+    @ResourceAttribute var platform: String?
+    @ResourceAttribute var profileType: String?
+    /// INVALID, ACTIVE, PROCESSING
+    @ResourceAttribute var profileState: String?
+
+    /// Widens to the shared `ProfileModel` the detail table renders, with
+    /// the absent relationships as their documented empty values.
+    func asProfileModel() -> ProfileModel {
+        ProfileModel(id: id,
+                     name: name,
+                     platform: platform,
+                     profileType: profileType,
+                     profileState: profileState,
+                     devices: [],
+                     certificates: [],
+                     bundleId: nil)
+    }
+}
+
+typealias BundleIdProfilesDocument = CompoundDocument<[BundleIdProfileResource], Meta>
 typealias UsersDocument = CompoundDocument<[UserModel], Meta>
 
 // MARK: - Batch G (#10): device + certificate writes
@@ -552,6 +595,47 @@ enum BundleIdPlatformOption: String, CaseIterable {
     }
 }
 
+/// Explicit vs wildcard identifier (Figma 114-2194 / 114-2239).
+///
+/// `bundleIds` exposes no `identifierType` attribute — the API only
+/// documents the trailing `*` form, so this is derived from the identifier
+/// rather than sent. The register form uses it to pick the sheet title and
+/// the detail heading, and the confirmation sheet reports it as a
+/// read-only property.
+enum BundleIdIdentifierKind: String, CaseIterable {
+    case explicit
+    case wildcard
+
+    var displayName: String {
+        switch self {
+        case .explicit: return "Explicit"
+        case .wildcard: return "Wildcard"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .explicit: return "A unique identifier for one app."
+        case .wildcard: return "For apps that do not require explicit capabilities."
+        }
+    }
+
+    /// Apple only accepts the reverse-DNS + trailing-`*` form, so the
+    /// wildcard marker is the final `.*` component. A bare trailing `*`
+    /// (`com.acme.orbit*`) or a `*` mid-string is not the wildcard form and
+    /// must not be labelled as one.
+    static func derived(from identifier: String?) -> BundleIdIdentifierKind {
+        guard let identifier else { return .explicit }
+        return identifier.hasSuffix(".*") ? .wildcard : .explicit
+    }
+}
+
+extension BundleIdModel {
+    var identifierKind: BundleIdIdentifierKind {
+        BundleIdIdentifierKind.derived(from: identifier)
+    }
+}
+
 struct BundleIdCreateRequest: Encodable {
     var data: BundleIdCreateData
 }
@@ -581,6 +665,162 @@ struct BundleIdUpdateData: Encodable {
 
 struct BundleIdUpdateAttributes: Encodable {
     var name: String
+}
+
+// MARK: - Bundle ID capabilities (Module 04 detail)
+//
+// Verified against Apple's OpenAPI spec (downloaded from developer.apple.com,
+// schema `CapabilityType`, `BundleIdCapability*`):
+// - GET /v1/bundleIds/{id}/bundleIdCapabilities
+//   (bundleIds_bundleIdCapabilities_getToManyRelated). The only
+//   field selector is fields[bundleIdCapabilities]=capabilityType,settings
+//   and there is NO `include` parameter on this route — the owning bundle ID
+//   is never hydrated server-side, but the caller already knows it.
+// - CapabilityType is a 27-value enum. CapabilitySetting (the `settings`
+//   array) carries key/name/description/enabledByDefault/visible/
+//   allowedInstances/minInstances/options — deliberately NOT modeled: the
+//   detail view only needs the capability name, and per-container/group
+//   setup is manual in Apple per the Module 04 brief.
+// - There is no `enabled` boolean. A capability is *on* by the presence of
+//   the resource. Disabling = DELETE /v1/bundleIdCapabilities/{id} (204).
+//   Re-adding = POST /v1/bundleIdCapabilities, which requires
+//   relationships.bundleId + attributes.capabilityType (both required).
+//   PATCH /v1/bundleIdCapabilities/{id} edits settings on an existing
+//   resource and requires data.id + data.type.
+@ResourceWrapper(type: "bundleIdCapabilities")
+struct BundleIdCapabilityModel: Equatable, Identifiable {
+    static func == (lhs: BundleIdCapabilityModel, rhs: BundleIdCapabilityModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var capabilityType: String?
+}
+
+typealias BundleIdCapabilitiesDocument = CompoundDocument<[BundleIdCapabilityModel], Meta>
+
+/// POST /v1/bundleIdCapabilities — enable a capability.
+///
+/// Confirmed against Apple's "Enable a capability" reference (201 Created).
+/// Unlike the read routes, the create *requires* a `relationships` entry
+/// naming the owning bundle ID — that linkage is the whole point of the
+/// call, so it is modelled as non-optional.
+struct BundleIdCapabilityCreateRequest: Encodable {
+    var data: BundleIdCapabilityCreateData
+}
+
+struct BundleIdCapabilityCreateData: Encodable {
+    var type = "bundleIdCapabilities"
+    var attributes: BundleIdCapabilityCreateAttributes
+    var relationships: BundleIdCapabilityCreateRelationships
+}
+
+struct BundleIdCapabilityCreateAttributes: Encodable {
+    /// Raw `CapabilityType` enum value (e.g. "PUSH_NOTIFICATIONS").
+    var capabilityType: String
+}
+
+struct BundleIdCapabilityCreateRelationships: Encodable {
+    var bundleId: BundleIdCapabilityBundleIdRef
+}
+
+struct BundleIdCapabilityBundleIdRef: Encodable {
+    var data: BundleIdCapabilityBundleIdData
+}
+
+struct BundleIdCapabilityBundleIdData: Encodable {
+    var type = "bundleIds"
+    var id: String
+}
+
+/// Spec enum `CapabilityType` — all 27 values, so an unexpected server
+/// value falls through to the raw string instead of being dropped.
+enum CapabilityTypeOption: String, CaseIterable {
+    case iCloud = "ICLOUD"
+    case inAppPurchase = "IN_APP_PURCHASE"
+    case gameCenter = "GAME_CENTER"
+    case pushNotifications = "PUSH_NOTIFICATIONS"
+    case wallet = "WALLET"
+    case interAppAudio = "INTER_APP_AUDIO"
+    case maps = "MAPS"
+    case associatedDomains = "ASSOCIATED_DOMAINS"
+    case personalVPN = "PERSONAL_VPN"
+    case appGroups = "APP_GROUPS"
+    case healthKit = "HEALTHKIT"
+    case homeKit = "HOMEKIT"
+    case wirelessAccessoryConfiguration = "WIRELESS_ACCESSORY_CONFIGURATION"
+    case applePay = "APPLE_PAY"
+    case dataProtection = "DATA_PROTECTION"
+    case siriKit = "SIRIKIT"
+    case networkExtensions = "NETWORK_EXTENSIONS"
+    case multipath = "MULTIPATH"
+    case hotSpot = "HOT_SPOT"
+    case nfcTagReading = "NFC_TAG_READING"
+    case classKit = "CLASSKIT"
+    case autofillCredentialProvider = "AUTOFILL_CREDENTIAL_PROVIDER"
+    case accessWifiInformation = "ACCESS_WIFI_INFORMATION"
+    case networkCustomProtocol = "NETWORK_CUSTOM_PROTOCOL"
+    case coreMediaHlsLowLatency = "COREMEDIA_HLS_LOW_LATENCY"
+    case systemExtensionInstall = "SYSTEM_EXTENSION_INSTALL"
+    case userManagement = "USER_MANAGEMENT"
+    case appleIdAuth = "APPLE_ID_AUTH"
+
+    /// Stable display names; derived `.capitalized` would render
+    /// "Icloud"/"Healthkit"/"Siri kit" — same rationale as
+    /// BundleIdPlatformOption.
+    var displayName: String {
+        switch self {
+        case .iCloud: return "iCloud"
+        case .inAppPurchase: return "In-App Purchase"
+        case .gameCenter: return "Game Center"
+        case .pushNotifications: return "Push Notifications"
+        case .wallet: return "Wallet"
+        case .interAppAudio: return "Inter-App Audio"
+        case .maps: return "Maps"
+        case .associatedDomains: return "Associated Domains"
+        case .personalVPN: return "Personal VPN"
+        case .appGroups: return "App Groups"
+        case .healthKit: return "HealthKit"
+        case .homeKit: return "HomeKit"
+        case .wirelessAccessoryConfiguration: return "Wireless Accessory Configuration"
+        case .applePay: return "Apple Pay"
+        case .dataProtection: return "Data Protection"
+        case .siriKit: return "SiriKit"
+        case .networkExtensions: return "Network Extensions"
+        case .multipath: return "Multipath"
+        case .hotSpot: return "Hot Spot"
+        case .nfcTagReading: return "NFC Tag Reading"
+        case .classKit: return "ClassKit"
+        case .autofillCredentialProvider: return "Autofill Credential Provider"
+        case .accessWifiInformation: return "Access WiFi Information"
+        case .networkCustomProtocol: return "Network Custom Protocol"
+        case .coreMediaHlsLowLatency: return "CoreMedia HLS Low Latency"
+        case .systemExtensionInstall: return "System Extension Install"
+        case .userManagement: return "User Management"
+        case .appleIdAuth: return "Sign in with Apple"
+        }
+    }
+
+    /// Capabilities where the API toggle is only half the job — the
+    /// Module 04 brief names exactly these: "APNs credentials, iCloud/App
+    /// Group membership and Sign in with Apple grouping/server URL in
+    /// Apple". Drives the "Apple Developer ↗" link in the detail table.
+    var needsManualAppleSetup: Bool {
+        switch self {
+        case .iCloud, .appGroups, .pushNotifications, .appleIdAuth:
+            return true
+        case .inAppPurchase, .gameCenter, .wallet, .interAppAudio, .maps,
+             .associatedDomains, .personalVPN, .healthKit, .homeKit,
+             .wirelessAccessoryConfiguration, .applePay, .dataProtection,
+             .siriKit, .networkExtensions, .multipath, .hotSpot,
+             .nfcTagReading, .classKit, .autofillCredentialProvider,
+             .accessWifiInformation, .networkCustomProtocol,
+             .coreMediaHlsLowLatency, .systemExtensionInstall,
+             .userManagement:
+            return false
+        }
+    }
 }
 
 // MARK: - Batch I (I3): user + invitation writes
