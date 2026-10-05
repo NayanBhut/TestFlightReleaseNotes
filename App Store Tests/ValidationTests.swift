@@ -121,6 +121,269 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(ProfileTypeOption.allCases.map(\.displayName).contains(where: \.isEmpty))
     }
 
+    func testCapabilityTypeOptionsCoverSpec() {
+        let rawValues = Set(CapabilityTypeOption.allCases.map(\.rawValue))
+        for capability in ["ICLOUD", "IN_APP_PURCHASE", "GAME_CENTER",
+                           "PUSH_NOTIFICATIONS", "INTER_APP_AUDIO", "ASSOCIATED_DOMAINS",
+                           "APP_GROUPS", "HEALTHKIT", "APPLE_PAY", "SIRIKIT",
+                           "NETWORK_EXTENSIONS", "NFC_TAG_READING", "CLASSKIT",
+                           "AUTOFILL_CREDENTIAL_PROVIDER", "ACCESS_WIFI_INFORMATION",
+                           "COREMEDIA_HLS_LOW_LATENCY", "SYSTEM_EXTENSION_INSTALL",
+                           "USER_MANAGEMENT", "APPLE_ID_AUTH"] {
+            XCTAssertTrue(rawValues.contains(capability), "Missing capability \(capability)")
+        }
+        // Display names are hand-written; a raw `.capitalized` would leak
+        // "Icloud"/"Healthkit"/"Sign in with apple".
+        XCTAssertEqual(CapabilityTypeOption.iCloud.displayName, "iCloud")
+        XCTAssertEqual(CapabilityTypeOption.healthKit.displayName, "HealthKit")
+        XCTAssertEqual(CapabilityTypeOption.appleIdAuth.displayName, "Sign in with Apple")
+        XCTAssertFalse(CapabilityTypeOption.allCases.map(\.displayName).contains(where: \.isEmpty))
+        // Module 04 brief names exactly these four as needing the manual
+        // half of the setup in Apple.
+        let manual = Set(CapabilityTypeOption.allCases.filter(\.needsManualAppleSetup))
+        XCTAssertEqual(manual, [.iCloud, .appGroups, .pushNotifications, .appleIdAuth])
+    }
+
+    // MARK: - Module 04 bundle ID dependency pre-check
+
+    func testBundleIdDependencyRowsDriveBlockedDelete() {
+        let app = AppsData(id: "app-1", name: "Orbit", appStoreVersions: [], appStoreIcon: nil)
+        var active = ProfileModel(id: "p-active", devices: [], certificates: [], bundleId: nil)
+        active.name = "Orbit Dev"
+        active.profileType = "IOS_APP_DEVELOPMENT"
+        active.profileState = "ACTIVE"
+        var expired = ProfileModel(id: "p-expired", devices: [], certificates: [], bundleId: nil)
+        expired.name = "Orbit AdHoc"
+        expired.profileType = "IOS_APP_STORE"
+        expired.profileState = "INVALID"
+
+        let rows = ResourcesViewModel.bundleIdDependencies(apps: [app],
+                                                            profiles: [active, expired])
+        XCTAssertEqual(rows.count, 3)
+
+        let appRow = rows.first { $0.kind == .app }
+        XCTAssertEqual(appRow?.name, "Orbit")
+        XCTAssertEqual(appRow?.reason, "App association blocks deletion")
+        // Apps jump by name, and the API has no appleId to render.
+        XCTAssertNil(appRow?.profileId)
+        XCTAssertEqual(appRow?.jumpLabel, "Open App →")
+
+        let profileRows = rows.filter { $0.kind == .profile }
+        XCTAssertEqual(profileRows.map(\.reason), ["Active profile", "Profile (IOS_APP_STORE)"])
+        XCTAssertEqual(profileRows.map(\.jumpLabel), ["Open Profile →", "Open Profile →"])
+        // Every profile blocks, including non-ACTIVE ones.
+        XCTAssertTrue(profileRows.allSatisfy { $0.profileId != nil })
+
+        // No dependencies → empty state → the type-to-confirm sheet.
+        XCTAssertTrue(ResourcesViewModel.bundleIdDependencies(apps: [], profiles: []).isEmpty)
+    }
+
+    // MARK: - Module 04 register flow (114-2194 / 114-2239 / 114-2284)
+
+    func testBundleIdIdentifierKindDerivedFromTrailingAsterisk() {
+        // No identifierType attribute exists on bundleIds — the trailing *
+        // is the documented wildcard form, so the kind is derived.
+        XCTAssertEqual(BundleIdIdentifierKind.derived(from: "com.acme.orbit"), .explicit)
+        XCTAssertEqual(BundleIdIdentifierKind.derived(from: "com.acme.orbit.*"), .wildcard)
+        // A * anywhere else (prefix or mid-string) is not the wildcard form.
+        XCTAssertEqual(BundleIdIdentifierKind.derived(from: "com.acme.*.orbit"), .explicit)
+        XCTAssertEqual(BundleIdIdentifierKind.derived(from: "com.acme.orbit*"), .explicit)
+        XCTAssertEqual(BundleIdIdentifierKind.derived(from: nil), .explicit)
+
+        var bundleId = BundleIdModel(id: "b-1")
+        bundleId.identifier = "com.acme.orbit.*"
+        bundleId.seedId = "8X9A212KL2"
+        XCTAssertEqual(bundleId.identifierKind, .wildcard)
+        bundleId.identifier = "com.acme.orbit"
+        XCTAssertEqual(bundleId.identifierKind, .explicit)
+
+        XCTAssertEqual(BundleIdIdentifierKind.explicit.displayName, "Explicit")
+        XCTAssertEqual(BundleIdIdentifierKind.wildcard.displayName, "Wildcard")
+        XCTAssertFalse(BundleIdIdentifierKind.explicit.explanation.isEmpty)
+        XCTAssertFalse(BundleIdIdentifierKind.wildcard.explanation.isEmpty)
+    }
+
+    func testBundleIdCreateBodySendsIdentifierAndOptionalSeedId() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        // Wildcard: seedId rides along. Explicit: the form passes nil, so
+        // the key is omitted rather than sent as an empty string.
+        let wildcard = String(
+            data: try encoder.encode(
+                BundleIdCreateData(
+                    attributes: BundleIdCreateAttributes(
+                        name: "Orbit Companion",
+                        identifier: "com.acme.orbit.*",
+                        platform: "IOS",
+                        seedId: "8X9A212KL2"
+                    )
+                )),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(wildcard.contains("\"identifier\":\"com.acme.orbit.*\""))
+        XCTAssertTrue(wildcard.contains("\"seedId\":\"8X9A212KL2\""))
+
+        let explicit = String(
+            data: try encoder.encode(
+                BundleIdCreateData(
+                    attributes: BundleIdCreateAttributes(
+                        name: "Orbit Companion",
+                        identifier: "com.acme.orbit.companion",
+                        platform: "IOS",
+                        seedId: nil
+                    )
+                )),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(explicit.contains("\"identifier\":\"com.acme.orbit.companion\""))
+        XCTAssertFalse(explicit.contains("seedId"))
+    }
+
+    // MARK: - Module 04 Bundle ID → profiles relationship decoding
+
+    /// Regression: `GET /v1/bundleIds/{id}/profiles` returns resources with
+    /// no `relationships` object at all. Decoding these into `ProfileModel`
+    /// failed with "The data couldn't be read because it is missing",
+    /// because its three non-optional `@ResourceRelationship` properties
+    /// each need a key that isn't in the payload. Body below is a verbatim
+    /// live response, trimmed to two of the three profiles.
+    func testBundleIdProfilesRelationshipDecodesWithoutRelationships() throws {
+        let payload = """
+        {
+          "data" : [ {
+            "type" : "profiles",
+            "id" : "L75VK56V4W",
+            "attributes" : {
+              "name" : "dev_profile",
+              "profileState" : "ACTIVE",
+              "profileType" : "IOS_APP_DEVELOPMENT",
+              "platform" : "IOS"
+            },
+            "links" : {
+              "self" : "https://api.appstoreconnect.apple.com/v1/profiles/L75VK56V4W"
+            }
+          }, {
+            "type" : "profiles",
+            "id" : "NQ9GDL3P62",
+            "attributes" : {
+              "name" : "iOS Team Store Provisioning Profile: com.sid.cleanify",
+              "profileState" : "ACTIVE",
+              "profileType" : "IOS_APP_STORE",
+              "platform" : "IOS"
+            },
+            "links" : {
+              "self" : "https://api.appstoreconnect.apple.com/v1/profiles/NQ9GDL3P62"
+            }
+          } ],
+          "links" : {
+            "self" : "https://api.appstoreconnect.apple.com/v1/bundleIds/38Y3AY4458/profiles"
+          },
+          "meta" : {
+            "paging" : {
+              "total" : 2,
+              "limit" : 20
+            }
+          }
+        }
+        """
+        let data = Data(payload.utf8)
+        let doc = try getDecoder().decode(BundleIdProfilesDocument.self, from: data)
+
+        XCTAssertEqual(doc.data.count, 2)
+        XCTAssertEqual(doc.meta.paging.total, 2)
+
+        let first = doc.data[0]
+        XCTAssertEqual(first.id, "L75VK56V4W")
+        XCTAssertEqual(first.name, "dev_profile")
+        XCTAssertEqual(first.platform, "IOS")
+        XCTAssertEqual(first.profileType, "IOS_APP_DEVELOPMENT")
+        XCTAssertEqual(first.profileState, "ACTIVE")
+        XCTAssertEqual(doc.data[1].profileType, "IOS_APP_STORE")
+
+        // Widening must fill the absent relationships with their documented
+        // empty values so the shared detail table can render the row.
+        let widened = first.asProfileModel()
+        XCTAssertEqual(widened.id, "L75VK56V4W")
+        XCTAssertEqual(widened.name, "dev_profile")
+        XCTAssertEqual(widened.profileState, "ACTIVE")
+        XCTAssertTrue(widened.devices.isEmpty)
+        XCTAssertTrue(widened.certificates.isEmpty)
+        XCTAssertNil(widened.bundleId)
+
+        // Guard the model choice itself: ProfileModel must NOT decode this
+        // payload, or the two types would be interchangeable and someone
+        // could "simplify" back to it and reintroduce the crash.
+        XCTAssertThrowsError(try getDecoder().decode(ProfilesDocument.self, from: data))
+    }
+
+    /// POST /v1/bundleIdCapabilities needs `relationships.bundleId` — the
+    /// owning identifier is the whole point of the call, unlike every other
+    /// write in this module which keys off `path`.
+    func testEnableCapabilityBodyCarriesBundleIdRelationship() throws {
+        let body = BundleIdCapabilityCreateRequest(
+            data: BundleIdCapabilityCreateData(
+                attributes: BundleIdCapabilityCreateAttributes(capabilityType: "PUSH_NOTIFICATIONS"),
+                relationships: BundleIdCapabilityCreateRelationships(
+                    bundleId: BundleIdCapabilityBundleIdRef(
+                        data: BundleIdCapabilityBundleIdData(id: "38Y3AY4458"))))
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try XCTUnwrap(String(data: encoder.encode(body), encoding: .utf8))
+
+        XCTAssertTrue(json.contains("\"type\":\"bundleIdCapabilities\""), json)
+        XCTAssertTrue(json.contains("\"capabilityType\":\"PUSH_NOTIFICATIONS\""), json)
+        XCTAssertTrue(json.contains("\"bundleId\""), json)
+        XCTAssertTrue(json.contains("\"id\":\"38Y3AY4458\""), json)
+        XCTAssertTrue(json.contains("\"type\":\"bundleIds\""), json)
+
+        // Must not invent a capability id — the server assigns it.
+        let outer = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(body)) as? [String: Any])
+        let dataDict = try XCTUnwrap(outer["data"] as? [String: Any])
+        XCTAssertNil(dataDict["id"], "capability id is server-assigned")
+
+        // Every option we offer must be a real CapabilityType enum value.
+        XCTAssertEqual(CapabilityTypeOption.allCases.count, 27)
+        for option in CapabilityTypeOption.allCases {
+            XCTAssertEqual(CapabilityTypeOption(rawValue: option.rawValue), option,
+                           "\(option.rawValue) must round-trip")
+        }
+    }
+
+    // MARK: - Module 04 bundleIds related-route query contract
+
+    /// Live-service contract for GET /v1/bundleIds/{id}/profiles and
+    /// .../bundleIdCapabilities: `fields[...]` only. The OpenAPI spec
+    /// still lists `limit` on both, but the service 400s it with
+    /// PARAMETER_ERROR.ILLEGAL ("This relationship does not support this
+    /// parameter"), and neither route documents a `cursor` — both are
+    /// unpaginated single requests.
+    func testBundleIdRelatedRoutesSendOnlyFields() {
+        let routes: [(name: String, params: [String: String])] = [
+            ("bundleIdProfiles", ResourcesViewModel.bundleIdProfilesParams),
+            ("bundleIdCapabilities", ResourcesViewModel.bundleIdCapabilitiesParams),
+            ("bundleIdProfilesForDelete", ResourcesViewModel.bundleIdProfilesForDeleteParams),
+        ]
+        for route in routes {
+            XCTAssertNil(route.params["limit"], "\\(route.name) must not send limit")
+            XCTAssertNil(route.params["cursor"], "\\(route.name) is unpaginated — no cursor")
+            XCTAssertNil(route.params["include"], "\\(route.name) has no include on this relationship")
+            XCTAssertNil(route.params["sort"], "\\(route.name) has no sort on this relationship")
+            XCTAssertEqual(route.params.count, 1, "\\(route.name) should send only fields[...]")
+            XCTAssertTrue(route.params.keys.allSatisfy { $0.hasPrefix("fields[") },
+                          "\\(route.name) param keys must all be fields[...]")
+        }
+
+        // The field lists must stay inside the spec's enums.
+        XCTAssertEqual(ResourcesViewModel.bundleIdCapabilitiesParams["fields[bundleIdCapabilities]"],
+                       "capabilityType")
+        for field in ["name", "platform", "profileType", "profileState"] {
+            XCTAssertTrue(ResourcesViewModel.bundleIdProfilesParams["fields[profiles]"]?.contains(field) == true,
+                          "fields[profiles] must request \\(field)")
+        }
+    }
+
     // MARK: - Field-value encoding (Batch G/I shared contract)
 
     func testFieldValueEncoding() throws {

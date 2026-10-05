@@ -63,6 +63,30 @@ enum ShipyardTheme {
 
     /// Warning dots: amber in both modes.
     static let warning = Color(red: 1.0, green: 0.624, blue: 0.043)
+
+    // MARK: - Status-message surfaces (Figma detail/sheet banners)
+
+    /// Backing fill for the info banner (Figma #E5F1FF) and its border
+    /// (#007AFF). Dark values are hand-picked equivalents — the Figma file
+    /// only specifies the light ramp.
+    static let infoSurface = adaptive(light: rgb(0.898, 0.945, 1.0), dark: rgb(0.09, 0.145, 0.239))
+    static let infoBorder = accent
+
+    /// Warning banner fill (#FFF8E1) / border (#A66A00).
+    static let warningSurface = adaptive(light: rgb(1.0, 0.973, 0.882), dark: rgb(0.243, 0.192, 0.055))
+    static let warningBorder = Color(red: 0.651, green: 0.416, blue: 0.0)
+
+    /// Destructive banner fill (#FFECEB) / border (#D92D24).
+    static let dangerSurface = adaptive(light: rgb(1.0, 0.925, 0.922), dark: rgb(0.271, 0.114, 0.106))
+    static let dangerBorder = Color(red: 0.851, green: 0.176, blue: 0.141)
+
+    /// Success banner fill (#EAF7EE) / border (#248A3D).
+    static let successSurface = adaptive(light: rgb(0.918, 0.969, 0.933), dark: rgb(0.086, 0.204, 0.129))
+    static let successBorder = Color(red: 0.141, green: 0.541, blue: 0.239)
+
+    /// Read-only field fill (#F0F0F2) — Identifier / Platform inputs on
+    /// the Bundle ID detail are disabled, not editable.
+    static let readOnlyField = adaptive(light: rgb(0.941, 0.941, 0.949), dark: rgb(0.165, 0.165, 0.173))
 }
 
 // MARK: - Shared chrome

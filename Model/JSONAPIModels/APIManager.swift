@@ -531,6 +531,13 @@ enum APIName: String {
     case devices = "/devices"
     case certificates = "/certificates"
     case getBundleIds = "/bundleIds"
+    // Bundle ID capabilities (Module 04 detail): top-level collection,
+    // unlike the read route. GET is the *related* subpath
+    // /v1/bundleIds/{id}/bundleIdCapabilities (opId
+    // bundleIds_bundleIdCapabilities_getToManyRelated), which has no
+    // `include` parameter; writes are POST (re-add, needs
+    // relationships.bundleId) and DELETE /{id} (disable, 204).
+    case bundleIdCapabilities = "/bundleIdCapabilities"
     case getProfiles = "/profiles"
     case getUsers = "/users"
     // Batch I (I3): top-level collection for team invitations —
