@@ -39,6 +39,83 @@ enum ReleaseStatusFilter: String, CaseIterable {
     }
 }
 
+enum ReleaseSubmissionRequirements {
+    static let priorReleaseStates: Set<String> = [
+        "READY_FOR_SALE",
+        "READY_FOR_DISTRIBUTION",
+        "REMOVED_FROM_SALE",
+        "DEVELOPER_REMOVED_FROM_SALE",
+        "REPLACED_WITH_NEW_VERSION"
+    ]
+
+    static func requiresWhatsNew(for version: AppStoreVersionsModel?,
+                                 allVersions: [AppStoreVersionsModel]) -> Bool {
+        guard let version else { return true }
+        let platform = version.platform
+        return allVersions.contains { candidate in
+            guard candidate.id != version.id else { return false }
+            if let platform, candidate.platform != platform { return false }
+            let state = candidate.appStoreState ?? candidate.appVersionState ?? ""
+            return priorReleaseStates.contains(state)
+        }
+    }
+
+    static func missingItems(canEdit: Bool,
+                             hasLocalizations: Bool,
+                             hasBlankWhatsNew: Bool,
+                             requiresWhatsNew: Bool,
+                             hasBuild: Bool,
+                             isScheduledRelease: Bool,
+                             hasSavedScheduledReleaseDate: Bool,
+                             reviewDetailsKnown: Bool,
+                             firstName: String,
+                             lastName: String,
+                             phone: String,
+                             email: String,
+                             demoRequired: Bool,
+                             demoUsername: String,
+                             demoPassword: String) -> [String] {
+        guard canEdit else { return [] }
+        var items: [String] = []
+        if requiresWhatsNew && (!hasLocalizations || hasBlankWhatsNew) {
+            items.append("What’s New")
+        }
+        if !hasBuild {
+            items.append("build")
+        }
+        if isScheduledRelease && !hasSavedScheduledReleaseDate {
+            items.append("saved release date")
+        }
+        if reviewDetailsKnown {
+            let contactFields = [firstName, lastName, phone, email]
+            if contactFields.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                items.append("review contact")
+            }
+            if demoRequired {
+                let demoFields = [demoUsername, demoPassword]
+                if demoFields.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                    items.append("demo credentials")
+                }
+            }
+        }
+        return items
+    }
+
+    static func canSubmit(canEdit: Bool,
+                          missingItems: [String],
+                          isDirty: Bool,
+                          isSaving: Bool,
+                          canSubmitForReview: Bool,
+                          submissionMatchesShownVersion: Bool) -> Bool {
+        canEdit
+            && missingItems.isEmpty
+            && !isDirty
+            && !isSaving
+            && canSubmitForReview
+            && submissionMatchesShownVersion
+    }
+}
+
 @MainActor
 final class ReleaseSectionState: ObservableObject {
     @Published var searchText = ""
@@ -50,20 +127,21 @@ final class ReleaseSectionState: ObservableObject {
 
 struct ReleaseTabView: View {
     var app: AppsData
+    @ObservedObject var detailVM: DetailViewModel
     @ObservedObject var reviewsVM: ReviewsViewModel
     @ObservedObject var section: ReleaseSectionState
     var onOpenAppInfo: () -> Void
     var onOpenBuilds: () -> Void
 
     @Environment(\.openURL) private var openURL
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     enum FeatureTab: Hashable {
-        case overview, allVersions, resolution, builds
+        case overview, allVersions, resolution
     }
 
-    @State private var featureTab: FeatureTab = .allVersions
+    @State private var featureTab: FeatureTab = .overview
     @State private var shownVersionId: String?
-    @State private var n1SelectedId: String?
     @State private var draftVersionString = ""
     @State private var draftWhatsNew = ""
     @State private var draftLocaleId: String?
@@ -89,9 +167,6 @@ struct ReleaseTabView: View {
     @State private var showNewVersionSheet = false
     @State private var showRemoveConfirm = false
     @State private var showLoadErrorDetails = false
-    @State private var toastTitle: String?
-    @State private var toastDetail: String?
-    @State private var toastGeneration = 0
     @State private var initialLandingDone = false
     @State private var showStuckRetry = false
 
@@ -157,6 +232,28 @@ struct ReleaseTabView: View {
         return shownVersion?.appStoreVersionLocalizations ?? []
     }
 
+    private var requiresWhatsNew: Bool {
+        ReleaseSubmissionRequirements.requiresWhatsNew(
+            for: shownVersion,
+            allVersions: reviewsVM.appStoreVersionsState.loadedValue ?? [])
+    }
+
+    private var versionSwitcherVersions: [AppStoreVersionsModel] {
+        if featureTab == .overview {
+            return overviewSwitcherVersions
+        }
+        return allVersions
+    }
+
+    private var overviewSwitcherVersions: [AppStoreVersionsModel] {
+        let appStoreVisibleVersions = Array(reviewsVM.displayedAppStoreVersions.prefix(2))
+        if let shownVersion,
+           appStoreVisibleVersions.contains(where: { $0.id == shownVersion.id }) == false {
+            return [shownVersion]
+        }
+        return appStoreVisibleVersions
+    }
+
     private var reviewDetailsValue: AppStoreReviewDetailsModel? {
         guard let id = shownVersion?.id,
               reviewsVM.reviewDetailsVersionId == id else { return nil }
@@ -184,39 +281,29 @@ struct ReleaseTabView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                switch reviewsVM.appStoreVersionsState {
-                case .loading, .idle:
-                    loadingView
-                case .error(let message):
-                    loadErrorView(message)
-                case .loaded:
-                    let versions = allVersions
-                    if versions.isEmpty && section.searchText.isEmpty && section.statusFilter == .all {
-                        emptyState
-                    } else if featureTab == .allVersions {
-                        n1List(versions: versions)
-                    } else if shownVersion != nil {
-                        detailMode
-                    } else {
-                        n1List(versions: versions)
-                    }
-                case .empty:
+        VStack(spacing: 0) {
+            switch reviewsVM.appStoreVersionsState {
+            case .loading, .idle:
+                loadingView
+            case .error(let message):
+                loadErrorView(message)
+            case .loaded:
+                let versions = allVersions
+                if versions.isEmpty && section.searchText.isEmpty && section.statusFilter == .all {
                     emptyState
+                } else if featureTab == .allVersions {
+                    n1List(versions: versions)
+                } else if shownVersion != nil {
+                    detailMode
+                } else {
+                    n1List(versions: versions)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(ShipyardTheme.tableBackground)
-            if let title = toastTitle {
-                ReleaseToast(title: title, detail: toastDetail ?? "") {
-                    toastTitle = nil
-                    toastDetail = nil
-                }
-                .padding(.trailing, 24)
-                .padding(.bottom, 72)
+            case .empty:
+                emptyState
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ShipyardTheme.tableBackground)
         .onAppear {
             reviewsVM.load(app: app)
             if shownVersionId == nil {
@@ -227,7 +314,7 @@ struct ReleaseTabView: View {
             loadVersionData()
             if !initialLandingDone {
                 initialLandingDone = true
-                featureTab = .allVersions
+                featureTab = .overview
             }
         }
         // App switch while mounted (tap another app, same tab): the view
@@ -337,7 +424,7 @@ struct ReleaseTabView: View {
     private var detailMode: some View {
         VStack(spacing: 0) {
             versionHeading
-            featureTabs(chips: true)
+            versionSwitcher()
                 .padding(.horizontal, 24)
             Divider()
             if let error = reviewsVM.writeError {
@@ -356,35 +443,41 @@ struct ReleaseTabView: View {
 
     private var versionHeading: some View {
         HStack(spacing: 12) {
+            Button {
+                featureTab = .allVersions
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Versions")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(ShipyardTheme.body)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to App Store Versions list")
+
+            ShipyardTheme.rowDivider
+                .frame(width: 1, height: 20)
+
             Text("Version \(shownVersion?.versionString ?? "—")")
                 .font(.system(size: 18))
                 .foregroundColor(ShipyardTheme.title)
             ReleaseStatusBadge(state: shownState)
             Spacer(minLength: 0)
-            Button("‹ All Versions") {
-                featureTab = .allVersions
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11))
-            .foregroundColor(ShipyardTheme.body)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 12)
     }
 
-    private func featureTabs(chips: Bool) -> some View {
+    private func versionSwitcher() -> some View {
         HStack(spacing: 16) {
-            featureTabButton(.overview, label: "Overview")
-            featureTabButton(.allVersions, label: "All Versions")
-            featureTabButton(.resolution, label: "Resolution Center")
-            featureTabButton(.builds, label: "Builds")
-            if chips {
-                Text("│")
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.tertiary)
+            let switcherVersions = versionSwitcherVersions
+            if !switcherVersions.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 16) {
-                        ForEach(allVersions, id: \.id) { version in
+                        ForEach(switcherVersions, id: \.id) { version in
                             let selected = version.id == shownVersion?.id
                             Button(version.versionString ?? "—") {
                                 showVersion(version, tab: featureTab)
@@ -402,26 +495,11 @@ struct ReleaseTabView: View {
         .padding(.bottom, 8)
     }
 
-    private func featureTabButton(_ tab: FeatureTab, label: String) -> some View {
-        Button(label) {
-            if shownVersion == nil, let first = allVersions.first {
-                showVersion(first, tab: tab)
-            } else {
-                featureTab = tab
-            }
-        }
-        .buttonStyle(.plain)
-        .font(.system(size: 11, weight: featureTab == tab ? .semibold : .regular))
-        .foregroundColor(featureTab == tab ? ShipyardTheme.accent : ShipyardTheme.body)
-        .accessibilityLabel(label)
-    }
-
     private func showVersion(_ version: AppStoreVersionsModel, tab: FeatureTab? = nil) {
         if ReviewsViewModel.isPendingApprovalVersion(version) {
             reviewsVM.selectAppStoreVersion(version)
         }
         shownVersionId = version.id
-        n1SelectedId = version.id
         featureTab = tab ?? .overview
         syncDrafts()
         loadPhased()
@@ -437,8 +515,6 @@ struct ReleaseTabView: View {
             n1List(versions: allVersions)
         case .resolution:
             resolutionContent
-        case .builds:
-            versionBuilds
         }
     }
 
@@ -450,6 +526,7 @@ struct ReleaseTabView: View {
                 TopPinnedScrollView {
                     WaitingVersionView(
                         version: version,
+                        detailVM: detailVM,
                         localizations: localizations,
                         primaryLocale: app.primaryLocale,
                         reviewsVM: reviewsVM)
@@ -459,6 +536,7 @@ struct ReleaseTabView: View {
                 TopPinnedScrollView {
                     InReviewVersionView(
                         version: version,
+                        detailVM: detailVM,
                         localizations: localizations,
                         primaryLocale: app.primaryLocale,
                         reviewsVM: reviewsVM)
@@ -468,6 +546,7 @@ struct ReleaseTabView: View {
                 TopPinnedScrollView {
                     PendingReleaseVersionView(
                         version: version,
+                        detailVM: detailVM,
                         localizations: localizations,
                         primaryLocale: app.primaryLocale,
                         reviewsVM: reviewsVM)
@@ -478,6 +557,7 @@ struct ReleaseTabView: View {
                 TopPinnedScrollView {
                     LiveVersionView(
                         version: version,
+                        detailVM: detailVM,
                         localizations: localizations,
                         primaryLocale: app.primaryLocale,
                         reviewsVM: reviewsVM,
@@ -492,6 +572,7 @@ struct ReleaseTabView: View {
                 TopPinnedScrollView {
                     LockedVersionView(
                         version: version,
+                        detailVM: detailVM,
                         localizations: localizations,
                         primaryLocale: app.primaryLocale,
                         reviewsVM: reviewsVM)
@@ -507,6 +588,7 @@ struct ReleaseTabView: View {
             version: version,
             reviewsVM: reviewsVM,
             localizations: localizations,
+            requiresWhatsNew: requiresWhatsNew,
             reviewDetails: reviewDetailsValue,
             missingItems: missingItems,
             missingDetail: missingDetail,
@@ -560,65 +642,6 @@ struct ReleaseTabView: View {
                 .padding(24)
             }
         }
-    }
-
-    private var versionBuilds: some View {
-        TopPinnedScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Builds for version \(shownVersion?.versionString ?? "—")")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(ShipyardTheme.title)
-                if let build = shownVersion?.build {
-                    HStack(spacing: 8) {
-                        Text("#\(build.version ?? "")")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(ShipyardTheme.title)
-                        buildStateBadge(build)
-                        Spacer(minLength: 0)
-                        Text("Attached")
-                            .font(.system(size: 11))
-                            .foregroundColor(ShipyardTheme.body)
-                    }
-                    .padding(10)
-                    .background(ShipyardTheme.tableBackground)
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(LaunchTheme.border, lineWidth: 1)
-                    )
-                }
-                if canEditShown {
-                    Button("Choose a different build") {
-                        showChooseBuild = true
-                    }
-                    .buttonStyle(.launchSecondary)
-                    .controlSize(.small)
-                }
-                Button("Open Builds tab") {
-                    onOpenBuilds()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(ShipyardTheme.accent)
-            }
-            .padding(24)
-        }
-    }
-
-    private func buildStateBadge(_ build: BuildsModel) -> some View {
-        let state = build.processingState ?? ""
-        return HStack(spacing: 5) {
-            Circle()
-                .fill(state == "VALID" ? ShipyardTheme.success : ShipyardTheme.accent)
-                .frame(width: 6, height: 6)
-            Text(buildStateDisplayName(state))
-                .font(.system(size: 10))
-                .foregroundColor(ShipyardTheme.title)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
-        .background(ShipyardTheme.tableHeader)
-        .cornerRadius(10)
     }
 
     // MARK: - Inspector
@@ -721,8 +744,6 @@ struct ReleaseTabView: View {
             n1ActionBar
         case .resolution:
             resolutionActionBar
-        case .builds:
-            buildsActionBar
         }
     }
 
@@ -932,22 +953,6 @@ struct ReleaseTabView: View {
         .background(ShipyardTheme.tableBackground)
     }
 
-    private var buildsActionBar: some View {
-        HStack(spacing: 8) {
-            Text("Builds for version \(shownVersion?.versionString ?? "—"). Uploads come from Xcode — processed builds can be attached here.")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Open Builds tab") {
-                onOpenBuilds()
-            }
-            .buttonStyle(.launchSecondary)
-        }
-        .padding(.horizontal, 24)
-        .frame(height: 56)
-        .background(ShipyardTheme.tableBackground)
-    }
-
     private var n1ActionBar: some View {
         HStack(spacing: 8) {
             Text("Apps › \(app.name ?? "App") › App Store Versions · Select a version to view its release details.")
@@ -975,25 +980,28 @@ struct ReleaseTabView: View {
         }
         let missing = missingItems
         if missing.isEmpty {
+            if saving {
+                return "Saving changes… Submit will unlock after App Store Connect confirms them."
+            }
+            if isDirty {
+                return "Save changes to continue · Submit uses the last saved App Store Connect data."
+            }
             return "All required fields complete · Submit → Waiting for Review"
         }
         return "Missing: \(missing.joined(separator: ", "))."
     }
 
     private var canSubmit: Bool {
-        guard canEditShown, missingItems.isEmpty else { return false }
-        return reviewsVM.canSubmitForReview
-            && reviewsVM.submissionVersion?.id == shownVersion?.id
+        ReleaseSubmissionRequirements.canSubmit(
+            canEdit: canEditShown,
+            missingItems: missingItems,
+            isDirty: isDirty,
+            isSaving: saving,
+            canSubmitForReview: reviewsVM.canSubmitForReview,
+            submissionMatchesShownVersion: reviewsVM.submissionVersion?.id == shownVersion?.id)
     }
 
     // MARK: - N1 All Versions
-
-    private func n1Selected(in versions: [AppStoreVersionsModel]) -> AppStoreVersionsModel? {
-        if let id = n1SelectedId, let found = versions.first(where: { $0.id == id }) {
-            return found
-        }
-        return shownVersion ?? versions.first
-    }
 
     private func n1List(versions: [AppStoreVersionsModel]) -> some View {
         VStack(spacing: 0) {
@@ -1002,7 +1010,6 @@ struct ReleaseTabView: View {
                     Text("App Store Versions")
                         .font(.system(size: 18))
                         .foregroundColor(ShipyardTheme.title)
-                    featureTabs(chips: false)
                 }
                 Spacer(minLength: 0)
                 Text("\(shipyardPlatformDisplay(appStorePlatformLabel)) · \(app.name ?? "App")")
@@ -1056,9 +1063,6 @@ struct ReleaseTabView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 32)
                     }
-                    if let selected = n1Selected(in: versions) {
-                        n1DetailCard(selected)
-                    }
                 }
                 .padding(24)
             }
@@ -1075,7 +1079,7 @@ struct ReleaseTabView: View {
     }
 
     private func n1Table(versions: [AppStoreVersionsModel]) -> some View {
-        let selectedId = n1Selected(in: versions)?.id
+        let selectedId = shownVersion?.id
         let submissionId = reviewsVM.submissionVersion?.id
         let submissionDate = reviewsVM.submissionVersion?.platform.flatMap { platform in
             reviewsVM.latestSubmission(forPlatform: platform)?.submittedDate
@@ -1104,7 +1108,7 @@ struct ReleaseTabView: View {
                 let selected = version.id == selectedId
                 let submittedText: String = version.id == submissionId ? releaseDayDisplay(submissionDate) : "—"
                 Button {
-                    n1SelectedId = version.id
+                    showVersion(version)
                 } label: {
                     HStack(spacing: 12) {
                         Text(version.versionString ?? "—")
@@ -1143,58 +1147,6 @@ struct ReleaseTabView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(LaunchTheme.border, lineWidth: 1)
         )
-    }
-
-    private func n1DetailCard(_ version: AppStoreVersionsModel) -> some View {
-        let state = version.appStoreState ?? version.appVersionState
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Version \(version.versionString ?? "—")")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(ShipyardTheme.title)
-                Spacer(minLength: 0)
-                Button("Open Version ›") {
-                    showVersion(version)
-                }
-                .buttonStyle(.launchPrimary)
-                .controlSize(.small)
-            }
-            Text(n1DetailSubtitle(state))
-                .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.body)
-            if let build = version.build {
-                Text("Build #\(build.version ?? "—") · \(buildStateDisplayName(build.processingState ?? "")) · Uploaded \(releaseDateTimeDisplay(build.uploadedDate))")
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.tertiary)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ShipyardTheme.tableBackground)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(LaunchTheme.border, lineWidth: 1)
-        )
-    }
-
-    private func n1DetailSubtitle(_ state: String?) -> String {
-        switch state {
-        case "PREPARE_FOR_SUBMISSION":
-            return "Continue preparing release notes, App Review information, and release options."
-        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
-            return "Submitted — waiting for App Review."
-        case "IN_REVIEW":
-            return "Apple is reviewing this version."
-        case "PENDING_DEVELOPER_RELEASE":
-            return "Approved — ready for you to release."
-        case "REJECTED", "DEVELOPER_REJECTED", "INVALID_BINARY":
-            return "Rejected — fix the build and resubmit."
-        case "METADATA_REJECTED":
-            return "Metadata rejected — fix the metadata and resubmit."
-        default:
-            return getStatusLabel(appStoreState: state)
-        }
     }
 
     // MARK: - N2/N3/N4
@@ -1250,7 +1202,6 @@ struct ReleaseTabView: View {
                 Text("App Store Versions")
                     .font(.system(size: 18))
                     .foregroundColor(ShipyardTheme.title)
-                featureTabs(chips: false)
             }
             Spacer(minLength: 0)
             Text("\(shipyardPlatformDisplay(appStorePlatformLabel)) · \(app.name ?? "App")")
@@ -1406,7 +1357,7 @@ struct ReleaseTabView: View {
         // one-minute granularity mirrors the DatePicker.
         if draftReleaseType == .scheduled,
            serverReleaseDate == nil || abs(draftReleaseDate.timeIntervalSince(serverReleaseDate!)) > 61 { return true }
-        if let loc = draftLocale, draftWhatsNew != (loc.whatsNew ?? "") { return true }
+        if requiresWhatsNew, let loc = draftLocale, draftWhatsNew != (loc.whatsNew ?? "") { return true }
         if let details = reviewDetailsValue, reviewDraftDirty(details) { return true }
         if reviewDetailsValue == nil,
            !(draftFirstName.isEmpty && draftLastName.isEmpty && draftPhone.isEmpty
@@ -1435,40 +1386,33 @@ struct ReleaseTabView: View {
     }
 
     private var missingItems: [String] {
-        guard let version = shownVersion, canEditShown else { return [] }
-        var items: [String] = []
+        let locs = localizations
         // The draft counts for the selected locale — flagging the model's
         // blank value while the user is typing would never clear.
-        let locs = localizations
-        if locs.isEmpty {
-            items.append("What’s New")
-        } else {
-            let anyBlank = locs.contains { loc in
-                let text = loc.id == draftLocaleId ? draftWhatsNew : (loc.whatsNew ?? "")
-                return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            if anyBlank {
-                items.append("What’s New")
-            }
+        let hasBlankWhatsNew = locs.contains { loc in
+            let text = loc.id == draftLocaleId ? draftWhatsNew : (loc.whatsNew ?? "")
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        if version.build == nil {
-            items.append("build")
-        }
-        if draftReleaseType == .scheduled && serverReleaseDate == nil {
-            items.append("release date")
-        }
-        if reviewDetailsKnown {
-            if draftFirstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || draftLastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || draftEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                items.append("review contact")
-            }
-        }
-        return items
+        return ReleaseSubmissionRequirements.missingItems(
+            canEdit: canEditShown,
+            hasLocalizations: !locs.isEmpty,
+            hasBlankWhatsNew: hasBlankWhatsNew,
+            requiresWhatsNew: requiresWhatsNew,
+            hasBuild: shownVersion?.build != nil,
+            isScheduledRelease: draftReleaseType == .scheduled,
+            hasSavedScheduledReleaseDate: serverReleaseDate != nil,
+            reviewDetailsKnown: reviewDetailsKnown,
+            firstName: draftFirstName,
+            lastName: draftLastName,
+            phone: draftPhone,
+            email: draftEmail,
+            demoRequired: draftDemoRequired,
+            demoUsername: draftDemoUser,
+            demoPassword: draftDemoPass)
     }
 
     private var missingDetail: String {
-        if localizations.isEmpty {
+        if requiresWhatsNew && localizations.isEmpty {
             return "Add a locale in App Info, then write What’s New."
         }
         return "Add \(missingItems.joined(separator: ", "))."
@@ -1480,8 +1424,7 @@ struct ReleaseTabView: View {
     /// changes; this covers the view's @State the VM can't see.
     private func resetAppScopedState() {
         shownVersionId = nil
-        n1SelectedId = nil
-        featureTab = .allVersions
+        featureTab = .overview
         draftVersionString = ""
         draftWhatsNew = ""
         draftLocaleId = nil
@@ -1499,8 +1442,6 @@ struct ReleaseTabView: View {
         lastLocaleDefault = nil
         lastReviewDefault = ReleaseTabView.emptyReviewJoin
         saveError = nil
-        toastTitle = nil
-        toastDetail = nil
     }
 
     private func syncDrafts() {        guard let version = shownVersion, syncedVersionId != version.id else { return }
@@ -1554,7 +1495,7 @@ struct ReleaseTabView: View {
     }
 
     private func adoptLoadedReviewDetails() {
-        guard let details = reviewDetailsValue else { return }
+        guard reviewDetailsValue != nil else { return }
         if reviewDraftJoin() == lastReviewDefault {
             syncReviewDrafts()
         }
@@ -1569,6 +1510,7 @@ struct ReleaseTabView: View {
 
     private func loadVersionData() {
         guard let version = shownVersion else { return }
+        detailVM.loadAppInfo()
         reviewsVM.loadVersionLocalizations(versionId: version.id)
         reviewsVM.loadReviewDetails(versionId: version.id)
     }
@@ -1585,7 +1527,9 @@ struct ReleaseTabView: View {
             // with the fresh status instead of failing each write.
             if let serverState = await reviewsVM.refreshVersionForSave(versionId: version.id),
                !isVersionEditable(appStoreState: serverState) {
-                saveError = "Version is now \(getStatusLabel(appStoreState: serverState).lowercased()) — reloaded the latest status. Your edits are kept below."
+                let message = "Version is now \(getStatusLabel(appStoreState: serverState).lowercased()) — reloaded the latest status. Your edits are kept below."
+                saveError = message
+                toastCenter.show("Couldn't save submission", detail: message, variant: .warning)
                 saving = false
                 reviewsVM.load(appId: app.id, force: true)
                 return
@@ -1606,17 +1550,21 @@ struct ReleaseTabView: View {
                     versionString: versionDirty ? draftVersionString : nil)
                 if case .failure(let message) = result {
                     saveError = message
+                    toastCenter.show("Couldn't save release settings", detail: message, variant: .error)
                     ok = false
                 }
             }
-            if ok, let locId = draftLocaleId ?? draftLocale?.id,
+            if ok, requiresWhatsNew,
+               let locId = draftLocaleId ?? draftLocale?.id,
                let loc = localizations.first(where: { $0.id == locId }),
                draftWhatsNew != (loc.whatsNew ?? "") {
                 if await reviewsVM.saveVersionWhatsNew(
                     versionId: version.id,
                     localizationId: locId,
                     whatsNew: draftWhatsNew) == false {
-                    saveError = reviewsVM.releaseSettingsError ?? "Couldn't save What's New."
+                    let message = reviewsVM.releaseSettingsError ?? "Couldn't save What's New."
+                    saveError = message
+                    toastCenter.show("Couldn't save What's New", detail: message, variant: .error)
                     ok = false
                 }
             }
@@ -1632,7 +1580,9 @@ struct ReleaseTabView: View {
                     demoUsername: draftDemoUser,
                     demoPassword: draftDemoPass,
                     notes: draftNotes) == false {
-                    saveError = reviewsVM.releaseSettingsError ?? "Couldn't save review information."
+                    let message = reviewsVM.releaseSettingsError ?? "Couldn't save review information."
+                    saveError = message
+                    toastCenter.show("Couldn't save review information", detail: message, variant: .error)
                     ok = false
                 }
             }
@@ -1640,6 +1590,7 @@ struct ReleaseTabView: View {
             if ok {
                 syncedVersionId = nil
                 syncDrafts()
+                toastCenter.show("Submission info saved", detail: "\(app.name ?? "App") \(version.versionString ?? "")", variant: .success)
             }
         }
     }
@@ -1658,17 +1609,7 @@ struct ReleaseTabView: View {
     // MARK: - Shared bits
 
     private func showToast(title: String, detail: String) {
-        toastTitle = title
-        toastDetail = detail
-        toastGeneration += 1
-        let generation = toastGeneration
-        Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            if generation == toastGeneration {
-                toastTitle = nil
-                toastDetail = nil
-            }
-        }
+        toastCenter.show(title, detail: detail, variant: .success)
     }
 
     private func openASC() {

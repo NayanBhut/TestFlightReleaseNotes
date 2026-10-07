@@ -244,6 +244,7 @@ struct ReleaseNotesView: View {
             TextEditor(text: draftText)
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)
+                .environment(\.layoutDirection, selectedLocaleTextDirection)
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(LaunchTheme.field)
@@ -305,6 +306,10 @@ struct ReleaseNotesView: View {
         }
         if isDirty(selectedLocale) { return "Unsaved changes" }
         return savedText(selectedLocale).isEmpty ? "No notes yet" : "Saved"
+    }
+
+    private var selectedLocaleTextDirection: LayoutDirection {
+        BetaLocalizationLocales.isRightToLeft(selectedLocale) ? .rightToLeft : .leftToRight
     }
 
     private var editorFooter: some View {

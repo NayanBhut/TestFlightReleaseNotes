@@ -19,6 +19,8 @@ struct BuildsTableView: View {
     var onBack: () -> Void
 
     @State private var statusFilter: String?
+    @State private var expandedBuildIds: Set<String> = []
+    @State private var selectedLocaleByBuild: [String: String] = [:]
 
     private var builds: [BuildsModel] { detailVM.arrBuilds }
 
@@ -229,8 +231,7 @@ struct BuildsTableView: View {
                         LazyVStack(spacing: 0) {
                             headerRow
                             ForEach(visibleBuilds, id: \.id) { build in
-                                buildRow(build)
-                                ShipyardTheme.rowDivider.frame(height: 1)
+                                buildSection(build)
                             }
                             paginationFooter
                         }
@@ -242,6 +243,7 @@ struct BuildsTableView: View {
 
     private var headerRow: some View {
         HStack(spacing: 12) {
+            Text("").frame(width: 24, alignment: .leading)
             Text("Build").frame(width: 80, alignment: .leading)
             Text("Version").frame(width: 80, alignment: .leading)
             Text("Uploaded").frame(width: 180, alignment: .leading)
@@ -256,8 +258,35 @@ struct BuildsTableView: View {
         .background(ShipyardTheme.tableHeader)
     }
 
+    private func buildSection(_ build: BuildsModel) -> some View {
+        VStack(spacing: 0) {
+            buildRow(build)
+            if expandedBuildIds.contains(build.id) {
+                InlineBuildReleaseNotesEditor(
+                    detailVM: detailVM,
+                    buildId: build.id,
+                    buildNumber: build.version ?? "—",
+                    selectedLocale: selectedLocaleBinding(for: build.id))
+                ShipyardTheme.rowDivider.frame(height: 1)
+            }
+            ShipyardTheme.rowDivider.frame(height: 1)
+        }
+    }
+
     private func buildRow(_ build: BuildsModel) -> some View {
         HStack(spacing: 12) {
+            Button {
+                toggleNotes(for: build)
+            } label: {
+                Image(systemName: expandedBuildIds.contains(build.id) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.body)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expandedBuildIds.contains(build.id) ? "Hide TestFlight notes" : "Show TestFlight notes")
+
             Text("#\(build.version ?? "")")
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundColor(ShipyardTheme.title)
@@ -281,8 +310,25 @@ struct BuildsTableView: View {
                 .foregroundColor(ShipyardTheme.body)
                 .frame(width: 120, alignment: .leading)
 
-            HStack {
-                Text("Manage")
+            HStack(spacing: 8) {
+                Button("Notes") {
+                    toggleNotes(for: build)
+                }
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.title)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(LaunchTheme.field)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .buttonStyle(.plain)
+
+                Button("Manage") {
+                    onManage(build)
+                }
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.title)
                     .padding(.horizontal, 8)
@@ -293,22 +339,41 @@ struct BuildsTableView: View {
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(LaunchTheme.border, lineWidth: 1)
                     )
+                    .buttonStyle(.plain)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .frame(height: 38)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onManage(build)
-        }
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
-            onManage(build)
+            toggleNotes(for: build)
         }
         .accessibilityLabel("Build \(build.version ?? ""), \(buildStateDisplayName(build.processingState ?? ""))")
-        .accessibilityHint("Opens build details")
+        .accessibilityHint("Shows or hides TestFlight release notes")
+    }
+
+    private func toggleNotes(for build: BuildsModel) {
+        if expandedBuildIds.contains(build.id) {
+            expandedBuildIds.remove(build.id)
+        } else {
+            expandedBuildIds.insert(build.id)
+            if selectedLocaleByBuild[build.id] == nil {
+                selectedLocaleByBuild[build.id] = detailVM.getAllLocales(for: build.id).first ?? BetaLocalizationLocales.defaultLocale
+            }
+        }
+    }
+
+    private func selectedLocaleBinding(for buildId: String) -> Binding<String> {
+        Binding(
+            get: {
+                selectedLocaleByBuild[buildId]
+                    ?? detailVM.getAllLocales(for: buildId).first
+                    ?? BetaLocalizationLocales.defaultLocale
+            },
+            set: { selectedLocaleByBuild[buildId] = $0 }
+        )
     }
 
     @ViewBuilder
@@ -385,6 +450,221 @@ struct BuildsTableView: View {
                 Spacer()
             }
         }
+    }
+}
+
+private struct InlineBuildReleaseNotesEditor: View {
+    @ObservedObject var detailVM: DetailViewModel
+    var buildId: String
+    var buildNumber: String
+    @Binding var selectedLocale: String
+
+    @State private var draftText = ""
+    @State private var syncKey = ""
+
+    private var locales: [String] {
+        detailVM.getAllLocales(for: buildId)
+    }
+
+    private var localesKey: String {
+        locales.joined(separator: "|")
+    }
+
+    private var addableLocales: [String] {
+        BetaLocalizationLocales.supported.filter { !locales.contains($0) }
+    }
+
+    private var savedText: String {
+        detailVM.savedWhatsNew(for: buildId, locale: selectedLocale)
+    }
+
+    private var isDirty: Bool {
+        draftText != savedText
+    }
+
+    private var selectedLocaleTextDirection: LayoutDirection {
+        BetaLocalizationLocales.isRightToLeft(selectedLocale) ? .rightToLeft : .leftToRight
+    }
+
+    private var textBinding: Binding<String> {
+        Binding(
+            get: { draftText },
+            set: { draftText = String($0.prefix(WhatsNewLimits.maxLength)) }
+        )
+    }
+
+    private var hasSelectedLocaleRecord: Bool {
+        detailVM.buildsState.loadedValue?
+            .first(where: { $0.id == buildId })?
+            .betaBuildLocalizations
+            .contains(where: { $0.locale == selectedLocale }) == true
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("TestFlight notes · Build #\(buildNumber)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text("\(draftText.count) / \(WhatsNewLimits.maxLength)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer(minLength: 0)
+                if detailVM.isBuildUpdating(buildId) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+                Menu {
+                    ForEach(addableLocales, id: \.self) { locale in
+                        Button("\(BetaLocalizationLocales.displayName(for: locale)) (\(locale))") {
+                            detailVM.updateBuildWhatsNew(buildId: buildId, locale: locale, whatsNew: "")
+                            selectedLocale = locale
+                            draftText = ""
+                            syncKey = ""
+                        }
+                    }
+                } label: {
+                    ShipyardMenuLabel(text: "Add Locale")
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(addableLocales.isEmpty)
+            }
+
+            localeStrip
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: textBinding)
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.title)
+                    .environment(\.layoutDirection, selectedLocaleTextDirection)
+                    .padding(8)
+                    .frame(height: 88)
+                    .background(LaunchTheme.field)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                    )
+                    .scrollContentBackground(.hidden)
+                if draftText.isEmpty {
+                    Text("Add TestFlight release notes for \(BetaLocalizationLocales.displayName(for: selectedLocale))…")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.tertiary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 15)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            footer
+        }
+        .padding(.leading, 52)
+        .padding(.trailing, 16)
+        .padding(.vertical, 10)
+        .background(ShipyardTheme.selectedRow.opacity(0.45))
+        .onAppear { syncDraft(force: true) }
+        .onChange(of: selectedLocale) { syncDraft(force: true) }
+        .onChange(of: localesKey) { syncDraft(force: false) }
+        .onChange(of: detailVM.getWhatsNew(for: buildId, locale: selectedLocale)) { syncDraft(force: false) }
+    }
+
+    private var localeStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(locales, id: \.self) { locale in
+                    let selected = locale == selectedLocale
+                    Button {
+                        selectedLocale = locale
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(BetaLocalizationLocales.displayName(for: locale))
+                                .lineLimit(1)
+                            Text(locale)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(selected ? .white.opacity(0.85) : ShipyardTheme.body)
+                        }
+                        .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                        .foregroundColor(selected ? .white : ShipyardTheme.title)
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(selected ? ShipyardTheme.accent : LaunchTheme.field)
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(selected ? ShipyardTheme.accent : LaunchTheme.border, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Text(statusText)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+            if let error = detailVM.saveError, error.buildId == buildId {
+                Text(error.message)
+                    .font(.system(size: 11))
+                    .foregroundColor(AppTheme.negative)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button("Revert") {
+                draftText = savedText
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundColor(ShipyardTheme.title)
+            .disabled(!isDirty)
+            Button("Remove") {
+                detailVM.removeLocale(buildId: buildId, locale: selectedLocale)
+                draftText = ""
+                syncKey = ""
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundColor(ShipyardTheme.danger)
+            .disabled(!hasSelectedLocaleRecord)
+            Button("Save Notes") {
+                save()
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 24)
+            .background(isDirty ? ShipyardTheme.accent : ShipyardTheme.accent.opacity(0.4))
+            .cornerRadius(6)
+            .buttonStyle(.plain)
+            .disabled(!isDirty || detailVM.isBuildUpdating(buildId))
+        }
+    }
+
+    private var statusText: String {
+        if draftText.count >= WhatsNewLimits.maxLength, isDirty {
+            return "Character limit reached."
+        }
+        if isDirty { return "Unsaved changes" }
+        return savedText.isEmpty ? "No notes yet" : "Saved"
+    }
+
+    private func syncDraft(force: Bool) {
+        if !locales.contains(selectedLocale) {
+            selectedLocale = locales.first ?? BetaLocalizationLocales.defaultLocale
+        }
+        let currentText = detailVM.getWhatsNew(for: buildId, locale: selectedLocale)
+        let newKey = "\(buildId)|\(selectedLocale)|\(currentText)"
+        guard force || (!isDirty && syncKey != newKey) else { return }
+        draftText = currentText
+        syncKey = newKey
+    }
+
+    private func save() {
+        detailVM.updateBuildWhatsNew(buildId: buildId, locale: selectedLocale, whatsNew: draftText)
+        detailVM.saveBuildLocalization(buildId: buildId, locale: selectedLocale)
+        syncKey = ""
     }
 }
 

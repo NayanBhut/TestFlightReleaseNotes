@@ -10,7 +10,7 @@
 
 import XCTest
 import JSONAPI
-@testable import App_Store
+@testable import Shipyard
 
 final class JSONDecodingTests: XCTestCase {
     func testBundleIdsDocumentDecodes() throws {
@@ -24,6 +24,38 @@ final class JSONDecodingTests: XCTestCase {
         XCTAssertEqual(model.data[0].identifier, "com.example.app")
         XCTAssertEqual(model.data[0].platform, "IOS")
         XCTAssertEqual(model.meta.paging.total, 1)
+    }
+
+    func testCertificateRelationshipDocumentsDecode() throws {
+        let merchantJSON = """
+        {"data":[{"type":"merchantIds","id":"merchant-1","attributes":{"name":"Store Pay","identifier":"merchant.com.example.store"}}],"meta":{"paging":{"total":1,"limit":200}}}
+        """
+        let merchants = try getDecoder().decode(MerchantIdsDocument.self, from: Data(merchantJSON.utf8))
+        XCTAssertEqual(merchants.data[0].id, "merchant-1")
+        XCTAssertEqual(merchants.data[0].name, "Store Pay")
+        XCTAssertEqual(merchants.data[0].identifier, "merchant.com.example.store")
+
+        let passTypeJSON = """
+        {"data":[{"type":"passTypeIds","id":"pass-1","attributes":{"name":"Loyalty Pass","identifier":"pass.com.example.loyalty"}}],"meta":{"paging":{"total":1,"limit":200}}}
+        """
+        let passTypes = try getDecoder().decode(PassTypeIdsDocument.self, from: Data(passTypeJSON.utf8))
+        XCTAssertEqual(passTypes.data[0].id, "pass-1")
+        XCTAssertEqual(passTypes.data[0].name, "Loyalty Pass")
+        XCTAssertEqual(passTypes.data[0].identifier, "pass.com.example.loyalty")
+    }
+
+    func testCertificateDetailDecodesContent() throws {
+        let json = """
+        {"data":{"type":"certificates","id":"cert-1","attributes":{"name":"Apple Distribution","displayName":"Apple Distribution: Example LLC","certificateType":"IOS_DISTRIBUTION","serialNumber":"ABC123","platform":"IOS","expirationDate":"2027-10-06T10:00:00.000+00:00","activated":true,"certificateContent":"Q0VSVA=="}}}
+        """
+        let model = try getDecoder().decode(CertificateModel.self, from: Data(json.utf8))
+        XCTAssertEqual(model.id, "cert-1")
+        XCTAssertEqual(model.displayName, "Apple Distribution: Example LLC")
+        XCTAssertEqual(model.certificateType, "IOS_DISTRIBUTION")
+        XCTAssertEqual(model.serialNumber, "ABC123")
+        XCTAssertEqual(model.platform, "IOS")
+        XCTAssertEqual(model.activated, true)
+        XCTAssertEqual(model.certificateContent, "Q0VSVA==")
     }
 
     func testVersionLocalizationDescriptionKeyDecodes() throws {

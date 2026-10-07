@@ -3,10 +3,10 @@
 //  App Store
 //
 //  Per-app area from the app-info-light Figma frame: toolbar (Back, app
-//  name + bundle pill) with the Builds / TestFlight / App Info / Reviews
-//  sub-navigation. Each tab brings its own content: the builds table, the
-//  TestFlight release-notes browser for a picked version + build, the App
-//  Store metadata editor, and the app's customer reviews.
+//  name + bundle pill) with the Builds / App Info / Reviews sub-navigation.
+//  Builds includes inline TestFlight release notes per build; the other
+//  tabs bring the App Store metadata editor, customer reviews, and App
+//  Store Versions workspace.
 //
 
 import SwiftUI
@@ -25,7 +25,6 @@ struct AppDetailView: View {
 
     enum AppTab: String, CaseIterable {
         case builds = "Builds"
-        case testflight = "TestFlight"
         case appInfo = "App Info"
         case reviews = "Reviews"
         case release = "App Store Versions"
@@ -39,14 +38,12 @@ struct AppDetailView: View {
             switch tab {
             case .builds:
                 BuildsTableView(sidebarVM: sidebarVM, detailVM: detailVM, onManage: onManage, onBack: onBack)
-            case .testflight:
-                TestFlightTabView(detailVM: detailVM)
             case .appInfo:
                 ShipyardAppInfoView(detailVM: detailVM, reviewsVM: reviewsVM, app: app)
             case .reviews:
                 ReviewsSectionView(reviewsVM: reviewsVM, apps: [], selectedApp: .constant(app), fixedApp: app)
             case .release:
-                ReleaseTabView(app: app, reviewsVM: reviewsVM, section: releaseSection) {
+                ReleaseTabView(app: app, detailVM: detailVM, reviewsVM: reviewsVM, section: releaseSection) {
                     tab = .appInfo
                 } onOpenBuilds: {
                     tab = .builds
@@ -144,78 +141,5 @@ struct AppDetailView: View {
             ShipyardTheme.rowDivider.frame(height: 1),
             alignment: .bottom
         )
-    }
-}
-
-/// TestFlight tab: version + build pickers over the per-build release
-/// notes browser (same component as the build-detail tab).
-private struct TestFlightTabView: View {
-    @ObservedObject var detailVM: DetailViewModel
-    @State private var buildId: String?
-
-    private var effectiveBuildId: String? {
-        if let buildId, detailVM.arrBuilds.contains(where: { $0.id == buildId }) {
-            return buildId
-        }
-        return detailVM.arrBuilds.first?.id
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Menu {
-                    ForEach(detailVM.arrVersions, id: \.id) { version in
-                        Button("v\(version.version ?? "")") {
-                            detailVM.setSelectedVersionAndGetBuilds(selectedVersion: version)
-                        }
-                    }
-                } label: {
-                    ShipyardMenuLabel(text: "Version: \(detailVM.selectedVersion?.version ?? "—")")
-                }
-                .menuStyle(.borderlessButton)
-                .accessibilityLabel("Select version")
-
-                Menu {
-                    ForEach(detailVM.arrBuilds, id: \.id) { build in
-                        Button("Build \(build.version ?? "")") {
-                            buildId = build.id
-                        }
-                    }
-                } label: {
-                    ShipyardMenuLabel(text: "Build: \(selectedBuildNumber ?? "—")")
-                }
-                .menuStyle(.borderlessButton)
-                .accessibilityLabel("Select build")
-
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 44)
-            .background(LaunchTheme.page)
-            Divider()
-
-            if let effectiveBuildId {
-                ReleaseNotesView(detailVM: detailVM, buildId: effectiveBuildId)
-            } else {
-                VStack(spacing: 12) {
-                    Spacer()
-                    Text("No Builds")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(ShipyardTheme.title)
-                    Text("Pick a version with builds to edit TestFlight notes")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.body)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .onChange(of: detailVM.selectedVersion?.id) { _, _ in
-            buildId = nil
-        }
-    }
-
-    private var selectedBuildNumber: String? {
-        effectiveBuildId.flatMap { id in detailVM.arrBuilds.first(where: { $0.id == id })?.version }
     }
 }

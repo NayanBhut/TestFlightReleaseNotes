@@ -35,6 +35,7 @@ final class ResourcesViewModel: ObservableObject {
     deinit {
         // A stuck network call must not keep the VM alive.
         for task in fetchTasks.values { task.cancel() }
+        for task in certificateRelationshipTasks.values { task.cancel() }
         invitationsFetchTask?.cancel()
         dependentsTask?.cancel()
     }
@@ -44,6 +45,8 @@ final class ResourcesViewModel: ObservableObject {
     enum Kind: String, CaseIterable, Identifiable {
         case devices
         case certificates
+        case merchantIds
+        case passTypeIds
         case bundleIds
         case profiles
         case users
@@ -54,6 +57,8 @@ final class ResourcesViewModel: ObservableObject {
             switch self {
             case .devices: return "Devices"
             case .certificates: return "Certificates"
+            case .merchantIds: return "Merchant IDs"
+            case .passTypeIds: return "Pass Type IDs"
             case .bundleIds: return "Bundle IDs"
             case .profiles: return "Profiles"
             case .users: return "Users"
@@ -64,6 +69,8 @@ final class ResourcesViewModel: ObservableObject {
             switch self {
             case .devices: return "iphone"
             case .certificates: return "checkmark.seal"
+            case .merchantIds: return "creditcard"
+            case .passTypeIds: return "wallet.pass"
             case .bundleIds: return "square.grid.2x2"
             case .profiles: return "person.text.rectangle"
             case .users: return "person.2"
@@ -74,6 +81,8 @@ final class ResourcesViewModel: ObservableObject {
             switch self {
             case .devices: return "Test devices registered for the team"
             case .certificates: return "Signing certificates"
+            case .merchantIds: return "Apple Pay merchant identifiers"
+            case .passTypeIds: return "Wallet pass type identifiers"
             case .bundleIds: return "Registered app identifiers"
             case .profiles: return "Provisioning profiles"
             case .users: return "App Store Connect team members"
@@ -84,6 +93,8 @@ final class ResourcesViewModel: ObservableObject {
             switch self {
             case .devices: return .devices
             case .certificates: return .certificates
+            case .merchantIds: return .merchantIds
+            case .passTypeIds: return .passTypeIds
             case .bundleIds: return .getBundleIds
             case .profiles: return .getProfiles
             case .users: return .getUsers
@@ -96,6 +107,8 @@ final class ResourcesViewModel: ObservableObject {
             switch self {
             case .devices: return "name"
             case .certificates: return "displayName"
+            case .merchantIds: return "name"
+            case .passTypeIds: return "name"
             case .bundleIds: return "name"
             case .profiles: return "name"
             case .users: return "username"
@@ -107,6 +120,8 @@ final class ResourcesViewModel: ObservableObject {
 
     @Published var devicesState: ViewState<[DeviceModel]> = .idle
     @Published var certificatesState: ViewState<[CertificateModel]> = .idle
+    @Published var merchantIdsState: ViewState<[MerchantIdModel]> = .idle
+    @Published var passTypeIdsState: ViewState<[PassTypeIdModel]> = .idle
     @Published var bundleIdsState: ViewState<[BundleIdModel]> = .idle
     @Published var profilesState: ViewState<[ProfileModel]> = .idle
     @Published var usersState: ViewState<[UserModel]> = .idle
@@ -128,6 +143,7 @@ final class ResourcesViewModel: ObservableObject {
     /// doesn't refetch what's already there.
     private var loadedKinds: Set<Kind> = []
     private var fetchTasks: [Kind: Task<Void, Never>] = [:]
+    private var certificateRelationshipTasks: [CertificateCreateRelationshipKind: Task<Void, Never>] = [:]
     /// Kinds with a page request in flight — per-kind so paginating one
     /// kind never swallows another kind's Load-more tap. Published so the
     /// footer can render the auto-drain progress (users kind).
@@ -169,6 +185,8 @@ final class ResourcesViewModel: ObservableObject {
     /// Create-form write keys (never collide with resource ids).
     static let registerDeviceKey = "register-device"
     static let createCertificateKey = "create-certificate"
+    static let createMerchantIdKey = "create-merchant-id"
+    static let createPassTypeIdKey = "create-pass-type-id"
     static let createBundleIdKey = "create-bundle-id"
     static let inviteUserKey = "invite-user"
     static let createProfileKey = "create-profile"
@@ -211,6 +229,8 @@ final class ResourcesViewModel: ObservableObject {
 
     private var devicesFilterCache = FilterCache<DeviceModel>()
     private var certificatesFilterCache = FilterCache<CertificateModel>()
+    private var merchantIdsFilterCache = FilterCache<MerchantIdModel>()
+    private var passTypeIdsFilterCache = FilterCache<PassTypeIdModel>()
     private var bundleIdsFilterCache = FilterCache<BundleIdModel>()
     private var profilesFilterCache = FilterCache<ProfileModel>()
     private var usersFilterCache = FilterCache<UserModel>()
@@ -271,6 +291,18 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
+    var filteredMerchantIds: [MerchantIdModel] {
+        cachedFilter(&merchantIdsFilterCache, kind: .merchantIds, source: merchantIdsState.loadedValue ?? []) {
+            [$0.name, $0.identifier]
+        }
+    }
+
+    var filteredPassTypeIds: [PassTypeIdModel] {
+        cachedFilter(&passTypeIdsFilterCache, kind: .passTypeIds, source: passTypeIdsState.loadedValue ?? []) {
+            [$0.name, $0.identifier]
+        }
+    }
+
     var filteredBundleIds: [BundleIdModel] {
         cachedFilter(&bundleIdsFilterCache, kind: .bundleIds, source: bundleIdsState.loadedValue ?? []) {
             [$0.name, $0.identifier, $0.platform]
@@ -314,6 +346,32 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
+    func certificateRelationshipOptionsState(for kind: CertificateCreateRelationshipKind) -> ViewState<[CertificateRelationshipOption]> {
+        switch kind {
+        case .merchantId:
+            return mapRelationshipOptions(merchantIdsState) {
+                CertificateRelationshipOption(id: $0.id, name: $0.name, identifier: $0.identifier)
+            }
+        case .passTypeId:
+            return mapRelationshipOptions(passTypeIdsState) {
+                CertificateRelationshipOption(id: $0.id, name: $0.name, identifier: $0.identifier)
+            }
+        }
+    }
+
+    private func mapRelationshipOptions<T>(
+        _ state: ViewState<[T]>,
+        transform: (T) -> CertificateRelationshipOption
+    ) -> ViewState<[CertificateRelationshipOption]> {
+        switch state {
+        case .idle: return .idle
+        case .loading: return .loading
+        case .loaded(let values): return .loaded(values.map(transform))
+        case .empty: return .empty
+        case .error(let message): return .error(message)
+        }
+    }
+
     /// App-scope label shared by the users table, pending list, detail
     /// summaries and sheets ("All Apps" vs "Orbit, Atlas"). Empty names
     /// with a scoped flag means the linkage didn't hydrate — say so
@@ -332,6 +390,8 @@ final class ResourcesViewModel: ObservableObject {
         switch kind {
         case .devices: return filteredDevices.count
         case .certificates: return filteredCertificates.count
+        case .merchantIds: return filteredMerchantIds.count
+        case .passTypeIds: return filteredPassTypeIds.count
         case .bundleIds: return filteredBundleIds.count
         case .profiles: return filteredProfiles.count
         case .users: return filteredUsers.count + filteredInvitations.count
@@ -344,6 +404,8 @@ final class ResourcesViewModel: ObservableObject {
         switch kind {
         case .devices: return devicesState.loadedValue?.count ?? 0
         case .certificates: return certificatesState.loadedValue?.count ?? 0
+        case .merchantIds: return merchantIdsState.loadedValue?.count ?? 0
+        case .passTypeIds: return passTypeIdsState.loadedValue?.count ?? 0
         case .bundleIds: return bundleIdsState.loadedValue?.count ?? 0
         case .profiles: return profilesState.loadedValue?.count ?? 0
         case .users: return (usersState.loadedValue?.count ?? 0) + (invitationsState.loadedValue?.count ?? 0)
@@ -502,6 +564,20 @@ final class ResourcesViewModel: ObservableObject {
             nextCursors[kind] = model.meta.paging.nextCursor
             totals[kind] = model.meta.paging.total
             certificatesState = merged.isEmpty ? .empty : .loaded(merged)
+        case .merchantIds:
+            let model = try decoder.decode(MerchantIdsDocument.self, from: data)
+            let existing = merchantIdsState.loadedValue ?? []
+            let merged = merge(existing: existing, incoming: model.data, isPaginating: isPaginating, id: \.id)
+            nextCursors[kind] = model.meta.paging.nextCursor
+            totals[kind] = model.meta.paging.total
+            merchantIdsState = merged.isEmpty ? .empty : .loaded(merged)
+        case .passTypeIds:
+            let model = try decoder.decode(PassTypeIdsDocument.self, from: data)
+            let existing = passTypeIdsState.loadedValue ?? []
+            let merged = merge(existing: existing, incoming: model.data, isPaginating: isPaginating, id: \.id)
+            nextCursors[kind] = model.meta.paging.nextCursor
+            totals[kind] = model.meta.paging.total
+            passTypeIdsState = merged.isEmpty ? .empty : .loaded(merged)
         case .bundleIds:
             let model = try decoder.decode(BundleIdsDocument.self, from: data)
             let existing = bundleIdsState.loadedValue ?? []
@@ -548,6 +624,8 @@ final class ResourcesViewModel: ObservableObject {
     func resetForTeamSwitch() {
         for task in fetchTasks.values { task.cancel() }
         fetchTasks = [:]
+        for task in certificateRelationshipTasks.values { task.cancel() }
+        certificateRelationshipTasks = [:]
         invitationsFetchTask?.cancel()
         invitationsFetchTask = nil
         invitationsState = .idle
@@ -567,6 +645,8 @@ final class ResourcesViewModel: ObservableObject {
         loadedKinds = []
         devicesState = .idle
         certificatesState = .idle
+        merchantIdsState = .idle
+        passTypeIdsState = .idle
         bundleIdsState = .idle
         profilesState = .idle
         usersState = .idle
@@ -586,6 +666,8 @@ final class ResourcesViewModel: ObservableObject {
         switch kind {
         case .devices: devicesState = .loading
         case .certificates: certificatesState = .loading
+        case .merchantIds: merchantIdsState = .loading
+        case .passTypeIds: passTypeIdsState = .loading
         case .bundleIds: bundleIdsState = .loading
         case .profiles: profilesState = .loading
         case .users: usersState = .loading
@@ -596,6 +678,8 @@ final class ResourcesViewModel: ObservableObject {
         switch kind {
         case .devices: devicesState = .error(message)
         case .certificates: certificatesState = .error(message)
+        case .merchantIds: merchantIdsState = .error(message)
+        case .passTypeIds: passTypeIdsState = .error(message)
         case .bundleIds: bundleIdsState = .error(message)
         case .profiles: profilesState = .error(message)
         case .users: usersState = .error(message)
@@ -616,6 +700,77 @@ final class ResourcesViewModel: ObservableObject {
         return FriendlyErrorMessage.message(for: error)
     }
 
+    func loadCertificateRelationshipOptions(_ kind: CertificateCreateRelationshipKind, force: Bool = false) {
+        if !force {
+            switch certificateRelationshipOptionsState(for: kind) {
+            case .loading, .loaded, .empty:
+                return
+            case .idle, .error:
+                break
+            }
+        }
+        certificateRelationshipTasks[kind]?.cancel()
+        setCertificateRelationshipOptionsState(.loading, for: kind)
+        certificateRelationshipTasks[kind] = Task { await fetchCertificateRelationshipOptions(kind) }
+    }
+
+    private func fetchCertificateRelationshipOptions(_ kind: CertificateCreateRelationshipKind) async {
+        defer { certificateRelationshipTasks[kind] = nil }
+        guard !Task.isCancelled else { return }
+
+        let queryParams = [
+            "limit": "200",
+            "sort": "name",
+            "fields[\(kind.resourceType)]": "name,identifier"
+        ]
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: certificateRelationshipAPIName(for: kind), queryParams: queryParams),
+            apiVersion: .v1) else {
+            setCertificateRelationshipOptionsState(.error("No team selected. Add a team to load \(kind.label.lowercased())."), for: kind)
+            return
+        }
+
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return }
+            let decoder = getDecoder()
+            switch kind {
+            case .merchantId:
+                let model = try decoder.decode(MerchantIdsDocument.self, from: data)
+                merchantIdsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            case .passTypeId:
+                let model = try decoder.decode(PassTypeIdsDocument.self, from: data)
+                passTypeIdsState = model.data.isEmpty ? .empty : .loaded(model.data)
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            resourcesLogger.error("Failed to load \(kind.resourceType): \(error.localizedDescription)")
+            setCertificateRelationshipOptionsState(.error(friendlyMessage(for: error)), for: kind)
+        }
+    }
+
+    private func certificateRelationshipAPIName(for kind: CertificateCreateRelationshipKind) -> APIName {
+        switch kind {
+        case .merchantId: return .merchantIds
+        case .passTypeId: return .passTypeIds
+        }
+    }
+
+    private func setCertificateRelationshipOptionsState(_ state: ViewState<[Never]>, for kind: CertificateCreateRelationshipKind) {
+        switch (kind, state) {
+        case (.merchantId, .idle): merchantIdsState = .idle
+        case (.merchantId, .loading): merchantIdsState = .loading
+        case (.merchantId, .empty): merchantIdsState = .empty
+        case (.merchantId, .error(let message)): merchantIdsState = .error(message)
+        case (.merchantId, .loaded): merchantIdsState = .empty
+        case (.passTypeId, .idle): passTypeIdsState = .idle
+        case (.passTypeId, .loading): passTypeIdsState = .loading
+        case (.passTypeId, .empty): passTypeIdsState = .empty
+        case (.passTypeId, .error(let message)): passTypeIdsState = .error(message)
+        case (.passTypeId, .loaded): passTypeIdsState = .empty
+        }
+    }
+
     // MARK: - Writes (Batch G #10)
     //
     // All four methods return a WriteResult: .success saved, .failure the
@@ -625,6 +780,80 @@ final class ResourcesViewModel: ObservableObject {
     // (the form must stay open in that case too, not close like a success).
     // Provisioning writes need an Admin/Account Holder key role — a
     // TestFlight-only key 403s, hence the write-specific hint below.
+
+    func createMerchantId(name: String, identifier: String) async -> WriteValueResult<MerchantIdModel> {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the Merchant ID.") }
+        guard !trimmedIdentifier.isEmpty else { return .failure("Enter the Merchant ID identifier (for example, merchant.com.example.store).") }
+        guard !isWriteInFlight(Self.createMerchantIdKey) else { return .ignored }
+        writeInFlight.insert(Self.createMerchantIdKey)
+        defer { writeInFlight.remove(Self.createMerchantIdKey) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(MerchantIdCreateRequest(
+            data: MerchantIdCreateData(
+                attributes: IdentifierCreateAttributes(
+                    name: trimmedName,
+                    identifier: trimmedIdentifier
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .merchantIds, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the Merchant ID request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(MerchantIdModel.self, from: responseData)
+            prependMerchantId(model)
+            return .value(model)
+        } catch {
+            resourcesLogger.error("Failed to create Merchant ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    func createPassTypeId(name: String, identifier: String) async -> WriteValueResult<PassTypeIdModel> {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return .failure("Enter a name for the Pass Type ID.") }
+        guard !trimmedIdentifier.isEmpty else { return .failure("Enter the Pass Type ID identifier (for example, pass.com.example.loyalty).") }
+        guard !isWriteInFlight(Self.createPassTypeIdKey) else { return .ignored }
+        writeInFlight.insert(Self.createPassTypeIdKey)
+        defer { writeInFlight.remove(Self.createPassTypeIdKey) }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(PassTypeIdCreateRequest(
+            data: PassTypeIdCreateData(
+                attributes: IdentifierCreateAttributes(
+                    name: trimmedName,
+                    identifier: trimmedIdentifier
+                )
+            )
+        )), let request = APIClient.shared.getRequest(
+            api: .post(name: .passTypeIds, body: data),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the Pass Type ID request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(PassTypeIdModel.self, from: responseData)
+            prependPassTypeId(model)
+            return .value(model)
+        } catch {
+            resourcesLogger.error("Failed to create Pass Type ID: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
 
     /// POST /v1/devices — register a device. On success the search filter
     /// is cleared (a filter could otherwise hide the new row) and the row
@@ -636,7 +865,7 @@ final class ResourcesViewModel: ObservableObject {
         guard !trimmedName.isEmpty else { return .failure("Enter a device name.") }
         guard !trimmedUdid.isEmpty else { return .failure("Enter the device UDID.") }
         guard ProvisioningWriteValidation.isValidUDID(trimmedUdid) else {
-            return .failure("That doesn't look like a UDID — expected 40 hex characters, or 8-8-9 hex groups separated by a dash ( Finder → device details, or Xcode → Devices window).")
+            return .failure("That doesn't look like a UDID — expected 40 hex characters, or 25 characters as 8 + dash + 16 (Finder → device details, or Xcode → Devices window).")
         }
         guard !isWriteInFlight(Self.registerDeviceKey) else { return .ignored }
         writeInFlight.insert(Self.registerDeviceKey)
@@ -904,16 +1133,40 @@ final class ResourcesViewModel: ObservableObject {
 
     /// POST /v1/certificates — create from a CSR file's content (loaded
     /// via the form's file picker; generating the key pair in-app is out
-    /// of scope).
-    func createCertificate(certificateType: CertificateTypeOption, csrContent: String) async -> WriteResult {
+    /// of scope). Apple Pay and Pass Type certificates also require a
+    /// relationship link to their owning Merchant ID / Pass Type ID.
+    func createCertificate(certificateType: CertificateTypeOption,
+                           csrContent: String,
+                           relatedResourceId: String? = nil) async -> WriteResult {
         let trimmedCSR = csrContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRelatedResourceId = relatedResourceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmedCSR.isEmpty else { return .failure("Select a CSR file first.") }
         guard ProvisioningWriteValidation.isValidCSR(trimmedCSR) else {
             return .failure("That doesn't look like a CSR — expected PEM content with \"-----BEGIN CERTIFICATE REQUEST-----\" and \"-----END CERTIFICATE REQUEST-----\" markers.")
         }
+        if let requiredRelationship = certificateType.requiredCreateRelationship,
+           trimmedRelatedResourceId.isEmpty {
+            return .failure(requiredRelationship.missingMessage)
+        }
         guard !isWriteInFlight(Self.createCertificateKey) else { return .ignored }
         writeInFlight.insert(Self.createCertificateKey)
         defer { writeInFlight.remove(Self.createCertificateKey) }
+
+        let relationships: CertificateCreateRelationships?
+        switch certificateType.requiredCreateRelationship {
+        case .merchantId:
+            relationships = CertificateCreateRelationships(
+                merchantId: CertificateCreateRelationship(
+                    data: CertificateCreateRef(type: "merchantIds", id: trimmedRelatedResourceId)),
+                passTypeId: nil)
+        case .passTypeId:
+            relationships = CertificateCreateRelationships(
+                merchantId: nil,
+                passTypeId: CertificateCreateRelationship(
+                    data: CertificateCreateRef(type: "passTypeIds", id: trimmedRelatedResourceId)))
+        case nil:
+            relationships = nil
+        }
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -922,7 +1175,8 @@ final class ResourcesViewModel: ObservableObject {
                 attributes: CertificateCreateAttributes(
                     csrContent: trimmedCSR,
                     certificateType: certificateType.rawValue
-                )
+                ),
+                relationships: relationships
             )
         )), let request = APIClient.shared.getRequest(
             api: .post(name: .certificates, body: data),
@@ -938,6 +1192,34 @@ final class ResourcesViewModel: ObservableObject {
             return .success
         } catch {
             resourcesLogger.error("Failed to create certificate: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return .failure(writeErrorMessage(for: error))
+        }
+    }
+
+    /// GET /v1/certificates/{id} — detail payload. The list response is
+    /// enough for table rows, but the detail response is the only place Apple
+    /// includes `certificateContent`, so the inspector verifies that round-trip
+    /// without opening the save panel.
+    func fetchCertificateDetail(id: String) async -> WriteValueResult<CertificateModel> {
+        let key = "certificate-detail-\(id)"
+        guard !isWriteInFlight(key) else { return .ignored }
+        writeInFlight.insert(key)
+        defer { writeInFlight.remove(key) }
+
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .certificates, path: id),
+            apiVersion: .v1) else {
+            return .failure("Couldn't build the certificate detail request.")
+        }
+
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(CertificateModel.self, from: responseData)
+            return .value(model)
+        } catch {
+            resourcesLogger.error("Failed to load certificate detail: \(error.localizedDescription)")
             guard !Task.isCancelled else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
@@ -968,6 +1250,16 @@ final class ResourcesViewModel: ObservableObject {
                 totals[.certificates] = max(0, total - 1)
             }
             dataVersion += 1
+            // Revoking invalidates every profile signed by this certificate,
+            // but nothing here touched `profilesState` — and `load(.profiles)`
+            // early-returns on `loadedKinds`, so navigating away and back did
+            // not refetch either. The Profiles list therefore kept rendering
+            // `Active` for a profile Apple had just invalidated, disagreeing
+            // with the profile detail screen (which does refetch). Refetch
+            // now, and drop the loaded-once latch so a later visit re-reads.
+            loadedKinds.remove(.profiles)
+            fetchTasks[.profiles]?.cancel()
+            fetchTasks[.profiles] = Task { await fetch(.profiles) }
             return .success
         } catch {
             resourcesLogger.error("Failed to revoke certificate: \(error.localizedDescription)")
@@ -1598,7 +1890,12 @@ final class ResourcesViewModel: ObservableObject {
         let roles = invitation.roles ?? []
         guard !roles.isEmpty else { return .failure("The invitation has no roles to re-create.") }
         let allAppsVisible = invitation.allAppsVisible ?? true
-        let visibleAppIds = invitation.visibleApps.map(\.id)
+        // An All-Apps invite must NOT carry a visibleApps relationship — Apple
+        // rejects the pair ("if you set allAppsVisible to true, you must not
+        // provide values for the visibleApps relationship"), which broke
+        // resend for every All-Apps invitation. The hydrated linkage is still
+        // kept for genuinely app-scoped invites.
+        let visibleAppIds = allAppsVisible ? [] : invitation.visibleApps.map(\.id)
         if !allAppsVisible, visibleAppIds.isEmpty {
             return .failure("This invite is scoped to specific apps that couldn't be loaded. Revoke it and send a new invite with the app picker instead.")
         }
@@ -1736,11 +2033,13 @@ final class ResourcesViewModel: ObservableObject {
                         allAppsVisible: allAppsVisible,
                         provisioningAllowed: provisioningAllowed
                     ),
-                    relationships: visibleAppIds.isEmpty ? nil : UserInvitationCreateRelationships(
-                        visibleApps: UserInvitationVisibleAppsRelationship(
-                            data: visibleAppIds.map { UserInvitationAppRef(id: $0) }
+                    relationships: (allAppsVisible || visibleAppIds.isEmpty)
+                        ? nil
+                        : UserInvitationCreateRelationships(
+                            visibleApps: UserInvitationVisibleAppsRelationship(
+                                data: visibleAppIds.map { UserInvitationAppRef(id: $0) }
+                            )
                         )
-                    )
                 )
               )) else {
             return nil
@@ -1824,6 +2123,16 @@ final class ResourcesViewModel: ObservableObject {
         guard !isWriteInFlight(id) else { return .ignored }
         writeInFlight.insert(id)
         defer { writeInFlight.remove(id) }
+
+        // Defence in depth: the Account Holder cannot be removed through this
+        // client. The UI gates this (context menu + edit screen), but rows also
+        // expose a `delete` accessibility action, so refuse here too rather
+        // than trusting every caller to have checked.
+        if case .loaded(let users) = usersState,
+           let target = users.first(where: { $0.id == id }),
+           isAccountHolderUser(target) {
+            return .failure("The Account Holder can't be removed from this app.")
+        }
 
         guard let request = APIClient.shared.getRequest(
             api: .delete(name: .getUsers, path: id),
@@ -2040,6 +2349,10 @@ final class ResourcesViewModel: ObservableObject {
             }
             _ = try await APIClient.shared.callAPI(with: deleteRequest)
             guard !Task.isCancelled else { return .ignored }
+            // Snapshot before the delete so the replacement can be identified by
+            // set difference afterwards — `createProfile` returns a bare
+            // WriteResult with no payload to name it from.
+            let idsBefore = Set((profilesState.loadedValue ?? []).map(\.id))
             dropProfileLocally(id: profileId)
 
             let createResult = await createProfile(
@@ -2047,10 +2360,15 @@ final class ResourcesViewModel: ObservableObject {
                 certificateIds: certificateIds, deviceIds: deviceIds)
             switch createResult {
             case .success:
+                lastRegeneratedProfileId = (profilesState.loadedValue ?? [])
+                    .map(\.id)
+                    .first { !idsBefore.contains($0) }
                 return .success
             case .failure(let message):
+                lastRegeneratedProfileId = nil
                 return .failure("\(message) The old profile was already deleted — no replacement exists yet.")
             case .ignored:
+                lastRegeneratedProfileId = nil
                 return .failure("The old profile was deleted, but the replacement was not created — run the wizard again.")
             }
         } catch {
@@ -2059,6 +2377,13 @@ final class ResourcesViewModel: ObservableObject {
             return .failure(writeErrorMessage(for: error))
         }
     }
+
+    /// Id of the profile created by the most recent `regenerateProfile`, so the
+    /// result stage can name *that* profile. It used to read
+    /// `profilesState.loadedValue?.first?.name`, which labelled the replacement
+    /// with whichever profile happened to sort first. Cleared when a regenerate
+    /// fails so a stale id can't be shown.
+    @Published private(set) var lastRegeneratedProfileId: String?
 
     /// Drops a row locally without a network call (shared by delete and
     /// regenerate-after-delete).
@@ -2245,6 +2570,46 @@ final class ResourcesViewModel: ObservableObject {
             totals[.bundleIds] = total + 1
         }
         searchTexts[.bundleIds] = nil
+        dataVersion += 1
+    }
+
+    private func prependMerchantId(_ model: MerchantIdModel) {
+        guard case .loaded(var merchantIds) = merchantIdsState else {
+            merchantIdsState = .loaded([model])
+            if let total = totals[.merchantIds] {
+                totals[.merchantIds] = total + 1
+            }
+            searchTexts[.merchantIds] = nil
+            dataVersion += 1
+            return
+        }
+        merchantIds.removeAll { $0.id == model.id }
+        merchantIds.insert(model, at: 0)
+        merchantIdsState = .loaded(merchantIds)
+        if let total = totals[.merchantIds] {
+            totals[.merchantIds] = total + 1
+        }
+        searchTexts[.merchantIds] = nil
+        dataVersion += 1
+    }
+
+    private func prependPassTypeId(_ model: PassTypeIdModel) {
+        guard case .loaded(var passTypeIds) = passTypeIdsState else {
+            passTypeIdsState = .loaded([model])
+            if let total = totals[.passTypeIds] {
+                totals[.passTypeIds] = total + 1
+            }
+            searchTexts[.passTypeIds] = nil
+            dataVersion += 1
+            return
+        }
+        passTypeIds.removeAll { $0.id == model.id }
+        passTypeIds.insert(model, at: 0)
+        passTypeIdsState = .loaded(passTypeIds)
+        if let total = totals[.passTypeIds] {
+            totals[.passTypeIds] = total + 1
+        }
+        searchTexts[.passTypeIds] = nil
         dataVersion += 1
     }
 

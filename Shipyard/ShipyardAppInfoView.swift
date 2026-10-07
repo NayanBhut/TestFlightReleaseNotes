@@ -18,10 +18,12 @@ struct ShipyardAppInfoView: View {
     @ObservedObject var detailVM: DetailViewModel
     @ObservedObject var reviewsVM: ReviewsViewModel
     var app: AppsData
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     @State private var locale = ""
     @State private var drafts: [String: String] = [:]
     @State private var draftSignature = ""
+    @State private var lastSyncedServerValues: [String: String] = [:]
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var showRemoveConfirm = false
@@ -56,6 +58,14 @@ struct ShipyardAppInfoView: View {
         // Either record suffices: a fresh app may have app-info rows
         // (name/subtitle) with no version localization yet, or vice versa.
         isDirty && isEditable && (canEditGeneral || versionLocalization != nil)
+    }
+
+    private var isLoadingVersionLocalization: Bool {
+        versionId != nil && versionLocalization == nil && detailVM.versionLocalizationsState.isLoading
+    }
+
+    private var isLoadingAppInfo: Bool {
+        appInfoLocalization == nil && detailVM.appInfoState.isLoading
     }
 
     private var locales: [String] {
@@ -126,7 +136,10 @@ struct ShipyardAppInfoView: View {
         .background(ShipyardTheme.tableBackground)
         .onAppear(perform: boot)
         .onChange(of: app.id) { _, _ in boot() }
-        .onChange(of: reviewsVM.appStoreVersionsState) { _, _ in pickVersionIfNeeded() }
+        .onChange(of: reviewsVM.appStoreVersionsState) { _, _ in
+            pickVersionIfNeeded()
+            loadSelectedVersionLocalizationIfNeeded()
+        }
         .onChange(of: reviewsVM.selectedAppStoreVersionId) { _, newId in
             if let newId { detailVM.loadVersionLocalizations(versionId: newId) }
         }
@@ -134,11 +147,13 @@ struct ShipyardAppInfoView: View {
     }
 
     private func boot() {
+        detailVM.activateAppForDetail(app)
         // Same app (e.g. tab switch remount): refresh data but keep typing.
         if bootedAppId == app.id {
             detailVM.loadAppInfo()
             reviewsVM.load(app: app)
             pickVersionIfNeeded()
+            loadSelectedVersionLocalizationIfNeeded()
             syncDrafts()
             return
         }
@@ -146,12 +161,14 @@ struct ShipyardAppInfoView: View {
         locale = app.primaryLocale ?? BetaLocalizationLocales.defaultLocale
         drafts = [:]
         draftSignature = ""
+        lastSyncedServerValues = [:]
         detailVM.loadAppInfo()
         // load(app:) — not load(appId:) — sets the current app first;
         // the id-only overload no-ops until something else sets it, which
         // is why versions never arrived on first entry.
         reviewsVM.load(app: app)
         pickVersionIfNeeded()
+        loadSelectedVersionLocalizationIfNeeded()
         // Records may already be cached (warm from another tab): with no
         // state change coming, seed synchronously instead of waiting.
         syncDrafts()
@@ -177,6 +194,12 @@ struct ShipyardAppInfoView: View {
               !versions.isEmpty else { return }
         let preferred = ReviewsViewModel.preferredAppStoreVersion(versions) ?? versions[0]
         reviewsVM.selectAppStoreVersion(preferred)
+        detailVM.loadVersionLocalizations(versionId: preferred.id)
+    }
+
+    private func loadSelectedVersionLocalizationIfNeeded(force: Bool = false) {
+        guard let versionId else { return }
+        detailVM.loadVersionLocalizations(versionId: versionId, force: force)
     }
 
     /// Anything that changes server values (locale, records) re-seeds
@@ -188,8 +211,19 @@ struct ShipyardAppInfoView: View {
     private func syncDrafts() {
         guard draftSignature != draftSignatureSource else { return }
         draftSignature = draftSignatureSource
-        for field in Field.allCases where drafts[field.rawValue] == nil {
-            drafts[field.rawValue] = serverValue(field)
+        for field in Field.allCases {
+            let key = field.rawValue
+            let currentServerValue = serverValue(field)
+            if let draft = drafts[key] {
+                if let previousServerValue = lastSyncedServerValues[key] {
+                    if draft == previousServerValue {
+                        drafts.removeValue(forKey: key)
+                    }
+                } else if draft.isEmpty {
+                    drafts.removeValue(forKey: key)
+                }
+            }
+            lastSyncedServerValues[key] = currentServerValue
         }
     }
 
@@ -339,7 +373,9 @@ struct ShipyardAppInfoView: View {
     private var saveDisabledHint: String {
         if versionId == nil { return "Loading versions…" }
         if !isEditable { return "This version is read-only" }
-        if versionLocalization == nil { return "Add this localization first" }
+        if versionLocalization == nil, !canEditGeneral {
+            return isLoadingVersionLocalization ? "Loading localization fields…" : "Add this localization first"
+        }
         if !isDirty { return "No changes to save" }
         return "Save metadata changes"
     }
@@ -379,6 +415,11 @@ struct ShipyardAppInfoView: View {
                 Divider()
             }
 
+            if isLoadingAppInfo || isLoadingVersionLocalization {
+                loadingBanner
+                Divider()
+            }
+
             HStack(spacing: 0) {
             ScrollView {
                 HStack(alignment: .top, spacing: 32) {
@@ -386,7 +427,9 @@ struct ShipyardAppInfoView: View {
                         Text("General Information")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(ShipyardTheme.title)
-                        if !canEditGeneral {
+                        if isLoadingAppInfo {
+                            inlineLoadingMessage("Loading app name, subtitle, and privacy URL…")
+                        } else if !canEditGeneral {
                             Text("App name, subtitle and privacy URL follow the primary locale until this locale is added in App Store Connect.")
                                 .font(.system(size: 11))
                                 .foregroundColor(ShipyardTheme.body)
@@ -395,24 +438,25 @@ struct ShipyardAppInfoView: View {
                             label: "App Name",
                             field: .name, limit: 30,
                             hint: "The name of your app as it will appear in the App Store. Limit 30 characters.",
-                            disabled: !canEditGeneral
+                            disabled: isLoadingAppInfo || !canEditGeneral
                         )
                         metadataField(
                             label: "Subtitle",
                             field: .subtitle, limit: 30,
                             hint: "A brief summary of your app. Limit 30 characters.",
-                            disabled: !canEditGeneral
+                            disabled: isLoadingAppInfo || !canEditGeneral
                         )
                         metadataField(
                             label: "Privacy Policy URL",
                             field: .privacyPolicy, limit: nil, url: true,
                             hint: "Where users can read your privacy policy.",
-                            disabled: !canEditGeneral
+                            disabled: isLoadingAppInfo || !canEditGeneral
                         )
                         metadataField(
                             label: "Support URL",
                             field: .support, limit: nil, url: true,
-                            hint: "Where users can get help with your app."
+                            hint: "Where users can get help with your app.",
+                            disabled: versionLocalization == nil
                         )
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -421,7 +465,9 @@ struct ShipyardAppInfoView: View {
                         Text("Localization (\(BetaLocalizationLocales.displayName(for: locale)))")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(ShipyardTheme.title)
-                        if versionLocalization == nil {
+                        if isLoadingVersionLocalization {
+                            inlineLoadingMessage("Loading localized description, keywords, promo text, and URLs…")
+                        } else if versionLocalization == nil {
                             Text("Add this localization above to start editing its fields.")
                                 .font(.system(size: 11))
                                 .foregroundColor(ShipyardTheme.body)
@@ -468,6 +514,47 @@ struct ShipyardAppInfoView: View {
             inspector
             }
         }
+    }
+
+    private var loadingBanner: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(loadingBannerText)
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+        .background(LaunchTheme.page)
+    }
+
+    private var loadingBannerText: String {
+        switch (isLoadingAppInfo, isLoadingVersionLocalization) {
+        case (true, true):
+            return "Loading App Info and localization metadata…"
+        case (true, false):
+            return "Loading App Info metadata…"
+        case (false, true):
+            return "Loading localization metadata…"
+        case (false, false):
+            return ""
+        }
+    }
+
+    private func inlineLoadingMessage(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+        }
+    }
+
+    private var localeTextDirection: LayoutDirection {
+        BetaLocalizationLocales.isRightToLeft(locale) ? .rightToLeft : .leftToRight
     }
 
     // MARK: - Screenshots
@@ -563,6 +650,7 @@ struct ShipyardAppInfoView: View {
                 TextEditor(text: fieldBinding(field))
                     .font(.system(size: 13))
                     .foregroundColor(ShipyardTheme.title)
+                    .environment(\.layoutDirection, localeTextDirection)
                     .padding(10)
                     .frame(height: 110)
                     .background(LaunchTheme.field)
@@ -578,6 +666,7 @@ struct ShipyardAppInfoView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundColor(ShipyardTheme.title)
+                    .environment(\.layoutDirection, url ? .leftToRight : localeTextDirection)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(LaunchTheme.field)
@@ -650,8 +739,10 @@ struct ShipyardAppInfoView: View {
             for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
             draftSignature = ""
             syncDrafts()
+            toastCenter.show("Localization added", detail: BetaLocalizationLocales.displayName(for: code), variant: .success)
         } else if let message = detailVM.createVersionLocalizationError {
             saveError = message
+            toastCenter.show("Couldn't add localization", detail: message, variant: .error)
         }
     }
 
@@ -659,8 +750,10 @@ struct ShipyardAppInfoView: View {
         guard let record = versionLocalization else { return }
         if let message = await detailVM.deleteVersionLocalization(id: record.id, locale: locale) {
             saveError = message
+            toastCenter.show("Couldn't remove localization", detail: message, variant: .error)
             return
         }
+        toastCenter.show("Localization removed", detail: BetaLocalizationLocales.displayName(for: locale), variant: .success)
         for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
         draftSignature = ""
         syncDrafts()
@@ -682,12 +775,14 @@ struct ShipyardAppInfoView: View {
             let url = field == .privacyPolicy || field == .support || field == .marketing
             if let error = fieldError(field, limit: limit, url: url) {
                 saveError = error
+                toastCenter.show("Couldn't save App Info", detail: error, variant: .error)
                 return
             }
         }
-        guard let infoId = appInfoLocalization?.id,
-              let versionLoc = versionLocalization else {
-            saveError = "No \(BetaLocalizationLocales.displayName(for: locale)) localization exists yet for this app."
+        guard canEditGeneral || versionLocalization != nil else {
+            let message = "No \(BetaLocalizationLocales.displayName(for: locale)) localization exists yet for this app."
+            saveError = message
+            toastCenter.show("Couldn't save App Info", detail: message, variant: .error)
             return
         }
         isSaving = true
@@ -704,6 +799,7 @@ struct ShipyardAppInfoView: View {
             )
             if case .failure(let message) = infoResult {
                 saveError = message
+                toastCenter.show("Couldn't save App Info", detail: message, variant: .error)
                 return
             }
         }
@@ -719,15 +815,19 @@ struct ShipyardAppInfoView: View {
             )
             if case .failure(let message) = versionResult {
                 saveError = message
+                toastCenter.show("Couldn't save App Info", detail: message, variant: .error)
                 return
             }
         } else if !canEditGeneral {
-            saveError = "No \(BetaLocalizationLocales.displayName(for: locale)) localization exists yet for this app."
+            let message = "No \(BetaLocalizationLocales.displayName(for: locale)) localization exists yet for this app."
+            saveError = message
+            toastCenter.show("Couldn't save App Info", detail: message, variant: .error)
             return
         }
         detailVM.loadAppInfo(force: true)
         if let versionId { detailVM.loadVersionLocalizations(versionId: versionId, force: true) }
         draftSignature = ""
         syncDrafts()
+        toastCenter.show("App Info saved", detail: BetaLocalizationLocales.displayName(for: locale), variant: .success)
     }
 }

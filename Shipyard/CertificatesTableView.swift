@@ -13,8 +13,10 @@ import SwiftUI
 
 struct CertificatesTableView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var showCreateForm = false
     @State private var revoking: CertificateModel?
+    @State private var detailCertificate: CertificateModel?
     @State private var bannerError: String?
 
     private var certificates: [CertificateModel] { viewModel.filteredCertificates }
@@ -57,6 +59,16 @@ struct CertificatesTableView: View {
             }
         }
         .sheet(isPresented: Binding(
+            get: { detailCertificate != nil },
+            set: { if !$0 { detailCertificate = nil } }
+        )) {
+            if let certificate = detailCertificate {
+                CertificateDetailSheet(certificate: certificate, viewModel: viewModel) {
+                    detailCertificate = nil
+                }
+            }
+        }
+        .sheet(isPresented: Binding(
             get: { revoking != nil },
             set: { if !$0 { revoking = nil } }
         )) {
@@ -68,8 +80,13 @@ struct CertificatesTableView: View {
                         let target = certificate
                         revoking = nil
                         Task { @MainActor in
-                            if case .failure(let message) = await viewModel.revokeCertificate(id: target.id) {
+                            let result = await viewModel.revokeCertificate(id: target.id)
+                            if case .success = result {
+                                toastCenter.show("Certificate revoked", variant: .success)
+                            }
+                            if case .failure(let message) = result {
                                 bannerError = message
+                                toastCenter.show("Couldn't revoke certificate", detail: message, variant: .error)
                             }
                         }
                     }
@@ -158,19 +175,24 @@ struct CertificatesTableView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        let hasSearch = viewModel.hasActiveSearch(for: .certificates)
+        return VStack(spacing: 12) {
             Spacer()
-            Text("No Certificates")
+            Text(hasSearch ? "No Matching Certificates" : "No Certificates")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
-            Text("Create a certificate to sign development and distribution builds")
+            Text(hasSearch
+                 ? "Try a different name, serial number, type, or platform."
+                 : "Create a certificate to sign development and distribution builds")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.body)
-            Button("Create Certificate") {
-                showCreateForm = true
+            if !hasSearch {
+                Button("Create Certificate") {
+                    showCreateForm = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -232,11 +254,23 @@ struct CertificatesTableView: View {
         .padding(.horizontal, 16)
         .frame(height: 38)
         .contentShape(Rectangle())
+        .onTapGesture {
+            detailCertificate = certificate
+        }
         .contextMenu {
+            Button("Open Details") {
+                detailCertificate = certificate
+            }
+            .accessibilityLabel("Open details for \(certificate.displayName ?? certificate.name ?? "certificate")")
             Button("Download") {
                 Task { @MainActor in
-                    if case .failure(let message) = await viewModel.downloadCertificate(certificate) {
+                    let result = await viewModel.downloadCertificate(certificate)
+                    if case .success = result {
+                        toastCenter.show("Certificate downloaded", variant: .success)
+                    }
+                    if case .failure(let message) = result {
                         bannerError = message
+                        toastCenter.show("Couldn't download certificate", detail: message, variant: .error)
                     }
                 }
             }
@@ -247,7 +281,7 @@ struct CertificatesTableView: View {
             .accessibilityLabel("Revoke \(certificate.displayName ?? certificate.name ?? "certificate")")
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(certificate.displayName ?? certificate.name ?? "certificate"), \(status.text)")
+        .accessibilityLabel("\(certificate.displayName ?? certificate.name ?? "certificate"), \(status.text). Open details")
     }
 
     @ViewBuilder
@@ -275,6 +309,160 @@ struct CertificatesTableView: View {
                 }
                 Spacer()
             }
+        }
+    }
+}
+
+// MARK: - Detail
+
+private struct CertificateDetailSheet: View {
+    let certificate: CertificateModel
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onClose: () -> Void
+
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
+    @State private var detail: CertificateModel?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private var currentCertificate: CertificateModel { detail ?? certificate }
+    private var title: String {
+        currentCertificate.displayName ?? currentCertificate.name ?? "Certificate"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Certificate Details")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text(title)
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button("Close", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(20)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 14) {
+                if isLoading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                        Text("Loading latest certificate details…")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+                }
+
+                if let errorMessage {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(AppTheme.negative)
+                        Text(errorMessage)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppTheme.negative)
+                    }
+                    Button("Retry") {
+                        loadDetail()
+                    }
+                    .controlSize(.small)
+                }
+
+                detailRow("Name", currentCertificate.name)
+                detailRow("Display Name", currentCertificate.displayName)
+                detailRow("Type", certificateTypeDisplayName(currentCertificate.certificateType))
+                detailRow("Platform", currentCertificate.platform)
+                detailRow("Serial Number", currentCertificate.serialNumber, monospaced: true)
+                detailRow("Expiration Date", certificateExpiryDisplay(currentCertificate.expirationDate))
+                detailRow("Status", certificateStatus(currentCertificate).text)
+                detailRow("Activated", activatedText(currentCertificate.activated))
+                detailRow("Certificate ID", currentCertificate.id, monospaced: true)
+                detailRow("Certificate Content", certificateContentText)
+            }
+            .padding(20)
+
+            Divider()
+
+            HStack {
+                Text("Content is fetched with the detail endpoint; Download still asks where to save the .cer file.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button("Download .cer") {
+                    Task { @MainActor in
+                        let result = await viewModel.downloadCertificate(currentCertificate)
+                        if case .success = result {
+                            toastCenter.show("Certificate downloaded", variant: .success)
+                        }
+                        if case .failure(let message) = result {
+                            errorMessage = message
+                            toastCenter.show("Couldn't download certificate", detail: message, variant: .error)
+                        }
+                    }
+                }
+                .controlSize(.small)
+            }
+            .padding(20)
+        }
+        .frame(width: 620)
+        .background(LaunchTheme.page)
+        .task {
+            await fetchDetail()
+        }
+    }
+
+    private var certificateContentText: String {
+        guard let content = detail?.certificateContent else {
+            return detail == nil ? "Loading…" : "Not returned"
+        }
+        return content.isEmpty ? "Not returned" : "Available (\(content.count) base64 characters)"
+    }
+
+    @ViewBuilder
+    private func detailRow(_ label: String, _ value: String?, monospaced: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(width: 140, alignment: .leading)
+            Text(value?.isEmpty == false ? value! : "—")
+                .font(monospaced ? .system(size: 12, design: .monospaced) : .system(size: 12))
+                .foregroundColor(ShipyardTheme.title)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func activatedText(_ activated: Bool?) -> String {
+        guard let activated else { return "Unknown" }
+        return activated ? "Yes" : "No"
+    }
+
+    private func loadDetail() {
+        Task { await fetchDetail() }
+    }
+
+    @MainActor
+    private func fetchDetail() async {
+        isLoading = true
+        errorMessage = nil
+        let result = await viewModel.fetchCertificateDetail(id: certificate.id)
+        isLoading = false
+        switch result {
+        case .value(let model):
+            detail = model
+        case .failure(let message):
+            errorMessage = message
+            toastCenter.show("Couldn't load certificate details", detail: message, variant: .error)
+        case .ignored:
+            break
         }
     }
 }

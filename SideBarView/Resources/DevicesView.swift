@@ -26,6 +26,7 @@ import UniformTypeIdentifiers
 
 struct DevicesView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     /// Sheet presentation keeps the fixed Figma-like sizing; the shell
     /// embeds the table flexibly instead.
     var fixedSize = true
@@ -170,11 +171,15 @@ struct DevicesView: View {
                         rejected: parsed.rejected
                     )
                 } catch {
-                    bannerError = (error as? LocalizedError)?.errorDescription
+                    let message = (error as? LocalizedError)?.errorDescription
                         ?? "Couldn't read that file."
+                    bannerError = message
+                    toastCenter.show("Couldn't read device import", detail: message, variant: .error)
                 }
             case .failure:
-                bannerError = "Couldn't read that file. Pick a .csv or .txt file with one device per line."
+                let message = "Couldn't read that file. Pick a .csv or .txt file with one device per line."
+                bannerError = message
+                toastCenter.show("Couldn't read device import", detail: message, variant: .error)
             }
         }
         .sheet(item: $csvPreview) { preview in
@@ -184,6 +189,16 @@ struct DevicesView: View {
                 onDone: { result in
                     csvPreview = nil
                     csvImportResult = result
+                    if let result {
+                        if result.failures.isEmpty {
+                            toastCenter.show("\(result.registered) device\(result.registered == 1 ? "" : "s") registered", variant: .success)
+                        } else {
+                            toastCenter.show(
+                                "Device import finished with failures",
+                                detail: "\(result.registered) registered, \(result.failures.count) failed",
+                                variant: result.registered > 0 ? .warning : .error)
+                        }
+                    }
                 }
             )
         }
@@ -544,6 +559,7 @@ struct DeviceDetailView: View {
     var onDisable: (DeviceModel) -> Void
     var onEnable: (DeviceModel) -> Void
     var onOpenProfile: ((ProfileModel) -> Void)?
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     @State private var draftName: String
     @State private var isSaving = false
@@ -756,9 +772,10 @@ struct DeviceDetailView: View {
             let result = await viewModel.renameDevice(device, to: draftName)
             switch result {
             case .success:
-                break
+                toastCenter.show("Device name saved", detail: draftName, variant: .success)
             case .failure(let message):
                 errorMessage = message
+                toastCenter.show("Couldn't save device name", detail: message, variant: .error)
             case .ignored:
                 // Duplicate in flight / unchanged — nothing to do.
                 break
@@ -939,6 +956,7 @@ struct DisableDeviceSheet: View {
     var onReviewProfiles: () -> Void
     var onOpenDevice: () -> Void
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -1061,8 +1079,10 @@ struct DisableDeviceSheet: View {
             switch result {
             case .success:
                 didDisable = true
+                toastCenter.show("Device disabled", detail: device.name ?? device.udid, variant: .success)
             case .failure(let message):
                 errorMessage = message
+                toastCenter.show("Couldn't disable device", detail: message, variant: .error)
             case .ignored:
                 break
             }
@@ -1077,6 +1097,7 @@ struct EnableDeviceSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var device: DeviceModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -1169,9 +1190,11 @@ struct EnableDeviceSheet: View {
             let result = await viewModel.setDeviceEnabled(device, enabled: true)
             switch result {
             case .success:
+                toastCenter.show("Device enabled", detail: device.name ?? device.udid, variant: .success)
                 onDone()
             case .failure(let message):
                 errorMessage = message
+                toastCenter.show("Couldn't enable device", detail: message, variant: .error)
             case .ignored:
                 break
             }

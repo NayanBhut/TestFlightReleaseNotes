@@ -17,10 +17,12 @@ struct ReleasePrepareView: View {
     var version: AppStoreVersionsModel
     @ObservedObject var reviewsVM: ReviewsViewModel
     var localizations: [AppStoreVersionLocalizationsModel]
+    var requiresWhatsNew: Bool
     var reviewDetails: AppStoreReviewDetailsModel?
     var missingItems: [String]
     var missingDetail: String
     var canEdit: Bool
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @Binding var draftVersionString: String
     @Binding var draftWhatsNew: String
     @Binding var draftLocaleId: String?
@@ -102,9 +104,9 @@ struct ReleasePrepareView: View {
     private var whatsNewField: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                fieldLabel("What’s New * · \(Self.localeDisplay(draftLocale?.locale))")
+                fieldLabel("\(requiresWhatsNew ? "What’s New *" : "What’s New") · \(Self.localeDisplay(draftLocale?.locale))")
                 Spacer(minLength: 0)
-                if localizations.count > 1 {
+                if requiresWhatsNew && localizations.count > 1 {
                     Picker("", selection: Binding<String?>(
                         get: { draftLocaleId },
                         set: { newId in
@@ -162,26 +164,29 @@ struct ReleasePrepareView: View {
             } message: {
                 Text("Switching locales would discard your unsaved What's New text.")
             }
-            fieldBox(disabled: !canEdit || localizations.isEmpty, minHeight: 76) {
-                if localizations.isEmpty {
-                    Text(localesPlaceholder)
+            fieldBox(disabled: !canEdit || localizations.isEmpty || !requiresWhatsNew, minHeight: 76) {
+                if !requiresWhatsNew || localizations.isEmpty {
+                    Text(!requiresWhatsNew ? "What’s New is only needed for app updates after the first App Store release." : localesPlaceholder)
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.tertiary)
                         .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
                 } else {
                     TextEditor(text: $draftWhatsNew)
                         .font(.system(size: 13))
+                        .environment(\.layoutDirection, draftLocaleTextDirection)
                         .scrollContentBackground(.hidden)
-                        .disabled(!canEdit)
+                        .disabled(!canEdit || !requiresWhatsNew)
                         .frame(minHeight: 60)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                Text("\(draftWhatsNew.count) / 4000")
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.tertiary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                if requiresWhatsNew {
+                    Text("\(draftWhatsNew.count) / 4000")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.tertiary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                }
             }
             if case .error(let message) = reviewsVM.versionLocalizationsState {
                 HStack(spacing: 8) {
@@ -204,6 +209,10 @@ struct ReleasePrepareView: View {
             return localizations.first { $0.id == id }
         }
         return localizations.first
+    }
+
+    private var draftLocaleTextDirection: LayoutDirection {
+        BetaLocalizationLocales.isRightToLeft(draftLocale?.locale) ? .rightToLeft : .leftToRight
     }
 
     /// Single place where a locale switch is applied. `carrying` is the
@@ -356,14 +365,20 @@ struct ReleasePrepareView: View {
             },
             set: { on in
                 Task {
+                    let success: Bool
                     if on {
                         if reviewsVM.phasedRelease == nil {
-                            await reviewsVM.startPhasedRelease(versionId: version.id)
+                            success = await reviewsVM.startPhasedRelease(versionId: version.id)
                         } else {
-                            await reviewsVM.setPhasedReleaseState("ACTIVE")
+                            success = await reviewsVM.setPhasedReleaseState("ACTIVE")
                         }
                     } else {
-                        await reviewsVM.setPhasedReleaseState("PAUSED")
+                        success = await reviewsVM.setPhasedReleaseState("PAUSED")
+                    }
+                    if success {
+                        toastCenter.show(on ? "Phased release enabled" : "Phased release paused", variant: .success)
+                    } else if let message = reviewsVM.writeError {
+                        toastCenter.show("Couldn't update phased release", detail: message, variant: .error)
                     }
                 }
             }

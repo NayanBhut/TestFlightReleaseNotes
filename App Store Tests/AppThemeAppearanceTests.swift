@@ -10,7 +10,7 @@
 import XCTest
 import AppKit
 import SwiftUI
-@testable import App_Store
+@testable import Shipyard
 
 final class AppThemeAppearanceTests: XCTestCase {
     /// Resolves a theme Color to sRGB components under the given appearance.

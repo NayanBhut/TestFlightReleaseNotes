@@ -17,6 +17,7 @@ enum ShipyardSection: String, CaseIterable, Hashable {
     case monitoring
     case devices
     case certificates
+    case identifiers
     case bundleIDs
     case profiles
     case users
@@ -29,6 +30,7 @@ enum ShipyardSection: String, CaseIterable, Hashable {
         case .monitoring: return "Processing Builds"
         case .devices: return "Devices"
         case .certificates: return "Certificates"
+        case .identifiers: return "Identifiers"
         case .bundleIDs: return "Bundle IDs"
         case .profiles: return "Profiles"
         case .users: return "Users"
@@ -43,6 +45,7 @@ enum ShipyardSection: String, CaseIterable, Hashable {
         case .monitoring: return "ShipyardMonitorX"
         case .devices: return "ShipyardPhone"
         case .certificates: return "ShipyardCertCheck"
+        case .identifiers: return "ShipyardBadge"
         case .bundleIDs: return "ShipyardBadge"
         case .profiles: return "ShipyardFileCog"
         case .users: return "ShipyardTeamUser"
@@ -82,7 +85,7 @@ struct ShipyardSidebar: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         sectionHeader("TEAM RESOURCES")
-                        ForEach([ShipyardSection.devices, .certificates, .bundleIDs, .profiles, .users, .reviews], id: \.self) { section in
+                        ForEach([ShipyardSection.devices, .certificates, .identifiers, .bundleIDs, .profiles, .users, .reviews], id: \.self) { section in
                             navRow(section)
                         }
                     }

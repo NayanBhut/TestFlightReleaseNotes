@@ -17,6 +17,7 @@ struct BetaGroupsView: View {
     var app: AppsData?
     /// Build in context (assign-to-group target, auto-notify subject).
     var build: BuildsModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     @State private var tab: GroupTab = .testers
     @State private var showInviteSheet = false
@@ -68,7 +69,7 @@ struct BetaGroupsView: View {
         ) {
             Button("Remove", role: .destructive) {
                 if let tester = removingTester {
-                    Task { await betaVM.removeTesterFromGroup(tester) }
+                    Task { await runTesterRemoval(tester) }
                 }
                 removingTester = nil
             }
@@ -84,7 +85,7 @@ struct BetaGroupsView: View {
         ) {
             Button("Delete from Team", role: .destructive) {
                 if let tester = deletingTester {
-                    Task { await betaVM.deleteTester(tester) }
+                    Task { await runTesterDelete(tester) }
                 }
                 deletingTester = nil
             }
@@ -97,7 +98,7 @@ struct BetaGroupsView: View {
         ) {
             Button("Delete Group", role: .destructive) {
                 if let group = selectedGroup {
-                    Task { await betaVM.deleteGroup(group) }
+                    Task { await runGroupDelete(group) }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -108,6 +109,60 @@ struct BetaGroupsView: View {
         guard let app else { return }
         if betaVM.isGroupsLoaded, betaVM.currentAppId == app.id { return }
         await betaVM.fetchBetaGroups(app: app)
+    }
+
+    private func runTesterRemoval(_ tester: BetaTesterModel) async {
+        betaVM.clearError()
+        await betaVM.removeTesterFromGroup(tester)
+        if betaVM.hasError, let message = betaVM.errorMessage {
+            toastCenter.show("Couldn't remove tester", detail: message, variant: .error)
+        } else {
+            toastCenter.show("Tester removed from group", detail: tester.displayName, variant: .success)
+        }
+    }
+
+    private func runTesterDelete(_ tester: BetaTesterModel) async {
+        betaVM.clearError()
+        await betaVM.deleteTester(tester)
+        if betaVM.hasError, let message = betaVM.errorMessage {
+            toastCenter.show("Couldn't delete tester", detail: message, variant: .error)
+        } else {
+            toastCenter.show("Tester deleted", detail: tester.displayName, variant: .success)
+        }
+    }
+
+    private func runGroupDelete(_ group: BetaGroupModel) async {
+        betaVM.clearError()
+        await betaVM.deleteGroup(group)
+        if betaVM.hasError, let message = betaVM.errorMessage {
+            toastCenter.show("Couldn't delete beta group", detail: message, variant: .error)
+        } else {
+            toastCenter.show("Beta group deleted", detail: group.name, variant: .success)
+        }
+    }
+
+    private func runAssignBuild(to group: BetaGroupModel) async {
+        betaVM.clearError()
+        await betaVM.assignBuildToGroup(build: build)
+        if let message = betaVM.errorMessage, betaVM.hasError {
+            let assigned = message.localizedCaseInsensitiveContains("assigned")
+            toastCenter.show(
+                assigned ? "Build assigned" : "Couldn't assign build",
+                detail: message,
+                variant: assigned ? .success : .error)
+        } else {
+            toastCenter.show("Build assigned", detail: group.name, variant: .success)
+        }
+    }
+
+    private func runAutoNotify(buildId: String, enabled: Bool) async {
+        betaVM.clearError()
+        await betaVM.setAutoNotify(buildId: buildId, enabled: enabled)
+        if betaVM.hasError, let message = betaVM.errorMessage {
+            toastCenter.show("Couldn't update auto-notify", detail: message, variant: .error)
+        } else {
+            toastCenter.show(enabled ? "Auto-notify enabled" : "Auto-notify disabled", variant: .success)
+        }
     }
 
     // MARK: - Groups column
@@ -382,7 +437,7 @@ struct BetaGroupsView: View {
                 Button("Assign Build") {
                     betaVM.selectGroup(group)
                     Task {
-                        await betaVM.assignBuildToGroup(build: build)
+                        await runAssignBuild(to: group)
                     }
                 }
                 Button("Cancel", role: .cancel) {}
@@ -442,7 +497,7 @@ struct BetaGroupsView: View {
                 get: { autoNotify },
                 set: { enabled in
                     Task {
-                        await betaVM.setAutoNotify(buildId: build.id, enabled: enabled)
+                        await runAutoNotify(buildId: build.id, enabled: enabled)
                     }
                 }
             ))

@@ -92,6 +92,7 @@ func profileCertificateStatus(_ certificate: CertificateModel?) -> String {
 /// profiles render their Figma banner variants.
 struct ProfileDetailView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var profile: ProfileModel
     var onBack: () -> Void
     var onOpenCertificate: (String) -> Void
@@ -103,8 +104,8 @@ struct ProfileDetailView: View {
     @State private var isLoadingDetail = true
     @State private var isDownloading = false
     @State private var bannerError: String?
-    @State private var showDelete = false
-    @State private var showRegenerate = false
+    @State private var deleteProfile: ProfileModel?
+    @State private var regenerateProfile: ProfileModel?
     @State private var localKeySerials: Set<String> = []
     @State private var keyCheckDone = false
 
@@ -155,11 +156,11 @@ struct ProfileDetailView: View {
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.body)
                 Spacer()
-                Button("Delete…") { showDelete = true }
+                Button("Delete…") { deleteProfile = shown }
                     .buttonStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundColor(ShipyardTheme.danger)
-                Button("Regenerate…") { showRegenerate = true }
+                Button("Regenerate…") { regenerateProfile = shown }
                     .buttonStyle(.launchSecondary)
                 if isDownloading {
                     ProgressView().scaleEffect(0.7)
@@ -214,15 +215,15 @@ struct ProfileDetailView: View {
                 checkLocalKeys()
             }
         }
-        .sheet(isPresented: $showDelete) {
-            DeleteProfileSheet(viewModel: viewModel, profile: shown) {
-                showDelete = false
+        .sheet(item: $deleteProfile) { p in
+            DeleteProfileSheet(viewModel: viewModel, profile: p) {
+                deleteProfile = nil
                 onBack()
             }
         }
-        .sheet(isPresented: $showRegenerate) {
-            RegenerateProfileSheet(viewModel: viewModel, profile: shown) {
-                showRegenerate = false
+        .sheet(item: $regenerateProfile) { p in
+            RegenerateProfileSheet(viewModel: viewModel, profile: p) {
+                regenerateProfile = nil
             }
         }
     }
@@ -468,8 +469,14 @@ struct ProfileDetailView: View {
         isDownloading = true
         defer { isDownloading = false }
         bannerError = nil
-        if case .failure(let message) = await viewModel.downloadProfile(shown) {
+        switch await viewModel.downloadProfile(shown) {
+        case .success:
+            toastCenter.show("Profile downloaded", variant: .success)
+        case .failure(let message):
             bannerError = message
+            toastCenter.show("Couldn't download profile", detail: message, variant: .error)
+        case .ignored:
+            break
         }
     }
 }
@@ -480,6 +487,7 @@ struct ProfileDetailView: View {
 /// table (certs stay valid, bundle ID and devices untouched).
 struct DeleteProfileSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var profile: ProfileModel
     var onDone: () -> Void
     @State private var confirmation = ""
@@ -563,8 +571,12 @@ struct DeleteProfileSheet: View {
                             defer { isSaving = false }
                             errorMessage = nil
                             switch await viewModel.deleteProfile(id: profile.id) {
-                            case .success: onDone()
-                            case .failure(let message): errorMessage = message
+                            case .success:
+                                toastCenter.show("Profile deleted", variant: .success)
+                                onDone()
+                            case .failure(let message):
+                                toastCenter.show("Couldn't delete profile", detail: message, variant: .error)
+                                errorMessage = message
                             case .ignored: break
                             }
                         }
@@ -596,6 +608,7 @@ struct RegenerateProfileSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var profile: ProfileModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     private enum RegenStage {
         case dependencies
@@ -687,11 +700,11 @@ struct RegenerateProfileSheet: View {
                         Button("Cancel") { onDone() }
                             .buttonStyle(.launchSecondary)
                             .disabled(isSaving)
-                        Button("Review Replacement") { stage = .review }
+                        Button("Review Replacement") { withAnimation { stage = .review } }
                             .buttonStyle(.launchPrimary)
                             .disabled(isSaving || certificateIds.isEmpty)
                     } else {
-                        Button("Back") { stage = .dependencies }
+                        Button("Back") { withAnimation { stage = .dependencies } }
                             .buttonStyle(.launchSecondary)
                             .disabled(isSaving)
                         if isSaving {
@@ -1022,19 +1035,34 @@ struct RegenerateProfileSheet: View {
             deviceIds: deviceIds)
         switch result {
         case .success:
-            newProfileName = viewModel.profilesState.loadedValue?.first?.name
+            // Name the profile this regenerate actually created. Reading
+            // `first` from the list labelled the replacement with whichever
+            // profile happened to be first (BUG-4).
+            newProfileName = viewModel.profilesState.loadedValue?
+                .first { $0.id == viewModel.lastRegeneratedProfileId }?
+                .name
+                ?? profile.name
+            toastCenter.show("Profile regenerated", detail: newProfileName, variant: .success)
             stage = .result
         case .failure(let message):
             errorMessage = message
+            toastCenter.show("Couldn't regenerate profile", detail: message, variant: .error)
         case .ignored:
             break
         }
     }
 
     private func runDownloadReplacement() async {
-        guard let replacement = viewModel.profilesState.loadedValue?.first else { return }
-        if case .failure(let message) = await viewModel.downloadProfile(replacement) {
+        guard let replacement = viewModel.profilesState.loadedValue?
+            .first(where: { $0.id == viewModel.lastRegeneratedProfileId }) else { return }
+        switch await viewModel.downloadProfile(replacement) {
+        case .success:
+            toastCenter.show("Profile downloaded", variant: .success)
+        case .failure(let message):
             errorMessage = message
+            toastCenter.show("Couldn't download profile", detail: message, variant: .error)
+        case .ignored:
+            break
         }
     }
 }
@@ -1048,6 +1076,7 @@ struct ProfileCreatedSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var profile: ProfileModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var isWorking = false
     @State private var errorMessage: String?
     @State private var installResult: ResourcesViewModel.ProfileInstallOutcome?
@@ -1101,8 +1130,14 @@ struct ProfileCreatedSheet: View {
         isWorking = true
         defer { isWorking = false }
         errorMessage = nil
-        if case .failure(let message) = await viewModel.downloadProfile(profile) {
+        switch await viewModel.downloadProfile(profile) {
+        case .success:
+            toastCenter.show("Profile downloaded", variant: .success)
+        case .failure(let message):
             errorMessage = message
+            toastCenter.show("Couldn't download profile", detail: message, variant: .error)
+        case .ignored:
+            break
         }
     }
 
@@ -1113,8 +1148,10 @@ struct ProfileCreatedSheet: View {
         switch await viewModel.installProfileForXcode(profile) {
         case .success(let fileName, let directory, let fileURL):
             installResult = .success(fileName: fileName, directory: directory, fileURL: fileURL)
+            toastCenter.show("Profile installed", detail: fileName, variant: .success)
         case .failure(let message):
             errorMessage = message
+            toastCenter.show("Couldn't install profile", detail: message, variant: .error)
         case .ignored:
             break
         }

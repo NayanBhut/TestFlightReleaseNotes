@@ -12,6 +12,7 @@ import SwiftUI
 struct ReviewsView: View {
     @ObservedObject var reviewsViewModel: ReviewsViewModel
     var selectedApp: AppsData?
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var confirmingSubmit = false
     @State private var submissionToCancel: ReviewSubmissionModel?
 
@@ -47,6 +48,11 @@ struct ReviewsView: View {
                 }
                 .onChange(of: app.id) { _, _ in
                     reviewsViewModel.load(app: app)
+                }
+                .onChange(of: reviewsViewModel.writeError) { _, message in
+                    if let message {
+                        toastCenter.show("Review action failed", detail: message, variant: .error)
+                    }
                 }
                 .alert("Action Failed",
                        isPresented: Binding(
@@ -500,6 +506,7 @@ struct NewVersionView: View {
 struct ReplySection: View {
     let reviewId: String
     @ObservedObject var reviewsViewModel: ReviewsViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var isReplying = false
     @State private var replyText: String = ""
 
@@ -529,6 +536,9 @@ struct ReplySection: View {
                             if posted {
                                 isReplying = false
                                 replyText = ""
+                                toastCenter.show("Reply sent", variant: .success)
+                            } else if let message = reviewsViewModel.writeError {
+                                toastCenter.show("Couldn't send reply", detail: message, variant: .error)
                             }
                         }
                     }

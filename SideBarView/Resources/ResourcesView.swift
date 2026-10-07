@@ -24,6 +24,65 @@
 
 import SwiftUI
 
+enum IdentifierResourceKind: String, CaseIterable, Identifiable {
+    case merchantIds
+    case passTypeIds
+    case appGroups
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .merchantIds: return "Merchant IDs"
+        case .passTypeIds: return "Pass Type IDs"
+        case .appGroups: return "App Groups"
+        }
+    }
+
+    var resourceKind: ResourcesViewModel.Kind? {
+        switch self {
+        case .merchantIds: return .merchantIds
+        case .passTypeIds: return .passTypeIds
+        case .appGroups: return nil
+        }
+    }
+
+    var promptName: String {
+        switch self {
+        case .merchantIds: return "Store Apple Pay"
+        case .passTypeIds: return "Loyalty Pass"
+        case .appGroups: return "Shared App Group"
+        }
+    }
+
+    var promptIdentifier: String {
+        switch self {
+        case .merchantIds: return "merchant.com.example.store"
+        case .passTypeIds: return "pass.com.example.loyalty"
+        case .appGroups: return "group.com.example.shared"
+        }
+    }
+
+    var createTitle: String {
+        switch self {
+        case .merchantIds: return "Create Merchant ID"
+        case .passTypeIds: return "Create Pass Type ID"
+        case .appGroups: return "Create App Group"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .merchantIds:
+            return "Merchant IDs back Apple Pay certificates and can be reused by multiple apps."
+        case .passTypeIds:
+            return "Pass Type IDs are required before creating Wallet pass certificates."
+        case .appGroups:
+            return "Apple's public App Store Connect API does not expose App Group create/list endpoints. Register App Groups in Apple Developer, then enable the App Groups capability from a Bundle ID."
+        }
+    }
+}
+
 
 
 
@@ -39,6 +98,7 @@ import SwiftUI
 struct RegisterDeviceForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var name = ""
     @State private var platform: DevicePlatform = .IOS
     @State private var udid = ""
@@ -94,7 +154,7 @@ struct RegisterDeviceForm: View {
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
                     sheetField(label: "", text: $udid, prompt: "00008101-001C25D40C28001E", mono: true)
-                    Text("40-character hex UDID for older devices, or 25-character formatted for Apple Silicon/newer iPhones.")
+                    Text("40 hex characters for older devices, or 25 characters as 8 + dash + 16 for iPhone XS (A12) and newer.")
                         .font(.system(size: 11))
                         .foregroundColor(ShipyardTheme.body)
                 }
@@ -128,11 +188,13 @@ struct RegisterDeviceForm: View {
                             let result = await viewModel.registerDevice(
                                 name: name, platform: platform, udid: udid)
                             if case .success = result {
+                                toastCenter.show("Device registered", detail: name, variant: .success)
                                 onDone()
                             } else if case .failure(let message) = result {
                                 // .ignored: duplicate in flight / cancelled —
                                 // keep the form open, nothing was registered.
                                 errorMessage = message
+                                toastCenter.show("Couldn't register device", detail: message, variant: .error)
                             }
                         }
                     }
@@ -178,7 +240,9 @@ struct RegisterDeviceForm: View {
 struct CreateCertificateForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var certificateType: CertificateTypeOption = .IOS_DEVELOPMENT
+    @State private var relatedResourceId = ""
     /// Loaded CSR content (never displayed — file name is shown instead).
     @State private var csrContent = ""
     @State private var csrFileName: String?
@@ -224,7 +288,18 @@ struct CreateCertificateForm: View {
                     Menu {
                         ForEach(CertificateTypeOption.allCases, id: \.self) { option in
                             Button(option.displayName) {
+                                let oldRelationship = certificateType.requiredCreateRelationship
                                 certificateType = option
+                                if oldRelationship != option.requiredCreateRelationship {
+                                    relatedResourceId = ""
+                                }
+                                // Drop the previous submit error: leaving it up
+                                // showed "you already have a current iOS
+                                // Development certificate" *after* the type had
+                                // been changed to Mac App Distribution, so the
+                                // message described an input the user had just
+                                // moved away from.
+                                errorMessage = nil
                             }
                         }
                     } label: {
@@ -246,6 +321,10 @@ struct CreateCertificateForm: View {
                     .menuStyle(.borderlessButton)
                     .disabled(isSaving)
                     .accessibilityLabel("Select certificate type")
+                }
+
+                if let relationship = certificateType.requiredCreateRelationship {
+                    relationshipField(relationship)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -315,7 +394,9 @@ struct CreateCertificateForm: View {
                             isSaving = true
                             defer { isSaving = false }
                             let result = await viewModel.createCertificate(
-                                certificateType: certificateType, csrContent: csrContent)
+                                certificateType: certificateType,
+                                csrContent: csrContent,
+                                relatedResourceId: relatedResourceId)
                             if case .success = result {
                                 // Always safe now: prependCertificate/prependProfile
                                 // seed the list with the server-confirmed model even
@@ -324,15 +405,17 @@ struct CreateCertificateForm: View {
                                 createdCertificate = viewModel.certificatesState.loadedValue?.first
                                 didDownload = false
                                 errorMessage = nil
+                                toastCenter.show("Certificate created", detail: certificateType.displayName, variant: .success)
                             } else if case .failure(let message) = result {
                                 // .ignored: duplicate in flight / cancelled —
                                 // keep the form open, nothing was created.
                                 errorMessage = message
+                                toastCenter.show("Couldn't create certificate", detail: message, variant: .error)
                             }
                         }
                     }
                     .buttonStyle(.launchPrimary)
-                    .disabled(csrContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canCreate)
                 }
             }
             .padding(16)
@@ -346,6 +429,120 @@ struct CreateCertificateForm: View {
         .frame(width: 560)
     }
 
+    private var canCreate: Bool {
+        !csrContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (certificateType.requiredCreateRelationship == nil
+                || !relatedResourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private func relationshipField(_ relationship: CertificateCreateRelationshipKind) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(relationship.label)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(ShipyardTheme.body)
+            relationshipPicker(relationship)
+            TextField(relationship.prompt, text: $relatedResourceId)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(LaunchTheme.field)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .disabled(isSaving)
+                .accessibilityLabel(relationship.prompt)
+                .onChange(of: relatedResourceId) { _ in errorMessage = nil }
+            Text(relationship.help)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task(id: relationship) {
+            viewModel.loadCertificateRelationshipOptions(relationship)
+        }
+    }
+
+    @ViewBuilder
+    private func relationshipPicker(_ relationship: CertificateCreateRelationshipKind) -> some View {
+        switch viewModel.certificateRelationshipOptionsState(for: relationship) {
+        case .idle:
+            EmptyView()
+        case .loading:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text(relationship.loadingMessage)
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+        case .loaded(let options):
+            if !options.isEmpty {
+                Menu {
+                    ForEach(options) { option in
+                        Button(option.displayName) {
+                            relatedResourceId = option.id
+                            errorMessage = nil
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text(selectedRelationshipTitle(for: relationship, options: options))
+                            .font(.system(size: 13))
+                            .foregroundColor(ShipyardTheme.title)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("⌄")
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(LaunchTheme.field)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(isSaving)
+                .accessibilityLabel("Choose \(relationship.label.lowercased())")
+            }
+        case .empty:
+            Text(relationship.emptyMessage)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .fixedSize(horizontal: false, vertical: true)
+        case .error(let message):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundColor(AppTheme.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Retry") {
+                    viewModel.loadCertificateRelationshipOptions(relationship, force: true)
+                }
+                .buttonStyle(.launchSecondary)
+                .disabled(isSaving)
+            }
+        }
+    }
+
+    private func selectedRelationshipTitle(
+        for relationship: CertificateCreateRelationshipKind,
+        options: [CertificateRelationshipOption]
+    ) -> String {
+        let trimmedId = relatedResourceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else { return relationship.pickerTitle }
+        if let option = options.first(where: { $0.id == trimmedId }) {
+            return option.displayName
+        }
+        return trimmedId
+    }
+
     private func download(_ certificate: CertificateModel) {
         Task { @MainActor in
             isDownloading = true
@@ -354,8 +551,10 @@ struct CreateCertificateForm: View {
             case .success:
                 didDownload = true
                 errorMessage = nil
+                toastCenter.show("Certificate downloaded", variant: .success)
             case .failure(let message):
                 errorMessage = message
+                toastCenter.show("Couldn't download certificate", detail: message, variant: .error)
             case .ignored:
                 break
             }
@@ -381,6 +580,7 @@ struct CreateCertificateForm: View {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            toastCenter.show("Couldn't read CSR", detail: error.localizedDescription, variant: .error)
         }
     }
 }
@@ -464,6 +664,7 @@ struct CreateSuccessView: View {
 struct CreateBundleIdForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     /// Deep-links the new bundle ID into its detail after "Open Bundle ID".
     var onOpenBundleId: ((String) -> Void)?
     /// Team label in the registered confirmation explanation (114-2284).
@@ -721,10 +922,12 @@ struct CreateBundleIdForm: View {
             switch result {
             case .value(let bundleId):
                 createdBundleId = bundleId
+                toastCenter.show("Bundle ID registered", detail: bundleId.identifier ?? identifier, variant: .success)
             case .failure(let message):
                 // .ignored: duplicate in flight / cancelled — keep the
                 // form open, nothing was created.
                 errorMessage = message
+                toastCenter.show("Couldn't register Bundle ID", detail: message, variant: .error)
             case .ignored:
                 break
             }
@@ -783,6 +986,7 @@ struct BundleIDRegisteredSheet: View {
 struct CreateProfileForm: View {
     @ObservedObject var viewModel: ResourcesViewModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     /// Preselected bundle ID. Set when the form is reached from the
     /// bundle-IDs "Create Profile…" action (Figma 114-2284), where the
     /// profile must belong to the identifier that was just registered.
@@ -1040,6 +1244,7 @@ struct CreateProfileForm: View {
                     }
                     .buttonStyle(.launchSecondary)
                     .disabled(isSaving)
+                    .accessibilityLabel("Back to step \(step.rawValue)")
                 }
                 if isSaving {
                     ProgressView()
@@ -1582,7 +1787,9 @@ struct CreateProfileForm: View {
         defer { isSaving = false }
         errorMessage = nil
         guard let resolved = resolvedType else {
-            errorMessage = "Pick a valid platform and profile type first."
+            let message = "Pick a valid platform and profile type first."
+            errorMessage = message
+            toastCenter.show("Couldn't create profile", detail: message, variant: .error)
             return
         }
         // Defensive: only eligible devices ever reach the body (the
@@ -1597,10 +1804,12 @@ struct CreateProfileForm: View {
         if case .success = result {
             createdProfile = viewModel.profilesState.loadedValue?.first
             errorMessage = nil
+            toastCenter.show("Profile created", detail: name, variant: .success)
         } else if case .failure(let message) = result {
             // .ignored: duplicate in flight / cancelled —
             // keep the form open, nothing was created.
             errorMessage = message
+            toastCenter.show("Couldn't create profile", detail: message, variant: .error)
         }
     }
 }
@@ -1663,5 +1872,425 @@ private func certificatePickerLabel(_ certificate: CertificateModel) -> String {
 
 
 
+// MARK: - Identifiers
 
+struct IdentifiersTableView: View {
+    @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
+    @State private var selectedKind: IdentifierResourceKind = .merchantIds
+    @State private var showCreateForm = false
+    @State private var bannerError: String?
 
+    var body: some View {
+        VStack(spacing: 0) {
+            toolbar
+            Divider()
+            if let bannerError {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(AppTheme.negative)
+                    Text(bannerError)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.negative)
+                    Spacer()
+                    Button {
+                        self.bannerError = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss error")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Divider()
+            }
+            table
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ShipyardTheme.tableBackground)
+        .onAppear { loadSelectedKind() }
+        .onChange(of: selectedKind) { _, _ in loadSelectedKind() }
+        .sheet(isPresented: $showCreateForm) {
+            CreateIdentifierForm(kind: selectedKind, viewModel: viewModel) { result in
+                showCreateForm = false
+                switch result {
+                case .success(let message):
+                    toastCenter.show(message, variant: .success)
+                case .failure(let message):
+                    bannerError = message
+                    toastCenter.show("Couldn't create identifier", detail: message, variant: .error)
+                case .ignored:
+                    break
+                }
+            }
+        }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Text("Identifiers")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.title)
+                ShipyardCountPill(text: totalText)
+            }
+
+            Menu {
+                ForEach(IdentifierResourceKind.allCases) { kind in
+                    Button(kind.title) { selectedKind = kind }
+                }
+            } label: {
+                ShipyardMenuLabel(text: selectedKind.title)
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("Identifier type")
+
+            Spacer()
+
+            if let resourceKind = selectedKind.resourceKind {
+                ShipyardSearchField(prompt: "Search \(selectedKind.title)", text: viewModel.searchBinding(for: resourceKind))
+            }
+
+            Button(selectedKind.createTitle) {
+                showCreateForm = true
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(selectedKind.resourceKind == nil ? Color.gray.opacity(0.55) : ShipyardTheme.accent)
+            .cornerRadius(6)
+            .buttonStyle(.plain)
+            .disabled(selectedKind.resourceKind == nil)
+            .accessibilityLabel(selectedKind.createTitle)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .background(LaunchTheme.page)
+    }
+
+    private var totalText: String {
+        guard let kind = selectedKind.resourceKind else { return "Unsupported" }
+        if let total = viewModel.totals[kind] {
+            return "\(total) Total"
+        }
+        return "\(viewModel.loadedCount(for: kind)) Total"
+    }
+
+    @ViewBuilder
+    private var table: some View {
+        switch selectedKind {
+        case .merchantIds:
+            identifierTable(
+                state: viewModel.merchantIdsState,
+                rows: viewModel.filteredMerchantIds.map {
+                    IdentifierRow(id: $0.id, name: $0.name, identifier: $0.identifier, type: "Merchant ID")
+                },
+                kind: .merchantIds,
+                emptyTitle: "No Merchant IDs",
+                emptyMessage: "Create a Merchant ID before issuing Apple Pay certificates."
+            )
+        case .passTypeIds:
+            identifierTable(
+                state: viewModel.passTypeIdsState,
+                rows: viewModel.filteredPassTypeIds.map {
+                    IdentifierRow(id: $0.id, name: $0.name, identifier: $0.identifier, type: "Pass Type ID")
+                },
+                kind: .passTypeIds,
+                emptyTitle: "No Pass Type IDs",
+                emptyMessage: "Create a Pass Type ID before issuing Wallet pass certificates."
+            )
+        case .appGroups:
+            unsupportedAppGroupsState
+        }
+    }
+
+    @ViewBuilder
+    private func identifierTable<T>(
+        state: ViewState<[T]>,
+        rows: [IdentifierRow],
+        kind: ResourcesViewModel.Kind,
+        emptyTitle: String,
+        emptyMessage: String
+    ) -> some View {
+        switch state {
+        case .idle, .loading:
+            VStack(spacing: 12) {
+                Spacer()
+                ProgressView()
+                Text("Loading \(selectedKind.title.lowercased())…")
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .error(let message):
+            ErrorRetryView(
+                title: "Couldn't Load \(selectedKind.title)",
+                message: message,
+                retryTitle: "Retry",
+                onRetry: { viewModel.retry(kind) }
+            )
+        default:
+            if rows.isEmpty {
+                emptyState(kind: kind, title: emptyTitle, message: emptyMessage)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        headerRow
+                        ForEach(rows) { row in
+                            identifierRow(row)
+                            ShipyardTheme.rowDivider.frame(height: 1)
+                        }
+                        paginationFooter(kind: kind)
+                    }
+                }
+            }
+        }
+    }
+
+    private var unsupportedAppGroupsState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "info.circle")
+                .font(.system(size: 28))
+                .foregroundColor(ShipyardTheme.body)
+            Text("App Groups are not available in App Store Connect API")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            Text(IdentifierResourceKind.appGroups.help)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 520)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 12) {
+            Text("Name").frame(width: 240, alignment: .leading)
+            Text("Identifier").frame(width: 320, alignment: .leading)
+            Text("Type").frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundColor(ShipyardTheme.body)
+        .padding(.horizontal, 16)
+        .frame(height: 28)
+        .background(ShipyardTheme.tableHeader)
+    }
+
+    private func identifierRow(_ row: IdentifierRow) -> some View {
+        HStack(spacing: 12) {
+            Text(row.name ?? "Untitled")
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+                .lineLimit(1)
+                .frame(width: 240, alignment: .leading)
+            Text(row.identifier ?? "—")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(ShipyardTheme.body)
+                .lineLimit(1)
+                .frame(width: 320, alignment: .leading)
+            Text(row.type)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 38)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(row.name ?? row.identifier ?? row.id), \(row.type)")
+    }
+
+    private func emptyState(kind: ResourcesViewModel.Kind, title: String, message: String) -> some View {
+        let hasSearch = viewModel.hasActiveSearch(for: kind)
+        return VStack(spacing: 12) {
+            Spacer()
+            Text(hasSearch ? "No Matching \(selectedKind.title)" : title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            Text(hasSearch ? "Try a different name or identifier." : message)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.body)
+            if !hasSearch {
+                Button(selectedKind.createTitle) { showCreateForm = true }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func paginationFooter(kind: ResourcesViewModel.Kind) -> some View {
+        if let nextCursor = viewModel.nextCursors[kind] {
+            HStack {
+                Spacer()
+                if viewModel.paginationFailedKinds.contains(kind) {
+                    Button("Couldn't load more — Retry") {
+                        viewModel.loadMore(kind, cursor: nextCursor)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.danger)
+                    .padding(.vertical, 8)
+                } else {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .padding(.vertical, 8)
+                        .onAppear {
+                            if !viewModel.isPaginatingKinds.contains(kind) {
+                                viewModel.loadMore(kind, cursor: nextCursor)
+                            }
+                        }
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func loadSelectedKind() {
+        if let kind = selectedKind.resourceKind {
+            viewModel.load(kind)
+        }
+    }
+}
+
+private struct IdentifierRow: Identifiable {
+    var id: String
+    var name: String?
+    var identifier: String?
+    var type: String
+}
+
+struct CreateIdentifierForm: View {
+    enum Completion {
+        case success(String)
+        case failure(String)
+        case ignored
+    }
+
+    let kind: IdentifierResourceKind
+    @ObservedObject var viewModel: ResourcesViewModel
+    var onDone: (Completion) -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
+
+    @State private var name = ""
+    @State private var identifier = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(kind.createTitle)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text(kind.help)
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                identifierField(label: "Name", text: $name, prompt: kind.promptName, mono: false)
+                identifierField(label: "Identifier", text: $identifier, prompt: kind.promptIdentifier, mono: true)
+                Text("Use Apple's reverse-DNS identifier exactly. It cannot be changed after creation.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppTheme.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button("Cancel") { onDone(.ignored) }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(isSaving)
+                Spacer()
+                if isSaving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button(kind.createTitle) { create() }
+                        .buttonStyle(.launchPrimary)
+                        .disabled(!canCreate)
+                }
+            }
+            .padding(.top, 12)
+        }
+        .padding(24)
+        .frame(width: 520)
+    }
+
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && kind.resourceKind != nil
+    }
+
+    private func identifierField(label: String, text: Binding<String>, prompt: String, mono: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(ShipyardTheme.title)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(mono ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(LaunchTheme.field)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .disabled(isSaving)
+                .onChange(of: text.wrappedValue) { _ in errorMessage = nil }
+        }
+    }
+
+    private func create() {
+        Task { @MainActor in
+            isSaving = true
+            errorMessage = nil
+            defer { isSaving = false }
+            switch kind {
+            case .merchantIds:
+                switch await viewModel.createMerchantId(name: name, identifier: identifier) {
+                case .value:
+                    onDone(.success("Merchant ID created"))
+                case .failure(let message):
+                    errorMessage = message
+                    toastCenter.show("Couldn't create Merchant ID", detail: message, variant: .error)
+                case .ignored:
+                    break
+                }
+            case .passTypeIds:
+                switch await viewModel.createPassTypeId(name: name, identifier: identifier) {
+                case .value:
+                    onDone(.success("Pass Type ID created"))
+                case .failure(let message):
+                    errorMessage = message
+                    toastCenter.show("Couldn't create Pass Type ID", detail: message, variant: .error)
+                case .ignored:
+                    break
+                }
+            case .appGroups:
+                onDone(.failure(IdentifierResourceKind.appGroups.help))
+            }
+        }
+    }
+}
