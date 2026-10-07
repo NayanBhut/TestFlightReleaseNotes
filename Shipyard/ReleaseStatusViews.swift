@@ -101,6 +101,353 @@ struct WhatsNewCard: View {
     }
 }
 
+struct SubmittedMetadataCard: View {
+    @ObservedObject var detailVM: DetailViewModel
+    var localizations: [AppStoreVersionLocalizationsModel]
+    var primaryLocale: String?
+
+    @State private var selectedLocalizationId: String?
+
+    private var sortedLocalizations: [AppStoreVersionLocalizationsModel] {
+        localizations.sorted { lhs, rhs in
+            if lhs.locale == primaryLocale { return true }
+            if rhs.locale == primaryLocale { return false }
+            return (lhs.locale ?? "") < (rhs.locale ?? "")
+        }
+    }
+
+    private var localizationKey: String {
+        sortedLocalizations.map(\.id).joined(separator: "|")
+    }
+
+    private var selectedLocalization: AppStoreVersionLocalizationsModel? {
+        if let selectedLocalizationId,
+           let selected = sortedLocalizations.first(where: { $0.id == selectedLocalizationId }) {
+            return selected
+        }
+        return sortedLocalizations.first { $0.locale == primaryLocale } ?? sortedLocalizations.first
+    }
+
+    private var appInfoLocalizations: [AppInfoLocalizationModel] {
+        detailVM.appInfoState.loadedValue?.flatMap(\.appInfoLocalizations) ?? []
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Submitted App Store metadata")
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.title)
+                Spacer(minLength: 0)
+                if sortedLocalizations.count > 1 {
+                    Menu {
+                        ForEach(sortedLocalizations, id: \.id) { localization in
+                            Button(ReleasePrepareView.localeDisplay(localization.locale)) {
+                                selectedLocalizationId = localization.id
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Localization: \(ReleasePrepareView.localeDisplay(selectedLocalization?.locale))")
+                                .font(.system(size: 11))
+                                .foregroundColor(ShipyardTheme.body)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(ShipyardTheme.tertiary)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(LaunchTheme.field)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(LaunchTheme.border, lineWidth: 1)
+                        )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .accessibilityLabel("Select submitted metadata localization")
+                }
+                if detailVM.appInfoState.isLoading {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+
+            if sortedLocalizations.isEmpty {
+                Text("Loading submitted metadata…")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.body)
+            } else if let selectedLocalization {
+                VersionLocalizationSubmittedCard(
+                    detailVM: detailVM,
+                    localization: selectedLocalization,
+                    appInfoLocalization: appInfoLocalization(for: selectedLocalization.locale))
+            }
+        }
+        .onAppear {
+            detailVM.loadAppInfo()
+            seedSelectionIfNeeded()
+            loadSelectedScreenshots()
+        }
+        .onChange(of: localizationKey) {
+            seedSelectionIfNeeded()
+            loadSelectedScreenshots()
+        }
+        .onChange(of: selectedLocalizationId) {
+            loadSelectedScreenshots()
+        }
+    }
+
+    private func seedSelectionIfNeeded() {
+        if let selectedLocalizationId,
+           sortedLocalizations.contains(where: { $0.id == selectedLocalizationId }) {
+            return
+        }
+        selectedLocalizationId = selectedLocalization?.id
+    }
+
+    private func loadSelectedScreenshots() {
+        guard let id = selectedLocalization?.id else { return }
+        detailVM.loadLocalizationScreenshotPreview(localizationId: id)
+    }
+
+    private func appInfoLocalization(for locale: String?) -> AppInfoLocalizationModel? {
+        appInfoLocalizations.first { $0.locale == locale }
+            ?? appInfoLocalizations.first { $0.locale == primaryLocale }
+            ?? appInfoLocalizations.first
+    }
+}
+
+private struct VersionLocalizationSubmittedCard: View {
+    @ObservedObject var detailVM: DetailViewModel
+    var localization: AppStoreVersionLocalizationsModel
+    var appInfoLocalization: AppInfoLocalizationModel?
+
+    private var localeTitle: String {
+        ReleasePrepareView.localeDisplay(localization.locale)
+    }
+
+    private var localeTextDirection: LayoutDirection {
+        BetaLocalizationLocales.isRightToLeft(localization.locale) ? .rightToLeft : .leftToRight
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 32) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("General Information")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    SubmittedMetadataField(
+                        label: "App Name",
+                        value: appInfoLocalization?.name,
+                        limit: 30,
+                        direction: localeTextDirection)
+                    SubmittedMetadataField(
+                        label: "Subtitle",
+                        value: appInfoLocalization?.subtitle,
+                        limit: 30,
+                        direction: localeTextDirection)
+                    SubmittedMetadataField(
+                        label: "Privacy Policy URL",
+                        value: appInfoLocalization?.privacyPolicyUrl,
+                        isURL: true)
+                    SubmittedMetadataField(
+                        label: "Support URL",
+                        value: localization.supportUrl,
+                        isURL: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Localization (\(localeTitle))")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    SubmittedMetadataField(
+                        label: "Description",
+                        value: localization.descriptionData,
+                        limit: 4000,
+                        multiline: true,
+                        direction: localeTextDirection)
+                    SubmittedMetadataField(
+                        label: "Keywords",
+                        value: localization.keywords,
+                        limit: 100,
+                        direction: localeTextDirection)
+                    SubmittedMetadataField(
+                        label: "Promotional Text",
+                        value: localization.promotionalText,
+                        limit: 170,
+                        direction: localeTextDirection)
+                    SubmittedMetadataField(
+                        label: "Marketing URL",
+                        value: localization.marketingUrl,
+                        isURL: true)
+                    SubmittedMetadataField(
+                        label: "What’s New",
+                        value: localization.whatsNew,
+                        multiline: true,
+                        direction: localeTextDirection)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            ScreenshotPreviewStrip(
+                state: detailVM.localizationScreenshotPreviews[localization.id],
+                localizationId: localization.id)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ShipyardTheme.tableBackground)
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(LaunchTheme.border, lineWidth: 1)
+        )
+        .onAppear {
+            detailVM.loadLocalizationScreenshotPreview(localizationId: localization.id)
+        }
+    }
+}
+
+private struct SubmittedMetadataField: View {
+    var label: String
+    var value: String?
+    var limit: Int?
+    var multiline = false
+    var isURL = false
+    var direction: LayoutDirection = .leftToRight
+
+    private var rawValue: String {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var displayValue: String {
+        rawValue.isEmpty ? "—" : rawValue
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.title)
+                Spacer()
+                if let limit {
+                    Text("\(rawValue.count) / \(limit)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+            }
+
+            if multiline {
+                ScrollView {
+                    Text(displayValue)
+                        .font(.system(size: 13))
+                        .foregroundColor(rawValue.isEmpty ? ShipyardTheme.tertiary : ShipyardTheme.title)
+                        .textSelection(.enabled)
+                        .environment(\.layoutDirection, isURL ? .leftToRight : direction)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(height: label == "Description" ? 110 : 84)
+                .background(LaunchTheme.field)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+            } else {
+                Text(displayValue)
+                    .font(.system(size: 13))
+                    .foregroundColor(rawValue.isEmpty ? ShipyardTheme.tertiary : ShipyardTheme.title)
+                    .textSelection(.enabled)
+                    .environment(\.layoutDirection, isURL ? .leftToRight : direction)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(LaunchTheme.field)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                    )
+            }
+        }
+    }
+}
+
+private struct ScreenshotPreviewStrip: View {
+    var state: ViewState<[AppScreenshotModel]>?
+    var localizationId: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("SCREENSHOTS")
+                .font(.system(size: 10))
+                .foregroundColor(ShipyardTheme.tertiary)
+            switch state {
+            case .some(.loaded(let screenshots)) where !screenshots.isEmpty:
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(screenshots, id: \.id) { screenshot in
+                            ScreenshotThumbnail(screenshot: screenshot)
+                        }
+                    }
+                }
+            case .some(.empty):
+                Text("No screenshots uploaded for this locale.")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.tertiary)
+            case .some(.error(let message)):
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.danger)
+            default:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini)
+                    Text("Loading screenshots…")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+            }
+        }
+    }
+}
+
+private struct ScreenshotThumbnail: View {
+    var screenshot: AppScreenshotModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            AsyncImage(url: screenshotThumbnailURL(screenshot.imageAsset?.templateUrl, maxDimension: 180)) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                case .failure:
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(LaunchTheme.page)
+                        .overlay {
+                            Image(systemName: "photo")
+                                .foregroundColor(ShipyardTheme.body)
+                        }
+                default:
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(LaunchTheme.page)
+                        .overlay { ProgressView().controlSize(.mini) }
+                }
+            }
+            .frame(width: 120, height: 120)
+            .cornerRadius(6)
+            Text(screenshot.fileName ?? "Screenshot")
+                .font(.system(size: 10))
+                .foregroundColor(ShipyardTheme.body)
+                .lineLimit(1)
+                .frame(width: 120, alignment: .leading)
+        }
+    }
+}
+
 /// "App Review information" read-only block. Real contact data when the
 /// review-details record loaded; otherwise the web-only handoff line.
 struct ReviewInfoBlock: View {
@@ -144,6 +491,7 @@ struct ReviewInfoBlock: View {
 
 struct WaitingVersionView: View {
     var version: AppStoreVersionsModel
+    @ObservedObject var detailVM: DetailViewModel
     var localizations: [AppStoreVersionLocalizationsModel]
     var primaryLocale: String?
     @ObservedObject var reviewsVM: ReviewsViewModel
@@ -155,10 +503,7 @@ struct WaitingVersionView: View {
                 title: "Waiting for Review",
                 detail: "Submitted \(releaseDayDisplay(reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)). Estimated review: 24–48 hours.")
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
-            WhatsNewCard(
-                titlePrefix: "What’s New",
-                localizations: localizations,
-                primaryLocale: primaryLocale)
+            SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
         }
     }
@@ -168,6 +513,7 @@ struct WaitingVersionView: View {
 
 struct InReviewVersionView: View {
     var version: AppStoreVersionsModel
+    @ObservedObject var detailVM: DetailViewModel
     var localizations: [AppStoreVersionLocalizationsModel]
     var primaryLocale: String?
     @ObservedObject var reviewsVM: ReviewsViewModel
@@ -182,10 +528,7 @@ struct InReviewVersionView: View {
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.accent)
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
-            WhatsNewCard(
-                titlePrefix: "What’s New",
-                localizations: localizations,
-                primaryLocale: primaryLocale)
+            SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
         }
     }
@@ -195,6 +538,7 @@ struct InReviewVersionView: View {
 
 struct PendingReleaseVersionView: View {
     var version: AppStoreVersionsModel
+    @ObservedObject var detailVM: DetailViewModel
     var localizations: [AppStoreVersionLocalizationsModel]
     var primaryLocale: String?
     @ObservedObject var reviewsVM: ReviewsViewModel
@@ -206,10 +550,7 @@ struct PendingReleaseVersionView: View {
                 title: "Your app is approved",
                 detail: "\(version.versionString.map { "Version \($0) is ready to release. " } ?? "")You chose to manually release this version.")
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
-            WhatsNewCard(
-                titlePrefix: "What’s New",
-                localizations: localizations,
-                primaryLocale: primaryLocale)
+            SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
         }
     }
@@ -219,6 +560,7 @@ struct PendingReleaseVersionView: View {
 
 struct LiveVersionView: View {
     var version: AppStoreVersionsModel
+    @ObservedObject var detailVM: DetailViewModel
     var localizations: [AppStoreVersionLocalizationsModel]
     var primaryLocale: String?
     @ObservedObject var reviewsVM: ReviewsViewModel
@@ -321,10 +663,7 @@ struct LiveVersionView: View {
                         .stroke(LaunchTheme.border, lineWidth: 1)
                 )
             }
-            WhatsNewCard(
-                titlePrefix: "Published release notes",
-                localizations: localizations,
-                primaryLocale: primaryLocale)
+            SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
             Text("Manual release · Phased release \(phased == nil ? "disabled" : (isPaused ? "paused" : "enabled"))")
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.tertiary)
@@ -428,6 +767,7 @@ struct RejectedThreadView: View {
 /// contracts, historical versions).
 struct LockedVersionView: View {
     var version: AppStoreVersionsModel
+    @ObservedObject var detailVM: DetailViewModel
     var localizations: [AppStoreVersionLocalizationsModel]
     var primaryLocale: String?
     @ObservedObject var reviewsVM: ReviewsViewModel
@@ -463,10 +803,7 @@ struct LockedVersionView: View {
         VStack(alignment: .leading, spacing: 16) {
             ReleaseAlert(style: .neutral, title: copy.title, detail: copy.detail)
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
-            WhatsNewCard(
-                titlePrefix: "What’s New",
-                localizations: localizations,
-                primaryLocale: primaryLocale)
+            SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
         }
     }
 }

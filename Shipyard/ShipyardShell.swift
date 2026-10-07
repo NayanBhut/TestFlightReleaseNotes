@@ -20,6 +20,7 @@ struct ShipyardShell: View {
     @StateObject private var resourcesVM = ResourcesViewModel()
     @StateObject private var reviewsVM = ReviewsViewModel()
     @StateObject private var betaVM = BetaViewModel()
+    @StateObject private var toastCenter = ShipyardToastCenter()
     @ObservedObject private var credentialStorage = CredentialStorage.shared
 
     @State private var section: ShipyardSection = .apps
@@ -30,6 +31,7 @@ struct ShipyardShell: View {
     /// Back clears it to return to the builds table.
     @State private var detailBuild: BuildsModel?
     @State private var reviewApp: AppsData?
+    @State private var activeTeamKey: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -47,14 +49,19 @@ struct ShipyardShell: View {
 
             sectionContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // One toast overlay for the whole app: any section posts a
+                // write result and it surfaces here, bottom-trailing.
+                .shipyardToast(toastCenter.current, center: toastCenter)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LaunchTheme.page)
+        .environmentObject(toastCenter)
         .onAppear {
             if CredentialStorage.shared.selectedTeam == nil {
                 CredentialStorage.shared.restoreDefaultTeam()
             }
-            sidebarVM.getiOSApps()
+            activeTeamKey = CredentialStorage.shared.selectedTeam?.key
+            refreshForActiveTeam(resetNavigation: false)
         }
         // Sidebar navigation always leaves app/build detail: the detail
         // screens take precedence over the section, so a section change
@@ -65,12 +72,14 @@ struct ShipyardShell: View {
         }
         .onChange(of: sidebarVM.isTeamChanged) { _, changed in
             if changed {
-                sidebarVM.updateTeam()
-                resourcesVM.resetForTeamSwitch()
-                reviewsVM.resetForTeamSwitch()
+                refreshForActiveTeam(resetNavigation: true)
                 sidebarVM.isTeamChanged = false
-                clearDetail()
             }
+        }
+        .onChange(of: credentialStorage.selectedTeam?.key) { _, newKey in
+            guard activeTeamKey != newKey else { return }
+            activeTeamKey = newKey
+            refreshForActiveTeam(resetNavigation: true)
         }
         // App tap lands on the builds list (Figma builds-list): auto-select
         // the newest version once versions arrive. Guarded by nil so user
@@ -144,6 +153,8 @@ struct ShipyardShell: View {
                 )
             case .certificates:
                 CertificatesTableView(viewModel: resourcesVM)
+            case .identifiers:
+                IdentifiersTableView(viewModel: resourcesVM)
             case .bundleIDs:
                 BundleIDsTableView(
                     viewModel: resourcesVM,
@@ -189,9 +200,8 @@ struct ShipyardShell: View {
     /// nothing — the isTeamChanged flag drives updateTeam via onChange,
     /// and the section resets so stale builds/resources never show.
     private func selectTeam(_ team: String) {
+        guard CredentialStorage.shared.selectedTeam?.key != team else { return }
         CredentialStorage.shared.changeTeam = team
-        sidebarVM.isTeamChanged = true
-        section = .apps
     }
 
     /// Removes a team: wipes everything on logout (last team), or resets
@@ -203,14 +213,27 @@ struct ShipyardShell: View {
         clearDetail()
         if credentialStorage.teams.isEmpty {
             sidebarVM.clearOnLogout()
+            detailVM.resetForTeamSwitch()
             resourcesVM.resetForTeamSwitch()
             reviewsVM.resetForTeamSwitch()
         } else if wasSelected {
             CredentialStorage.shared.restoreDefaultTeam()
-            sidebarVM.updateTeam()
-            resourcesVM.resetForTeamSwitch()
-            reviewsVM.resetForTeamSwitch()
+            activeTeamKey = CredentialStorage.shared.selectedTeam?.key
+            refreshForActiveTeam(resetNavigation: true)
         }
+    }
+
+    private func refreshForActiveTeam(resetNavigation: Bool) {
+        if resetNavigation {
+            section = .apps
+            clearDetail()
+            detailTab = .builds
+        }
+        detailVM.resetForTeamSwitch()
+        resourcesVM.resetForTeamSwitch()
+        reviewsVM.resetForTeamSwitch()
+        toastCenter.dismiss()
+        sidebarVM.updateTeam()
     }
 
     /// Team lifecycle reset: detail screens take precedence over section,

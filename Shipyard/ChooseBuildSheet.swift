@@ -27,7 +27,19 @@ struct ChooseBuildSheet: View {
     private var platform: String { version.platform ?? "" }
 
     private var candidates: [BuildsModel] {
-        reviewsVM.candidateBuildsState.loadedValue ?? []
+        (reviewsVM.candidateBuildsState.loadedValue ?? []).filter {
+            $0.preReleaseVersion?.version == versionString
+                && $0.preReleaseVersion?.platform == platform
+        }
+    }
+
+    private var buildTableHeight: CGFloat {
+        switch reviewsVM.candidateBuildsState {
+        case .loaded where !candidates.isEmpty:
+            return min(CGFloat(candidates.count) * 46 + 28, 360)
+        default:
+            return 120
+        }
     }
 
     private var processingBuild: BuildsModel? {
@@ -51,59 +63,83 @@ struct ChooseBuildSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Choose Build")
-                    .font(.system(size: 18))
-                    .foregroundColor(ShipyardTheme.title)
-                Text("Select a processed build for \(appName ?? "this app") version \(versionString).")
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.body)
-            }
-
-            buildTable
-
-            if let processing = processingBuild {
-                processingAlert(processing)
-            }
-
-            Text(selectedFooter)
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-
-            HStack {
-                Spacer(minLength: 0)
-                Button("Cancel") {
-                    dismiss()
+        ZStack {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Choose Build")
+                        .font(.system(size: 18))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("Select a processed build for \(appName ?? "this app") version \(versionString).")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
                 }
-                .buttonStyle(.launchSecondary)
-                Button {
-                    Task {
-                        attaching = true
-                        defer { attaching = false }
-                        if await reviewsVM.attachSelectedBuild() {
-                            onDone()
-                            dismiss()
-                        }
+
+                buildTable
+                    .frame(height: buildTableHeight)
+
+                if let processing = processingBuild {
+                    processingAlert(processing)
+                }
+
+                Text(selectedFooter)
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("Cancel") {
+                        dismiss()
                     }
-                } label: {
-                    if attaching {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(minWidth: 76)
-                    } else {
+                    .buttonStyle(.launchSecondary)
+                    .disabled(attaching)
+                    Button {
+                        Task {
+                            attaching = true
+                            defer { attaching = false }
+                            if await reviewsVM.attachSelectedBuild() {
+                                onDone()
+                                dismiss()
+                            }
+                        }
+                    } label: {
                         Text("Choose Build")
                             .frame(minWidth: 76)
                     }
+                    .buttonStyle(.launchPrimary)
+                    .disabled(selectedBuild == nil || attaching)
                 }
-                .buttonStyle(.launchPrimary)
-                .disabled(selectedBuild == nil || attaching)
+            }
+
+            if attaching {
+                Color.black.opacity(0.14)
+                    .ignoresSafeArea()
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.regular)
+                    Text("Updating build…")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("Waiting for App Store Connect to attach the selected build.")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .background(LaunchTheme.page)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
             }
         }
         .padding(24)
-        .frame(width: 680)
+        .frame(width: 720)
         .background(LaunchTheme.page)
+        .interactiveDismissDisabled(attaching)
         .onAppear {
+            reviewsVM.loadEligibleBuilds(for: version)
             reviewsVM.loadCandidateBuilds(for: version)
             if let attached = version.build,
                reviewsVM.selectedBuildId == nil,
@@ -158,18 +194,22 @@ struct ChooseBuildSheet: View {
                 .padding(.vertical, 24)
             case .loaded:
                 if candidates.isEmpty {
-                    Text("No builds uploaded for this platform yet.")
+                    Text("No builds uploaded for this version yet.")
                         .font(.system(size: 12))
                         .foregroundColor(ShipyardTheme.body)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
                 } else {
-                    ForEach(candidates, id: \.id) { build in
-                        buildRow(build)
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(candidates, id: \.id) { build in
+                                buildRow(build)
+                            }
+                        }
                     }
                 }
             case .empty:
-                Text("No builds uploaded for this platform yet.")
+                Text("No builds uploaded for this version yet.")
                     .font(.system(size: 12))
                     .foregroundColor(ShipyardTheme.body)
                     .frame(maxWidth: .infinity)

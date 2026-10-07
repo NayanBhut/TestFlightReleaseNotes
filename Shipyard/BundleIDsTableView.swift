@@ -20,6 +20,7 @@ import SwiftUI
 
 struct BundleIDsTableView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @Environment(\.openURL) private var openURL
 
     @State private var showCreateForm = false
@@ -570,8 +571,13 @@ struct BundleIDsTableView: View {
             isDeleting = false
             switch result {
             case .success:
-                deletedName = bundleId.identifier ?? bundleId.name
+                let name = bundleId.identifier ?? bundleId.name ?? "Bundle ID"
+                deletedName = name
                 viewModel.invalidateBundleIdDetail(for: bundleId.id)
+                toastCenter.show(
+                    "\(name) deleted",
+                    detail: "Existing builds are unaffected.",
+                    variant: .success)
             case .failure(let message):
                 // 400 here means Apple saw dependencies our pre-check
                 // missed, so re-run it rather than showing a dead button.
@@ -579,6 +585,7 @@ struct BundleIDsTableView: View {
                 // branch with the error visible.
                 deleteError = message
                 bannerError = message
+                toastCenter.show("Couldn't delete Bundle ID", detail: message, variant: .error)
                 viewModel.loadBundleIdDependencies(for: bundleId)
             case .ignored:
                 break
@@ -607,6 +614,7 @@ struct BundleIDsTableView: View {
 
 private struct BundleIDDetailView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     let bundleId: BundleIdModel
     var onBack: () -> Void
     var onDelete: (BundleIdModel) -> Void
@@ -967,6 +975,7 @@ private struct BundleIDDetailView: View {
         let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             saveError = "Enter a name for the bundle ID."
+            toastCenter.show("Couldn't rename Bundle ID", detail: "Enter a name for the bundle ID.", variant: .error)
             return
         }
         isSaving = true
@@ -982,8 +991,10 @@ private struct BundleIDDetailView: View {
                 // normalized value here so the field doesn't keep the
                 // untrimmed draft.
                 nameDraft = trimmed
+                toastCenter.show("Bundle ID renamed", detail: trimmed, variant: .success)
             case .failure(let message):
                 saveError = message
+                toastCenter.show("Couldn't rename Bundle ID", detail: message, variant: .error)
             case .ignored:
                 break
             }
@@ -1002,6 +1013,7 @@ private struct BundleIDDetailView: View {
 /// update-by-create and enabling a duplicate is a 409-class error.
 private struct BundleIDEnableCapabilitySheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     let bundleId: BundleIdModel
 
     @Environment(\.dismiss) private var dismiss
@@ -1094,8 +1106,13 @@ private struct BundleIDEnableCapabilitySheet: View {
                 // Refetch already happened in the view model; only close on
                 // success so a failure keeps the picker and error visible.
                 dismiss()
+                toastCenter.show(
+                    "Capability updated",
+                    detail: selection.displayName,
+                    variant: .success)
             case .failure(let message):
                 errorMessage = message
+                toastCenter.show("Couldn't update capability", detail: message, variant: .error)
             case .ignored:
                 break
             }
@@ -1107,6 +1124,7 @@ private struct BundleIDEnableCapabilitySheet: View {
 /// sheet names the affected profiles and requires an explicit ack.
 private struct BundleIDDisableCapabilitySheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     let bundleId: BundleIdModel
     let capability: BundleIdCapabilityModel
     var onOpenProfile: (String) -> Void
@@ -1198,8 +1216,10 @@ private struct BundleIDDisableCapabilitySheet: View {
             switch result {
             case .success:
                 dismiss()
+                toastCenter.show("Capability disabled", detail: capabilityName, variant: .success)
             case .failure(let message):
                 errorMessage = message
+                toastCenter.show("Couldn't disable capability", detail: message, variant: .error)
             case .ignored:
                 break
             }

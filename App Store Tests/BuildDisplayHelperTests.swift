@@ -7,7 +7,7 @@
 //
 
 import XCTest
-@testable import App_Store
+@testable import Shipyard
 
 final class BuildDisplayHelperTests: XCTestCase {
     func testExpiredOverridesProcessingState() {

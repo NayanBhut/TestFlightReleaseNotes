@@ -12,6 +12,7 @@ import SwiftUI
 struct InviteTesterSheet: View {
     @ObservedObject var betaVM: BetaViewModel
     var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
 
     @State private var email = ""
     @State private var firstName = ""
@@ -98,7 +99,10 @@ struct InviteTesterSheet: View {
                                 groupIds: Array(checkedGroupIds)
                             )
                             if !betaVM.hasError {
+                                toastCenter.show("Invitation sent", detail: email, variant: .success)
                                 onDone()
+                            } else if let message = betaVM.errorMessage {
+                                toastCenter.show("Couldn't send invitation", detail: message, variant: .error)
                             }
                         }
                     }

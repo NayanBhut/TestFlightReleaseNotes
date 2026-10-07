@@ -7,22 +7,35 @@
 //
 
 import XCTest
-@testable import App_Store
+@testable import Shipyard
 
 final class ValidationTests: XCTestCase {
     // MARK: - ProvisioningWriteValidation (Batch G)
 
     func testValidUDIDs() {
-        // Newer hardware: 8 hex, dash, 9 hex. Classic: 40 hex.
-        XCTAssertTrue(ProvisioningWriteValidation.isValidUDID("00008030-001A2B3C4"))
+        // Newer hardware (iPhone XS / A12 and later): 8 + dash + 16 = 25 chars. Classic: 40 hex.
+        XCTAssertTrue(ProvisioningWriteValidation.isValidUDID("00008030-001A2B3C4D5E6F7A"))
         XCTAssertTrue(ProvisioningWriteValidation.isValidUDID("abcdef1234567890abcdef1234567890abcd1234"))
+        // The placeholder shipped in the register sheet must itself be valid.
+        XCTAssertTrue(ProvisioningWriteValidation.isValidUDID("00008101-001C25D40C28001E"))
+        // Lowercase and surrounding whitespace are tolerated.
+        XCTAssertTrue(ProvisioningWriteValidation.isValidUDID("00008030-001a2b3c4d5e6f7a"))
+        XCTAssertTrue(ProvisioningWriteValidation.isValidUDID("  00008030-001A2B3C4D5E6F7A  "))
     }
 
     func testInvalidUDIDs() {
         XCTAssertFalse(ProvisioningWriteValidation.isValidUDID(""))
         XCTAssertFalse(ProvisioningWriteValidation.isValidUDID("not-a-udid"))
-        XCTAssertFalse(ProvisioningWriteValidation.isValidUDID("ZZZZ8030-001A2B3C4"))
+        // 8 + dash + 9 is not a real UDID shape (it was wrongly accepted before).
+        XCTAssertFalse(ProvisioningWriteValidation.isValidUDID("00008030-001A2B3C4"))
+        // Dash omitted.
+        XCTAssertFalse(ProvisioningWriteValidation.isValidUDID("00008030001A2B3C4D5E6F7"))
+        // Tail one char short / one char long (24 and 26 chars total).
+        XCTAssertFalse(ProvisioningWriteValidation.isValidUDID("00008030-001A2B3C4D5E6F7"))
         XCTAssertFalse(ProvisioningWriteValidation.isValidUDID("00008030-001A2B3C4D5E6F7A8"))
+        // Classic form stays strictly 40 hex.
+        XCTAssertFalse(ProvisioningWriteValidation.isValidUDID(String(repeating: "Z", count: 40)))
+        XCTAssertFalse(ProvisioningWriteValidation.isValidUDID(String(repeating: "a", count: 39)))
     }
 
     func testCSRValidation() {
@@ -240,6 +253,139 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(explicit.contains("seedId"))
     }
 
+    // MARK: - App submission required fields
+
+    func testSubmissionRequirementsRequirePhoneWhenContactIsKnown() {
+        let missing = ReleaseSubmissionRequirements.missingItems(
+            canEdit: true,
+            hasLocalizations: true,
+            hasBlankWhatsNew: false,
+            requiresWhatsNew: true,
+            hasBuild: true,
+            isScheduledRelease: false,
+            hasSavedScheduledReleaseDate: false,
+            reviewDetailsKnown: true,
+            firstName: "Sarah",
+            lastName: "Connor",
+            phone: "  ",
+            email: "review@example.com",
+            demoRequired: false,
+            demoUsername: "",
+            demoPassword: "")
+
+        XCTAssertEqual(missing, ["review contact"])
+    }
+
+    func testSubmissionRequirementsRequireDemoCredentialsWhenSignInIsEnabled() {
+        let missing = ReleaseSubmissionRequirements.missingItems(
+            canEdit: true,
+            hasLocalizations: true,
+            hasBlankWhatsNew: false,
+            requiresWhatsNew: true,
+            hasBuild: true,
+            isScheduledRelease: false,
+            hasSavedScheduledReleaseDate: false,
+            reviewDetailsKnown: true,
+            firstName: "Sarah",
+            lastName: "Connor",
+            phone: "+1 (415) 555-0128",
+            email: "review@example.com",
+            demoRequired: true,
+            demoUsername: "reviewer@example.com",
+            demoPassword: "  ")
+
+        XCTAssertEqual(missing, ["demo credentials"])
+    }
+
+    func testSubmissionRequirementsRequireSavedScheduledReleaseDate() {
+        let missing = ReleaseSubmissionRequirements.missingItems(
+            canEdit: true,
+            hasLocalizations: true,
+            hasBlankWhatsNew: false,
+            requiresWhatsNew: true,
+            hasBuild: true,
+            isScheduledRelease: true,
+            hasSavedScheduledReleaseDate: false,
+            reviewDetailsKnown: true,
+            firstName: "Sarah",
+            lastName: "Connor",
+            phone: "+1 (415) 555-0128",
+            email: "review@example.com",
+            demoRequired: false,
+            demoUsername: "",
+            demoPassword: "")
+
+        XCTAssertEqual(missing, ["saved release date"])
+    }
+
+    func testSubmissionRequirementsSkipWhatsNewForFirstRelease() {
+        let missing = ReleaseSubmissionRequirements.missingItems(
+            canEdit: true,
+            hasLocalizations: true,
+            hasBlankWhatsNew: true,
+            requiresWhatsNew: false,
+            hasBuild: true,
+            isScheduledRelease: false,
+            hasSavedScheduledReleaseDate: false,
+            reviewDetailsKnown: true,
+            firstName: "Sarah",
+            lastName: "Connor",
+            phone: "+1 (415) 555-0128",
+            email: "review@example.com",
+            demoRequired: false,
+            demoUsername: "",
+            demoPassword: "")
+
+        XCTAssertTrue(missing.isEmpty)
+    }
+
+    func testSubmissionRequirementsDetectUpdateVersionsThatNeedWhatsNew() {
+        var firstDraft = AppStoreVersionsModel(id: "draft-1", appStoreVersionLocalizations: [])
+        firstDraft.platform = "IOS"
+        firstDraft.appStoreState = "PREPARE_FOR_SUBMISSION"
+        XCTAssertFalse(ReleaseSubmissionRequirements.requiresWhatsNew(
+            for: firstDraft,
+            allVersions: [firstDraft]))
+
+        var live = AppStoreVersionsModel(id: "live-1", appStoreVersionLocalizations: [])
+        live.platform = "IOS"
+        live.appStoreState = "READY_FOR_SALE"
+        XCTAssertTrue(ReleaseSubmissionRequirements.requiresWhatsNew(
+            for: firstDraft,
+            allVersions: [firstDraft, live]))
+
+        var macLive = live
+        macLive.id = "mac-live"
+        macLive.platform = "MAC_OS"
+        XCTAssertFalse(ReleaseSubmissionRequirements.requiresWhatsNew(
+            for: firstDraft,
+            allVersions: [firstDraft, macLive]))
+    }
+
+    func testSubmissionRequirementsBlockSubmitUntilDraftIsSaved() {
+        XCTAssertFalse(ReleaseSubmissionRequirements.canSubmit(
+            canEdit: true,
+            missingItems: [],
+            isDirty: true,
+            isSaving: false,
+            canSubmitForReview: true,
+            submissionMatchesShownVersion: true))
+        XCTAssertFalse(ReleaseSubmissionRequirements.canSubmit(
+            canEdit: true,
+            missingItems: [],
+            isDirty: false,
+            isSaving: true,
+            canSubmitForReview: true,
+            submissionMatchesShownVersion: true))
+        XCTAssertTrue(ReleaseSubmissionRequirements.canSubmit(
+            canEdit: true,
+            missingItems: [],
+            isDirty: false,
+            isSaving: false,
+            canSubmitForReview: true,
+            submissionMatchesShownVersion: true))
+    }
+
     // MARK: - Module 04 Bundle ID → profiles relationship decoding
 
     /// Regression: `GET /v1/bundleIds/{id}/profiles` returns resources with
@@ -326,7 +472,7 @@ final class ValidationTests: XCTestCase {
                 attributes: BundleIdCapabilityCreateAttributes(capabilityType: "PUSH_NOTIFICATIONS"),
                 relationships: BundleIdCapabilityCreateRelationships(
                     bundleId: BundleIdCapabilityBundleIdRef(
-                        data: BundleIdCapabilityBundleIdData(id: "38Y3AY4458"))))
+                        data: BundleIdCapabilityBundleIdData(id: "38Y3AY4458")))))
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -343,8 +489,9 @@ final class ValidationTests: XCTestCase {
         let dataDict = try XCTUnwrap(outer["data"] as? [String: Any])
         XCTAssertNil(dataDict["id"], "capability id is server-assigned")
 
-        // Every option we offer must be a real CapabilityType enum value.
-        XCTAssertEqual(CapabilityTypeOption.allCases.count, 27)
+        // Every option we offer must round-trip through its raw value — a
+        // count pin would rot every time Apple ships a new capability, so we
+        // only check that each case re-initialises to itself.
         for option in CapabilityTypeOption.allCases {
             XCTAssertEqual(CapabilityTypeOption(rawValue: option.rawValue), option,
                            "\(option.rawValue) must round-trip")
@@ -551,6 +698,103 @@ final class ValidationTests: XCTestCase {
         XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.matchesPlatform("TVOS"))
         XCTAssertFalse(CertificateTypeOption.MAC_APP_DEVELOPMENT.matchesPlatform("IOS"))
         XCTAssertFalse(CertificateTypeOption.IOS_DISTRIBUTION.matchesPlatform("MAC_OS"))
+    }
+
+    func testCertificateCreateRelationshipsForServiceCertificates() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let csr = "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----"
+
+        XCTAssertEqual(CertificateTypeOption.APPLE_PAY.requiredCreateRelationship, .merchantId)
+        XCTAssertEqual(CertificateTypeOption.APPLE_PAY_MERCHANT_IDENTITY.requiredCreateRelationship, .merchantId)
+        XCTAssertEqual(CertificateTypeOption.APPLE_PAY_PSP_IDENTITY.requiredCreateRelationship, .merchantId)
+        XCTAssertEqual(CertificateTypeOption.APPLE_PAY_RSA.requiredCreateRelationship, .merchantId)
+        XCTAssertEqual(CertificateTypeOption.PASS_TYPE_ID.requiredCreateRelationship, .passTypeId)
+        XCTAssertEqual(CertificateTypeOption.PASS_TYPE_ID_WITH_NFC.requiredCreateRelationship, .passTypeId)
+        XCTAssertNil(CertificateTypeOption.IOS_DEVELOPMENT.requiredCreateRelationship)
+
+        let applePay = String(
+            data: try encoder.encode(CertificateCreateRequest(
+                data: CertificateCreateData(
+                    attributes: CertificateCreateAttributes(
+                        csrContent: csr,
+                        certificateType: CertificateTypeOption.APPLE_PAY.rawValue
+                    ),
+                    relationships: CertificateCreateRelationships(
+                        merchantId: CertificateCreateRelationship(
+                            data: CertificateCreateRef(type: "merchantIds", id: "1234567890")),
+                        passTypeId: nil
+                    )
+                ))),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(applePay.contains("\"certificateType\":\"APPLE_PAY\""))
+        XCTAssertTrue(applePay.contains("\"merchantId\":{\"data\":{\"id\":\"1234567890\",\"type\":\"merchantIds\"}}"), applePay)
+        XCTAssertFalse(applePay.contains("passTypeId"), applePay)
+
+        let passType = String(
+            data: try encoder.encode(CertificateCreateRequest(
+                data: CertificateCreateData(
+                    attributes: CertificateCreateAttributes(
+                        csrContent: csr,
+                        certificateType: CertificateTypeOption.PASS_TYPE_ID.rawValue
+                    ),
+                    relationships: CertificateCreateRelationships(
+                        merchantId: nil,
+                        passTypeId: CertificateCreateRelationship(
+                            data: CertificateCreateRef(type: "passTypeIds", id: "pass-type-1"))
+                    )
+                ))),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(passType.contains("\"passTypeId\":{\"data\":{\"id\":\"pass-type-1\",\"type\":\"passTypeIds\"}}"), passType)
+        XCTAssertFalse(passType.contains("merchantId"), passType)
+
+        let signing = String(
+            data: try encoder.encode(CertificateCreateRequest(
+                data: CertificateCreateData(
+                    attributes: CertificateCreateAttributes(
+                        csrContent: csr,
+                        certificateType: CertificateTypeOption.IOS_DEVELOPMENT.rawValue
+                    ),
+                    relationships: nil
+                ))),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertFalse(signing.contains("relationships"), signing)
+    }
+
+    func testIdentifierCreateBodies() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        let merchant = String(
+            data: try encoder.encode(MerchantIdCreateRequest(
+                data: MerchantIdCreateData(
+                    attributes: IdentifierCreateAttributes(
+                        name: "Store Pay",
+                        identifier: "merchant.com.example.store"
+                    )
+                ))),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(merchant.contains("\"type\":\"merchantIds\""), merchant)
+        XCTAssertTrue(merchant.contains("\"name\":\"Store Pay\""), merchant)
+        XCTAssertTrue(merchant.contains("\"identifier\":\"merchant.com.example.store\""), merchant)
+
+        let passType = String(
+            data: try encoder.encode(PassTypeIdCreateRequest(
+                data: PassTypeIdCreateData(
+                    attributes: IdentifierCreateAttributes(
+                        name: "Loyalty Pass",
+                        identifier: "pass.com.example.loyalty"
+                    )
+                ))),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(passType.contains("\"type\":\"passTypeIds\""), passType)
+        XCTAssertTrue(passType.contains("\"name\":\"Loyalty Pass\""), passType)
+        XCTAssertTrue(passType.contains("\"identifier\":\"pass.com.example.loyalty\""), passType)
     }
 
     func testDevicePlatformMatches() {

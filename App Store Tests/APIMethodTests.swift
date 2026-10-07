@@ -9,7 +9,7 @@
 
 import XCTest
 import Foundation
-@testable import App_Store
+@testable import Shipyard
 
 final class APIMethodTests: XCTestCase {
     func testGetPathEmpty() {
@@ -215,6 +215,8 @@ final class APIMethodTests: XCTestCase {
         XCTAssertEqual(APIName.getBetaTesters.rawValue, "/betaTesters")
         XCTAssertEqual(APIName.getProfiles.rawValue, "/profiles")
         XCTAssertEqual(APIName.getUsers.rawValue, "/users")
+        XCTAssertEqual(APIName.merchantIds.rawValue, "/merchantIds")
+        XCTAssertEqual(APIName.passTypeIds.rawValue, "/passTypeIds")
     }
 
     // The token is always redacted (even in DEBUG); emails are redacted

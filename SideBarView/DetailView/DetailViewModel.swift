@@ -269,6 +269,44 @@ class DetailViewModel: ObservableObject {
         webhooksLoadedAppId = nil
         resetScreenshotState()
     }
+
+    /// App-detail views can be mounted with an `AppsData` value before the
+    /// sidebar publisher has delivered the same selection to this view model.
+    /// Activate the app synchronously so first-entry tabs (especially App
+    /// Info) never no-op their initial loads against a nil `selectedApp`.
+    func activateAppForDetail(_ app: AppsData) {
+        guard selectedApp?.id != app.id else {
+            selectedApp = app
+            return
+        }
+        selectedApp = app
+        selectedVersion = nil
+        buildsFetchTask?.cancel()
+        buildsFetchTask = nil
+        buildsFetchGeneration += 1
+        buildsState = .idle
+        nextPageCursor = nil
+        meta = nil
+        savedNotes.removeAll()
+        resetAppInfoState()
+    }
+
+    /// Explicit team reset used by the Shipyard shell. Relying only on the
+    /// sidebar's selected-app publisher misses add-team flows, because adding
+    /// a team changes the credential directly from the onboarding sheet.
+    func resetForTeamSwitch() {
+        currentTeam = CredentialStorage.shared.selectedTeam
+        selectedApp = nil
+        selectedVersion = nil
+        buildsFetchTask?.cancel()
+        buildsFetchTask = nil
+        buildsFetchGeneration += 1
+        buildsState = .idle
+        nextPageCursor = nil
+        meta = nil
+        savedNotes.removeAll()
+        resetAppInfoState()
+    }
 }
 
 extension DetailViewModel {
@@ -1583,6 +1621,11 @@ enum BetaLocalizationLocales {
     /// server locales outside our list still render.
     static func displayName(for locale: String) -> String {
         names[locale] ?? locale
+    }
+
+    static func isRightToLeft(_ locale: String?) -> Bool {
+        guard let language = locale?.split(separator: "-").first?.lowercased() else { return false }
+        return ["ar", "he", "ur"].contains(language)
     }
 
     private static let names: [String: String] = [

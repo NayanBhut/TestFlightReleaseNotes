@@ -423,8 +423,14 @@ struct UsersTableView: View {
         .contextMenu {
             if !editingDisabled {
                 Button("Edit") { selectedUser = user }
-                Button("Remove") { removeTarget = user }
-                    .accessibilityLabel("Remove \(teamMemberDisplayName(user))")
+                // The Account Holder is protected and cannot be removed
+                // through this client — the edit screen already refuses it,
+                // so the menu must not offer it either. Uses the same
+                // predicate (isAccountHolderUser) to keep the two in step.
+                if !isAccountHolderUser(user) {
+                    Button("Remove") { removeTarget = user }
+                        .accessibilityLabel("Remove \(teamMemberDisplayName(user))")
+                }
             }
         }
         .accessibilityElement(children: .combine)

@@ -1168,19 +1168,23 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
-    /// All builds on the version's platform for the Choose Build dialog.
+    /// Builds for the App Store version's marketing version/platform in the Choose Build dialog.
     /// Same query shape as the eligible fetch minus the server-side
-    /// VALID/not-expired filters, so processing and version-mismatched
-    /// rows can render as unavailable instead of vanishing.
+    /// VALID/not-expired filters, so processing rows can render as
+    /// unavailable instead of vanishing.
     func loadCandidateBuilds(for version: AppStoreVersionsModel) {
-        guard let appId = currentAppId, let platform = version.platform else { return }
+        guard let appId = currentAppId,
+              let versionString = version.versionString,
+              let platform = version.platform else { return }
+        let versionId = version.id
         candidateBuildsFetchTask?.cancel()
         candidateBuildsGeneration += 1
         let generation = candidateBuildsGeneration
         candidateBuildsState = .loading
         candidateBuildsFetchTask = Task {
-            var queryParams = [
+            let queryParams = [
                 "filter[app]": appId,
+                "filter[preReleaseVersion.version]": versionString,
                 "filter[preReleaseVersion.platform]": platform,
                 "sort": "-uploadedDate",
                 "include": "preReleaseVersion",
@@ -1188,17 +1192,26 @@ final class ReviewsViewModel: ObservableObject {
             ]
             guard let request = APIClient.shared.getRequest(
                 api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else {
-                guard !Task.isCancelled, generation == candidateBuildsGeneration else { return }
+                guard !Task.isCancelled,
+                      generation == candidateBuildsGeneration,
+                      currentAppId == appId,
+                      selectedAppStoreVersionId == versionId else { return }
                 candidateBuildsState = .error("No team selected. Add a team to load builds.")
                 return
             }
             do {
                 let data = try await APIClient.shared.callAPI(with: request)
-                guard !Task.isCancelled, generation == candidateBuildsGeneration else { return }
+                guard !Task.isCancelled,
+                      generation == candidateBuildsGeneration,
+                      currentAppId == appId,
+                      selectedAppStoreVersionId == versionId else { return }
                 let model = try getDecoder().decode(BuildsDocument.self, from: data)
                 candidateBuildsState = model.data.isEmpty ? .empty : .loaded(model.data)
             } catch {
-                guard !Task.isCancelled, generation == candidateBuildsGeneration else { return }
+                guard !Task.isCancelled,
+                      generation == candidateBuildsGeneration,
+                      currentAppId == appId,
+                      selectedAppStoreVersionId == versionId else { return }
                 reviewsLogger.error("Failed to load candidate builds: \(error.localizedDescription)")
                 candidateBuildsState = .error(FriendlyErrorMessage.message(for: error))
             }
@@ -1570,7 +1583,9 @@ final class ReviewsViewModel: ObservableObject {
 
     func attachSelectedBuild() async -> Bool {
         guard let appId = currentAppId, let version = submissionVersion, let buildId = selectedBuildId, !attachingBuild else { return false }
-        guard let build = eligibleBuildsState.loadedValue?.first(where: { $0.id == buildId }) else {
+        let build = eligibleBuildsState.loadedValue?.first(where: { $0.id == buildId })
+            ?? candidateBuildsState.loadedValue?.first(where: { $0.id == buildId })
+        guard let build else {
             attachBuildError = "Choose an eligible build first."
             return false
         }
@@ -1600,6 +1615,14 @@ final class ReviewsViewModel: ObservableObject {
                   operationGeneration == attachBuildGeneration,
                   currentAppId == appId,
                   selectedAppStoreVersionId == version.id else { return false }
+            if case .loaded(var versions) = appStoreVersionsState,
+               let index = versions.firstIndex(where: { $0.id == version.id }) {
+                versions[index].build = build
+                appStoreVersionsState = .loaded(versions)
+                if selectedAppStoreVersionSnapshot?.id == version.id {
+                    selectedAppStoreVersionSnapshot = versions[index]
+                }
+            }
             workflowMessage = "Attached build \(build.version ?? buildId)."
             load(appId: appId, force: true)
             return true
@@ -2266,4 +2289,3 @@ struct ReviewLinkageData: Codable {
     var type: String = "customerReviews"
     let id: String
 }
-

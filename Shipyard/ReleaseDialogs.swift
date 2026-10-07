@@ -23,6 +23,7 @@ struct SubmitReviewDialog: View {
     var onSubmitted: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var submitting = false
     @State private var error: String?
 
@@ -67,7 +68,9 @@ struct SubmitReviewDialog: View {
                             onSubmitted()
                             dismiss()
                         } else {
-                            error = reviewsVM.writeError ?? "Submission failed. Try again."
+                            let message = reviewsVM.writeError ?? "Submission failed. Try again."
+                            error = message
+                            toastCenter.show("Couldn't submit for review", detail: message, variant: .error)
                         }
                     }
                 } label: {
@@ -102,6 +105,7 @@ struct ReleaseVersionDialog: View {
     var onReleased: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var releasing = false
     @State private var error: String?
 
@@ -149,10 +153,13 @@ struct ReleaseVersionDialog: View {
                         error = nil
                         defer { releasing = false }
                         if await reviewsVM.releaseVersion(versionId: version.id) {
+                            toastCenter.show("Version released", detail: "\(appName) \(version.versionString ?? "")", variant: .success)
                             onReleased()
                             dismiss()
                         } else {
-                            error = reviewsVM.releaseSettingsError ?? "Release failed. Try again."
+                            let message = reviewsVM.releaseSettingsError ?? "Release failed. Try again."
+                            error = message
+                            toastCenter.show("Couldn't release version", detail: message, variant: .error)
                         }
                     }
                 } label: {
@@ -188,6 +195,7 @@ struct CancelSubmissionDialog: View {
     var onCancelled: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var cancelling = false
     @State private var error: String?
 
@@ -228,14 +236,18 @@ struct CancelSubmissionDialog: View {
                         error = nil
                         defer { cancelling = false }
                         guard let submission else {
-                            error = "No active submission was found for this version."
+                            let message = "No active submission was found for this version."
+                            error = message
+                            toastCenter.show("Couldn't cancel submission", detail: message, variant: .error)
                             return
                         }
                         if await reviewsVM.cancelSubmission(submission) {
                             onCancelled()
                             dismiss()
                         } else {
-                            error = reviewsVM.writeError ?? "Cancellation failed. Try again."
+                            let message = reviewsVM.writeError ?? "Cancellation failed. Try again."
+                            error = message
+                            toastCenter.show("Couldn't cancel submission", detail: message, variant: .error)
                         }
                     }
                 } label: {
@@ -268,6 +280,7 @@ struct NewVersionSheet: View {
     var onCreated: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var versionString = ""
     @State private var platform = AppStoreVersionPlatform.iOS
     @State private var releaseType = AppStoreVersionReleaseType.manual
@@ -343,8 +356,12 @@ struct NewVersionSheet: View {
                             platform: platform,
                             copyright: "",
                             releaseType: releaseType) {
+                            toastCenter.show("Version created", detail: versionString, variant: .success)
                             onCreated()
                             dismiss()
+                        } else {
+                            let message = reviewsVM.createVersionError ?? "Version creation failed. Try again."
+                            toastCenter.show("Couldn't create version", detail: message, variant: .error)
                         }
                     }
                 } label: {

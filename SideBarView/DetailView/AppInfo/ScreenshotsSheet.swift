@@ -222,6 +222,7 @@ struct ScreenshotsSheet: View {
     var isEditable: Bool = true
     var primaryLocale: String?
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var newSetType: ScreenshotDisplayType = .iPhone67
     @State private var creatingSet = false
     @State private var screenshotToDelete: AppScreenshotModel?
@@ -230,6 +231,7 @@ struct ScreenshotsSheet: View {
         VStack(spacing: 0) {
             header
             Divider()
+                .overlay(LaunchTheme.border)
             if viewModel.screenshotSetsLoading {
                 LoadingStateView(text: "Loading screenshot sets…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -243,6 +245,7 @@ struct ScreenshotsSheet: View {
                 }
             }
         }
+        .background(LaunchTheme.page)
         .frame(minWidth: 640, minHeight: 480)
         .onAppear {
             Task {
@@ -257,64 +260,74 @@ struct ScreenshotsSheet: View {
     private var header: some View {
         HStack {
             Text("Screenshots — \(locale)")
-                .font(.title3)
-                .fontWeight(.semibold)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
             Spacer()
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(ShipyardTheme.body)
+                    .frame(width: 24, height: 24)
+                    .background(LaunchTheme.field)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(LaunchTheme.border, lineWidth: 1)
+                    )
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .clipShape(Circle())
+            .buttonStyle(.plain)
             .help("Close (Esc)")
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Close")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(LaunchTheme.page)
     }
 
     // MARK: - Sets
 
     private var setsCard: some View {
-        InfoCard(title: "Screenshot Sets", systemImage: "photo.stack") {
+        ScreenshotManagerCard(title: "Screenshot Sets", systemImage: "photo.stack") {
             VStack(alignment: .leading, spacing: 10) {
                 if viewModel.screenshotSets.isEmpty {
                     if let primaryLocale, primaryLocale != locale {
                         Text("No sets for \(locale) — the App Store is using the \(primaryLocale) screenshots for this locale.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
                     } else {
                         Text("No sets yet — create one for a device size first.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
                     }
                 } else {
                     ForEach(viewModel.screenshotSets, id: \.id) { set in
                         HStack {
                             Text(displayName(for: set))
-                                .font(.subheadline)
+                                .font(.system(size: 13))
+                                .foregroundColor(ShipyardTheme.title)
                             Spacer()
                             if viewModel.selectedScreenshotSetId == set.id {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.accentColor)
-                                    .font(.caption)
+                                    .foregroundColor(ShipyardTheme.accent)
+                                    .font(.system(size: 12, weight: .semibold))
                             } else {
-                                Button("Select") {
+                                Button {
                                     Task {
                                         await viewModel.loadScreenshots(setId: set.id)
                                     }
+                                } label: {
+                                    ScreenshotManagerButtonLabel("Select")
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
+                                .buttonStyle(.plain)
                             }
                         }
-                        if set.id != viewModel.screenshotSets.last?.id { Divider() }
+                        if set.id != viewModel.screenshotSets.last?.id {
+                            Divider()
+                                .overlay(ShipyardTheme.rowDivider)
+                        }
                     }
                 }
                 if isEditable {
@@ -325,36 +338,41 @@ struct ScreenshotsSheet: View {
                             }
                         }
                         .pickerStyle(.menu)
+                        .font(.system(size: 11))
+                        .tint(ShipyardTheme.body)
                         .frame(maxWidth: 200)
                         Spacer()
                         if creatingSet {
                             ProgressView().controlSize(.small)
                         } else {
-                            Button("New Set") {
+                            Button {
                                 creatingSet = true
                                 Task {
                                     defer { creatingSet = false }
                                     switch await viewModel.createScreenshotSet(
                                         localizationId: localizationId, displayType: newSetType) {
                                     case .success:
+                                        toastCenter.show("Screenshot set created", detail: newSetType.displayName, variant: .success)
                                         if let setId = viewModel.selectedScreenshotSetId {
                                             await viewModel.loadScreenshots(setId: setId)
                                         }
                                     case .failure(let message):
                                         viewModel.screenshotError = message
+                                        toastCenter.show("Couldn't create screenshot set", detail: message, variant: .error)
                                     case .ignored:
                                         break
                                     }
                                 }
+                            } label: {
+                                ScreenshotManagerButtonLabel("New Set", systemImage: "plus")
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(.plain)
                         }
                     }
                 } else {
                     Text("Read-only: uploaded screenshots are shown, but new sets and uploads are disabled.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
                 }
             }
         }
@@ -371,19 +389,19 @@ struct ScreenshotsSheet: View {
     // MARK: - Screenshots
 
     private var screenshotsCard: some View {
-        InfoCard(title: "Screenshots", systemImage: "photo") {
+        ScreenshotManagerCard(title: "Screenshots", systemImage: "photo") {
             VStack(alignment: .leading, spacing: 10) {
                 if viewModel.selectedScreenshotSetId == nil {
                     Text("Select a set above to view its screenshots.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
                 } else if viewModel.screenshotsLoading {
                     LoadingStateView(text: "Loading screenshots…")
                 } else {
                     if viewModel.screenshots.isEmpty {
                         Text("No screenshots in this set yet.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundColor(ShipyardTheme.body)
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 12)], spacing: 12) {
                             ForEach(viewModel.screenshots, id: \.id) { screenshot in
@@ -397,8 +415,8 @@ struct ScreenshotsSheet: View {
                 }
                 if let error = viewModel.screenshotError {
                     Text(error)
-                        .font(.caption)
-                        .foregroundColor(.red)
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.danger)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -413,7 +431,14 @@ struct ScreenshotsSheet: View {
             presenting: screenshotToDelete
         ) { screenshot in
             Button("Delete", role: .destructive) {
-                Task { await viewModel.deleteScreenshot(screenshot) }
+                Task {
+                    if await viewModel.deleteScreenshot(screenshot) {
+                        refreshPreviewStrip()
+                        toastCenter.show("Screenshot deleted", variant: .success)
+                    } else if let message = viewModel.screenshotError {
+                        toastCenter.show("Couldn't delete screenshot", detail: message, variant: .error)
+                    }
+                }
             }
         } message: { _ in
             Text("The screenshot is removed from App Store Connect.")
@@ -433,16 +458,16 @@ struct ScreenshotsSheet: View {
                         // A failed thumbnail must not sit on the spinner
                         // forever looking like a slow load.
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(AppTheme.secondaryBackground)
+                            .fill(LaunchTheme.page)
                             .frame(height: 120)
                             .overlay {
                                 Image(systemName: "photo")
                                     .font(.title2)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(ShipyardTheme.body)
                             }
                     default:
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(AppTheme.secondaryBackground)
+                            .fill(LaunchTheme.page)
                             .frame(height: 120)
                             .overlay { ProgressView().controlSize(.small) }
                     }
@@ -451,10 +476,11 @@ struct ScreenshotsSheet: View {
                 .cornerRadius(6)
             }
             Text(screenshot.fileName ?? "Screenshot")
-                .font(.caption2)
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.title)
                 .lineLimit(1)
             HStack(spacing: 6) {
-                StateChip(text: (screenshot.uploaded ?? false) ? "UPLOADED" : "PENDING")
+                ScreenshotStatusPill(text: (screenshot.uploaded ?? false) ? "UPLOADED" : "PENDING")
                 Spacer()
                 if isEditable {
                     if viewModel.deletingScreenshotIds.contains(screenshot.id) {
@@ -464,8 +490,15 @@ struct ScreenshotsSheet: View {
                             screenshotToDelete = screenshot
                         } label: {
                             Image(systemName: "trash")
-                                .font(.caption2)
-                                .foregroundColor(.red)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(ShipyardTheme.danger)
+                                .frame(width: 22, height: 22)
+                                .background(LaunchTheme.field)
+                                .cornerRadius(5)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .stroke(LaunchTheme.border, lineWidth: 1)
+                                )
                         }
                         .buttonStyle(.plain)
                         .help("Delete screenshot")
@@ -473,6 +506,13 @@ struct ScreenshotsSheet: View {
                 }
             }
         }
+        .padding(8)
+        .background(LaunchTheme.field)
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(LaunchTheme.border, lineWidth: 1)
+        )
     }
 
     private var uploadRow: some View {
@@ -480,25 +520,23 @@ struct ScreenshotsSheet: View {
             if let fileName = viewModel.uploadingFileName {
                 ProgressView(value: viewModel.screenshotUploadProgress ?? 0)
                     .progressViewStyle(.linear)
-                    .tint(AppTheme.accent)
+                    .tint(ShipyardTheme.accent)
                     .animation(
                         .linear(duration: 0.15),
                         value: viewModel.screenshotUploadProgress
                     )
                     .frame(maxWidth: 200)
                 Text("Uploading \(fileName)…")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.body)
                     .lineLimit(1)
             } else {
                 Button {
                     pickAndUpload()
                 } label: {
-                    Label("Upload Image", systemImage: "square.and.arrow.up")
-                        .font(.caption)
+                    ScreenshotManagerButtonLabel("Upload Image", systemImage: "square.and.arrow.up", isPrimary: true)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.plain)
                 .disabled(viewModel.selectedScreenshotSetId == nil)
             }
         }
@@ -516,19 +554,105 @@ struct ScreenshotsSheet: View {
         Task {
             switch await viewModel.uploadScreenshot(setId: setId, fileURL: fileURL) {
             case .success:
-                break
+                refreshPreviewStrip()
+                toastCenter.show("Screenshot uploaded", detail: fileURL.lastPathComponent, variant: .success)
             case .failure(let message):
                 viewModel.screenshotError = message
+                toastCenter.show("Couldn't upload screenshot", detail: message, variant: .error)
             case .ignored:
                 break
             }
         }
     }
 
+    private func refreshPreviewStrip() {
+        viewModel.localizationScreenshotPreviews[localizationId] =
+            viewModel.screenshots.isEmpty ? .empty : .loaded(viewModel.screenshots)
+    }
+
     /// Same template resolution as the sidebar app icons
     /// ({w}x{h}bb / {w}x{h} / {w} / {h} placeholders, {f} → png).
     private func thumbnailURL(_ template: String?) -> URL? {
         screenshotThumbnailURL(template)
+    }
+}
+
+private struct ScreenshotManagerCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.title)
+            } icon: {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ShipyardTheme.tableBackground)
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(LaunchTheme.border, lineWidth: 1)
+        )
+    }
+}
+
+private struct ScreenshotManagerButtonLabel: View {
+    let title: String
+    var systemImage: String?
+    var isPrimary = false
+
+    init(_ title: String, systemImage: String? = nil, isPrimary: Bool = false) {
+        self.title = title
+        self.systemImage = systemImage
+        self.isPrimary = isPrimary
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundColor(isPrimary ? .white : ShipyardTheme.body)
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(isPrimary ? ShipyardTheme.accent : LaunchTheme.field)
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isPrimary ? ShipyardTheme.accent : LaunchTheme.border, lineWidth: 1)
+        )
+    }
+}
+
+private struct ScreenshotStatusPill: View {
+    let text: String
+
+    private var color: Color {
+        text == "UPLOADED" ? ShipyardTheme.success : ShipyardTheme.warning
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.14))
+            .cornerRadius(4)
     }
 }
 

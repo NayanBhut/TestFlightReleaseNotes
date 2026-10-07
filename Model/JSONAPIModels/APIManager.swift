@@ -530,6 +530,8 @@ enum APIName: String {
     // (.post(name: .devices, …), .patch(name: .devices, path: …)).
     case devices = "/devices"
     case certificates = "/certificates"
+    case merchantIds = "/merchantIds"
+    case passTypeIds = "/passTypeIds"
     case getBundleIds = "/bundleIds"
     // Bundle ID capabilities (Module 04 detail): top-level collection,
     // unlike the read route. GET is the *related* subpath

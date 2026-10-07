@@ -49,6 +49,47 @@ struct CertificateModel: Equatable {
     @ResourceAttribute var certificateContent: String?
 }
 
+@ResourceWrapper(type: "merchantIds")
+struct MerchantIdModel: Equatable, Identifiable {
+    static func == (lhs: MerchantIdModel, rhs: MerchantIdModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var name: String?
+    @ResourceAttribute var identifier: String?
+}
+
+@ResourceWrapper(type: "passTypeIds")
+struct PassTypeIdModel: Equatable, Identifiable {
+    static func == (lhs: PassTypeIdModel, rhs: PassTypeIdModel) -> Bool {
+        return lhs.id == rhs.id
+    }
+
+    var id: String
+
+    @ResourceAttribute var name: String?
+    @ResourceAttribute var identifier: String?
+}
+
+struct CertificateRelationshipOption: Equatable, Identifiable {
+    var id: String
+    var name: String?
+    var identifier: String?
+
+    var displayName: String {
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedIdentifier = identifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedName.isEmpty, !trimmedIdentifier.isEmpty {
+            return "\(trimmedName) (\(trimmedIdentifier))"
+        }
+        if !trimmedName.isEmpty { return trimmedName }
+        if !trimmedIdentifier.isEmpty { return trimmedIdentifier }
+        return id
+    }
+}
+
 @ResourceWrapper(type: "bundleIds")
 struct BundleIdModel: Equatable {
     static func == (lhs: BundleIdModel, rhs: BundleIdModel) -> Bool {
@@ -165,6 +206,8 @@ struct UserModel: Equatable, Identifiable {
 // use the paging Meta — "Load more" and real totals work for every kind.
 typealias DevicesDocument = CompoundDocument<[DeviceModel], Meta>
 typealias CertificatesDocument = CompoundDocument<[CertificateModel], Meta>
+typealias MerchantIdsDocument = CompoundDocument<[MerchantIdModel], Meta>
+typealias PassTypeIdsDocument = CompoundDocument<[PassTypeIdModel], Meta>
 typealias BundleIdsDocument = CompoundDocument<[BundleIdModel], Meta>
 typealias ProfilesDocument = CompoundDocument<[ProfileModel], Meta>
 
@@ -490,16 +533,93 @@ enum CertificateTypeOption: String, CaseIterable {
         default: return rawValue.hasPrefix("IOS_")
         }
     }
+
+    var requiredCreateRelationship: CertificateCreateRelationshipKind? {
+        if rawValue.hasPrefix("APPLE_PAY") { return .merchantId }
+        if rawValue.hasPrefix("PASS_TYPE_ID") { return .passTypeId }
+        return nil
+    }
+}
+
+enum CertificateCreateRelationshipKind: Equatable {
+    case merchantId
+    case passTypeId
+
+    var label: String {
+        switch self {
+        case .merchantId: return "MERCHANT ID"
+        case .passTypeId: return "PASS TYPE ID"
+        }
+    }
+
+    var prompt: String {
+        switch self {
+        case .merchantId: return "Merchant ID resource id"
+        case .passTypeId: return "Pass Type ID resource id"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .merchantId:
+            return "Apple Pay certificates must be linked to an existing Merchant ID. Choose one from Apple or paste the resource id."
+        case .passTypeId:
+            return "Pass Type ID certificates must be linked to an existing Pass Type ID. Choose one from Apple or paste the resource id."
+        }
+    }
+
+    var missingMessage: String {
+        switch self {
+        case .merchantId: return "Enter the Merchant ID for this Apple Pay certificate."
+        case .passTypeId: return "Enter the Pass Type ID for this Wallet certificate."
+        }
+    }
+
+    var pickerTitle: String {
+        switch self {
+        case .merchantId: return "Choose Merchant ID…"
+        case .passTypeId: return "Choose Pass Type ID…"
+        }
+    }
+
+    var loadingMessage: String {
+        switch self {
+        case .merchantId: return "Loading Merchant IDs…"
+        case .passTypeId: return "Loading Pass Type IDs…"
+        }
+    }
+
+    var emptyMessage: String {
+        switch self {
+        case .merchantId: return "No Merchant IDs found for this team. Create one in Apple Developer, or paste a Merchant ID resource id."
+        case .passTypeId: return "No Pass Type IDs found for this team. Create one in Apple Developer, or paste a Pass Type ID resource id."
+        }
+    }
+
+    var resourceType: String {
+        switch self {
+        case .merchantId: return "merchantIds"
+        case .passTypeId: return "passTypeIds"
+        }
+    }
 }
 
 /// Client-side format checks for the create forms so obvious rejections
 /// surface without a network round-trip (server remains the source of
-/// truth). UDID: 25–27 hex chars with a dash (newer hardware) or 40 hex
-/// (classic). CSR: PEM marker.
+/// truth). UDID: 25 chars as 8 + dash + 16 (hardware from the iPhone XS /
+/// A12 generation onward) or 40 hex (classic). CSR: PEM marker.
 enum ProvisioningWriteValidation {
     static func isValidUDID(_ udid: String) -> Bool {
-        let pattern = "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{9}$|^[0-9A-Fa-f]{40}$"
-        return udid.range(of: pattern, options: .regularExpression) != nil
+        let normalized = udid.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        // Modern UDIDs are alphanumeric (Apple derives them from chip/ECID
+        // values, so the tail is not reliably hex). Classic ones are strictly
+        // hex. Both are re-validated by Apple, so the modern form stays
+        // permissive on purpose: a too-strict client check would block a
+        // legitimate device outright.
+        let modern = "^[0-9A-Z]{8}-[0-9A-Z]{16}$"
+        let classic = "^[0-9A-F]{40}$"
+        return normalized.range(of: modern, options: .regularExpression) != nil
+            || normalized.range(of: classic, options: .regularExpression) != nil
     }
 
     static func isValidCSR(_ content: String) -> Bool {
@@ -560,11 +680,49 @@ struct CertificateCreateRequest: Encodable {
 struct CertificateCreateData: Encodable {
     var type = "certificates"
     var attributes: CertificateCreateAttributes
+    var relationships: CertificateCreateRelationships?
 }
 
 struct CertificateCreateAttributes: Encodable {
     var csrContent: String
     var certificateType: String
+}
+
+struct CertificateCreateRelationships: Encodable {
+    var merchantId: CertificateCreateRelationship?
+    var passTypeId: CertificateCreateRelationship?
+}
+
+struct CertificateCreateRelationship: Encodable {
+    var data: CertificateCreateRef
+}
+
+struct CertificateCreateRef: Encodable {
+    var type: String
+    var id: String
+}
+
+struct MerchantIdCreateRequest: Encodable {
+    var data: MerchantIdCreateData
+}
+
+struct MerchantIdCreateData: Encodable {
+    var type = "merchantIds"
+    var attributes: IdentifierCreateAttributes
+}
+
+struct PassTypeIdCreateRequest: Encodable {
+    var data: PassTypeIdCreateData
+}
+
+struct PassTypeIdCreateData: Encodable {
+    var type = "passTypeIds"
+    var attributes: IdentifierCreateAttributes
+}
+
+struct IdentifierCreateAttributes: Encodable {
+    var name: String
+    var identifier: String
 }
 
 // MARK: - Batch I (I2): bundle ID writes
@@ -851,6 +1009,41 @@ enum UserRoleOption: String, CaseIterable {
     case DEVELOPER
     case ACCESS_TO_REPORTS
     case CUSTOMER_SUPPORT
+
+    /// Privilege order used for the headline role in `rolesSummary` — most
+    /// privileged first. Deliberately NOT the declaration order, which only
+    /// drives the order of the checkboxes in the edit form: there `ADMIN` is
+    /// listed first for readability, but the Account Holder is the team owner
+    /// and outranks Admin, so summarising [ACCOUNT_HOLDER, ADMIN] as
+    /// "Admin +1" would understate it and contradict the protected banner on
+    /// the edit screen.
+    ///
+    /// `rolesSummary` renders names[0] as the headline, and the detail view
+    /// feeds it a Set whose iteration order is unspecified — so ordering here
+    /// is what makes the label stable and keeps the table and detail in step.
+    static let privilegeOrder: [UserRoleOption] = [
+        .ACCOUNT_HOLDER, .ADMIN, .APP_MANAGER, .DEVELOPER,
+        .FINANCE, .TECHNICAL, .SALES, .MARKETING,
+        .ACCESS_TO_REPORTS, .CUSTOMER_SUPPORT, .READ_ONLY
+    ]
+
+    static func ordered(_ roles: Set<UserRoleOption>) -> [UserRoleOption] {
+        privilegeOrder.filter { roles.contains($0) }
+    }
+
+    static func ordered(_ roles: [UserRoleOption]) -> [UserRoleOption] {
+        privilegeOrder.filter { roles.contains($0) }
+    }
+
+    /// Same, for the raw API strings. A role this build doesn't recognise is
+    /// kept (after the known ones, in its original order) rather than dropped,
+    /// so an unknown role can never silently vanish from the summary.
+    static func orderedRawValues<S: Sequence>(_ rawValues: S) -> [String]
+    where S.Element == String {
+        let knownSet = Set(privilegeOrder.map(\.rawValue))
+        return privilegeOrder.map(\.rawValue).filter { rawValues.contains($0) }
+            + rawValues.filter { !knownSet.contains($0) }
+    }
 
     /// SNAKE_CASE → title case ("APP_MANAGER" → "App Manager"). Derived so
     /// new enum values render sanely; "To" is lowercased to read naturally.

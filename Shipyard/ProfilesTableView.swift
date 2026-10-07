@@ -14,6 +14,7 @@ import SwiftUI
 
 struct ProfilesTableView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var onOpenCertificate: (String) -> Void = { _ in }
     var onOpenBundleId: (String) -> Void = { _ in }
     var onOpenDevice: (String) -> Void = { _ in }
@@ -309,8 +310,13 @@ struct ProfilesTableView: View {
                     Task { @MainActor in
                         downloadingId = profile.id
                         defer { downloadingId = nil }
-                        if case .failure(let message) = await viewModel.downloadProfile(profile) {
+                        let result = await viewModel.downloadProfile(profile)
+                        if case .success = result {
+                            toastCenter.show("Profile downloaded", variant: .success)
+                        }
+                        if case .failure(let message) = result {
                             bannerError = message
+                            toastCenter.show("Couldn't download profile", detail: message, variant: .error)
                         }
                     }
                 }

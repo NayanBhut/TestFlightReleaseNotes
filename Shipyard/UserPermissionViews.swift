@@ -42,7 +42,14 @@ func inviteeDisplayName(_ invitation: UserInvitationModel) -> String {
 
 /// Raw role values → display names, unknown values pass through verbatim.
 func roleDisplayNames(_ roles: [String]?) -> [String] {
-    (roles ?? []).map { UserRoleOption(rawValue: $0)?.displayName ?? $0 }
+    // Ordered by role precedence, NOT input order. `rolesSummary` renders
+    // names[0] as the headline role, and the detail view hands this a Set —
+    // whose iteration order is unspecified and varies per launch, which made
+    // the same user show "Admin +1" on one run and "Developer +1" on the next
+    // while the table row (fed the API's array) disagreed. Ordering here fixes
+    // every call site at once so the surfaces can't drift.
+    UserRoleOption.orderedRawValues(roles ?? [])
+        .map { UserRoleOption(rawValue: $0)?.displayName ?? $0 }
 }
 
 /// "Developer", "Developer +2", or "—" for table cells.
@@ -51,6 +58,15 @@ func rolesSummary(_ roles: [String]?) -> String {
     if names.isEmpty { return "—" }
     if names.count == 1 { return names[0] }
     return "\(names[0]) +\(names.count - 1)"
+}
+
+/// The Account Holder is protected: it cannot be edited or removed through this
+/// client (ownership transfer is an Apple-supported process outside this API).
+///
+/// Single source of truth — the Users row context menu and the edit screen must
+/// agree, or the menu offers a destructive action the detail view forbids.
+nonisolated func isAccountHolderUser(_ user: UserModel) -> Bool {
+    (user.roles ?? []).contains(UserRoleOption.ACCOUNT_HOLDER.rawValue)
 }
 
 private nonisolated(unsafe) let userDateParser: ISO8601DateFormatter = {
@@ -348,6 +364,7 @@ struct ChooseAppsSheet: View {
 /// until accepted. Needs an Admin key role; a TestFlight-only key 403s.
 struct InviteUserDetailView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     /// Team apps for scoped invites (allAppsVisible == false).
     var apps: [AppsData] = []
     var onBack: () -> Void
@@ -537,8 +554,16 @@ struct InviteUserDetailView: View {
             visibleAppIds: visibleAppIds)
         switch result {
         case .success:
+            // The invitee is NOT a member yet — they appear under Pending
+            // until they accept — so say so, or the empty Members list after
+            // a send reads as a failure.
+            toastCenter.show(
+                "Invitation sent to \(email)",
+                detail: "Pending until \(firstName) \(lastName) accepts.",
+                variant: .success)
             onSent()
         case .failure(let message):
+            toastCenter.show("Couldn't send invitation", detail: message, variant: .error)
             errorMessage = message
         case .ignored:
             break
@@ -554,6 +579,7 @@ struct InviteUserDetailView: View {
 /// transfer is an Apple-supported process outside this API.
 struct UserDetailView: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var user: UserModel
     var apps: [AppsData] = []
     var onBack: () -> Void
@@ -596,9 +622,7 @@ struct UserDetailView: View {
             provisioningAllowed: initialProvisioning, selectedAppIds: initialIds))
     }
 
-    private var isAccountHolder: Bool {
-        (user.roles ?? []).contains(UserRoleOption.ACCOUNT_HOLDER.rawValue)
-    }
+    private var isAccountHolder: Bool { isAccountHolderUser(user) }
 
     private var isDirty: Bool {
         roles != snapshot.roles
@@ -796,7 +820,12 @@ struct UserDetailView: View {
             snapshot = Snapshot(
                 roles: roles, allAppsVisible: allAppsVisible,
                 provisioningAllowed: provisioningAllowed, selectedAppIds: selectedAppIds)
+            toastCenter.show(
+                "\(teamMemberDisplayName(user)) updated",
+                detail: "Roles and app access saved.",
+                variant: .success)
         case .failure(let message):
+            toastCenter.show("Couldn't save changes", detail: message, variant: .error)
             errorMessage = message
         case .ignored:
             break
@@ -810,6 +839,7 @@ struct UserDetailView: View {
 /// the invite is deleted and re-created with identical details.
 struct ResendInvitationSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var invitation: UserInvitationModel
     var onDone: () -> Void
     @State private var isSaving = false
@@ -854,8 +884,15 @@ struct ResendInvitationSheet: View {
                             defer { isSaving = false }
                             errorMessage = nil
                             switch await viewModel.resendInvitation(invitation) {
-                            case .success: onDone()
-                            case .failure(let message): errorMessage = message
+                            case .success:
+                                toastCenter.show(
+                                    "Invitation resent",
+                                    detail: invitation.email,
+                                    variant: .success)
+                                onDone()
+                            case .failure(let message):
+                                toastCenter.show("Couldn't resend invitation", detail: message, variant: .error)
+                                errorMessage = message
                             case .ignored: break
                             }
                         }
@@ -875,6 +912,7 @@ struct ResendInvitationSheet: View {
 /// Withdrawing pending access removes no active user account.
 struct CancelInvitationSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var invitation: UserInvitationModel
     var onDone: () -> Void
     @State private var isSaving = false
@@ -922,8 +960,15 @@ struct CancelInvitationSheet: View {
                             defer { isSaving = false }
                             errorMessage = nil
                             switch await viewModel.revokeInvitation(id: invitation.id) {
-                            case .success: onDone()
-                            case .failure(let message): errorMessage = message
+                            case .success:
+                                toastCenter.show(
+                                    "Invitation cancelled",
+                                    detail: invitation.email,
+                                    variant: .success)
+                                onDone()
+                            case .failure(let message):
+                                toastCenter.show("Couldn't cancel invitation", detail: message, variant: .error)
+                                errorMessage = message
                             case .ignored: break
                             }
                         }
@@ -952,6 +997,7 @@ struct RemoveUserSheet: View {
     var user: UserModel
     var appNames: [String] = []
     @ObservedObject var viewModel: ResourcesViewModel
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var onDone: () -> Void
     @State private var confirmation = ""
     @State private var isSaving = false
@@ -1023,8 +1069,15 @@ struct RemoveUserSheet: View {
                             defer { isSaving = false }
                             errorMessage = nil
                             switch await viewModel.removeUser(id: user.id) {
-                            case .success: onDone()
-                            case .failure(let message): errorMessage = message
+                            case .success:
+                                toastCenter.show(
+                                    "\(teamMemberDisplayName(user)) removed",
+                                    detail: "Re-invite to restore access.",
+                                    variant: .success)
+                                onDone()
+                            case .failure(let message):
+                                toastCenter.show("Couldn't remove user", detail: message, variant: .error)
+                                errorMessage = message
                             case .ignored: break
                             }
                         }
