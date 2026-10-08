@@ -20,6 +20,7 @@ private let liveAppStoreVersionStates: Set<String> = [
 ]
 private let pendingAppStoreVersionStates: Set<String> = [
     "PREPARE_FOR_SUBMISSION",
+    "READY_FOR_REVIEW",
     "WAITING_FOR_REVIEW",
     "IN_REVIEW",
     "PENDING_DEVELOPER_RELEASE",
@@ -126,7 +127,7 @@ func getVersionCaseState(versions: [AppStoreVersionsModel]) -> AppStoreVersionCa
 func getStatusLabel(appStoreState: String?) -> String {
     switch appStoreState {
     case "PREPARE_FOR_SUBMISSION": return "Draft"
-    case "WAITING_FOR_REVIEW": return "Waiting for Review"
+    case "READY_FOR_REVIEW", "WAITING_FOR_REVIEW": return "Waiting for Review"
     case "IN_REVIEW": return "In Review"
     case "PENDING_DEVELOPER_RELEASE": return "Approved – Ready to Release"
     case "REJECTED", "DEVELOPER_REJECTED": return "Rejected"
@@ -1456,14 +1457,14 @@ final class ReviewsViewModel: ObservableObject {
 
     // MARK: - Review details (contact/demo/notes)
 
-    /// Latest submission in a cancellable state for the platform, if any.
-    /// The list endpoint doesn't include the version linkage, so this
-    /// matches on platform + state — the versions tab is platform-scoped,
-    /// which keeps the match unambiguous in practice.
-    func cancellableSubmission(forPlatform platform: String?) -> ReviewSubmissionModel? {
+    /// Active cancellable submission for this exact version. Do not fall
+    /// back to platform-only matching: Apple permits a second items-only
+    /// submission on the same platform, and cancelling that would withdraw
+    /// unrelated review content.
+    func cancellableSubmission(for version: AppStoreVersionsModel) -> ReviewSubmissionModel? {
         (submissionsState.loadedValue ?? []).first {
             Self.cancellableSubmissionStates.contains($0.state ?? "")
-                && (platform == nil || $0.platform == platform)
+                && $0.appStoreVersionForReview?.id == version.id
         }
     }
 
@@ -2265,13 +2266,9 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
-    /// GET /v1/reviewSubmissions?filter[app]={id}&include=submittedByActor.
-    /// The collection has no sort parameter (verified against the OpenAPI
-    /// spec), so order is the server's default. NOTE: the list endpoint's
-    /// include enum is narrower than the detail endpoint's — it rejects
-    /// appStoreVersion ("not a valid relationship name", verified at
-    /// runtime), so the version relationship + row UI stay nil on list
-    /// rows until a valid path for them is found.
+    /// GET /v1/apps/{id}/reviewSubmissions. The app-scoped endpoint exposes
+    /// appStoreVersionForReview, which lets the UI bind cancellation to the
+    /// exact App Store version instead of guessing from platform alone.
     func fetchSubmissions(appId: String, cursor: String? = nil, generation: Int) async {
         guard !Task.isCancelled else { return }
         let isPaginating = cursor != nil
@@ -2290,8 +2287,7 @@ final class ReviewsViewModel: ObservableObject {
         }
 
         var queryParams = [
-            "sort": "-createdDate",
-            "include": "response",
+            "include": "appStoreVersionForReview,submittedByActor",
             "limit": String(AppConfigs.reviewLimit)
         ]
         if let cursor {
@@ -2299,7 +2295,9 @@ final class ReviewsViewModel: ObservableObject {
         }
 
         guard let request = APIClient.shared.getRequest(
-            api: .get(name: .getReviewSubmissions, queryParams: queryParams),
+            api: .get(name: .getAllApps,
+                      queryParams: queryParams,
+                      path: "\(appId)/reviewSubmissions"),
             apiVersion: .v1) else {
             if !isPaginating {
                 submissionsState = .error("No team selected. Add a team to load review submissions.")

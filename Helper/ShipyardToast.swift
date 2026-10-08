@@ -249,7 +249,7 @@ extension View {
                 }
                 .padding(.trailing, 24)
                 .padding(.bottom, bottomInset)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
         }
         .animation(.easeInOut(duration: 0.2), value: toast)

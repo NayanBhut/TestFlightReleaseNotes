@@ -445,10 +445,10 @@ enum APIName: String {
     // which is not a valid collection route and would 404).
     // GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations via `path`.
     case getAppStoreVersions = "/appStoreVersions"
-    // GET /v1/reviewSubmissions?filter[app]=... (top-level collection).
     // POST (submit for review) and PATCH (submitted/canceled flags) share
-    // this path — the verb comes from APIMethod, so reuse this case for
-    // writes (spec v4.3.1 has NO DELETE here; cancel is PATCH {canceled}).
+    // this top-level path. Listing is app-scoped instead:
+    // GET /v1/apps/{id}/reviewSubmissions, composed with getAllApps.
+    // Cancel is PATCH {canceled}; there is no DELETE here.
     case getReviewSubmissions = "/reviewSubmissions"
     // POST /v1/reviewSubmissionItems — links an appStoreVersion to a
     // review submission (required between POST submission and the

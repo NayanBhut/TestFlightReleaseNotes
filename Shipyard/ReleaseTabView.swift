@@ -375,7 +375,7 @@ struct ReleaseTabView: View {
                     appName: app.name ?? "this app",
                     version: version,
                     phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
-                    submission: reviewsVM.cancellableSubmission(forPlatform: version.platform),
+                    submission: reviewsVM.cancellableSubmission(for: version),
                     reviewsVM: reviewsVM
                 ) {
                     // Never assume the post-cancel state — refetch and
@@ -822,14 +822,14 @@ struct ReleaseTabView: View {
             }
             .buttonStyle(.launchSecondary)
             if let version = shownVersion,
-               reviewsVM.cancellableSubmission(forPlatform: version.platform) != nil {
-                Button("Cancel Submission") {
+               reviewsVM.cancellableSubmission(for: version) != nil {
+                Button("Remove from Review") {
                     showCancelDialog = true
                 }
                 .buttonStyle(.launchDestructive)
             }
             Button("Request Expedited Review") {
-                openASC()
+                openExpeditedReview()
             }
             .buttonStyle(.launchSecondary)
         }
@@ -904,8 +904,8 @@ struct ReleaseTabView: View {
                 .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let version = shownVersion,
-               reviewsVM.cancellableSubmission(forPlatform: version.platform) != nil {
-                Button("Cancel Submission") {
+               reviewsVM.cancellableSubmission(for: version) != nil {
+                Button("Remove from Review") {
                     showCancelDialog = true
                 }
                 .buttonStyle(.launchDestructive)
@@ -1380,7 +1380,7 @@ struct ReleaseTabView: View {
         if draftEmail != (details.contactEmail ?? "") { return true }
         if draftDemoRequired != (details.demoAccountRequired ?? false) { return true }
         if draftDemoUser != (details.demoAccountName ?? "") { return true }
-        if !draftDemoPass.isEmpty { return true }
+        if draftDemoPass != (details.demoAccountPassword ?? "") { return true }
         if draftNotes != (details.notes ?? "") { return true }
         return false
     }
@@ -1614,6 +1614,12 @@ struct ReleaseTabView: View {
 
     private func openASC() {
         if let url = URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)") {
+            openURL(url)
+        }
+    }
+
+    private func openExpeditedReview() {
+        if let url = URL(string: "https://developer.apple.com/contact/app-store/?topic=expedite") {
             openURL(url)
         }
     }

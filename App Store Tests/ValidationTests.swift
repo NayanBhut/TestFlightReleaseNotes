@@ -877,7 +877,7 @@ final class ValidationTests: XCTestCase {
     @MainActor
     func testVersionCaseStateUsesSpecifiedLivePendingAndIgnoredStates() {
         var version = AppStoreVersionsModel(id: "version-1", appStoreVersionLocalizations: [])
-        for state in ["PREPARE_FOR_SUBMISSION", "WAITING_FOR_REVIEW", "IN_REVIEW",
+        for state in ["PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW",
                       "PENDING_DEVELOPER_RELEASE", "REJECTED", "METADATA_REJECTED",
                       "DEVELOPER_REJECTED", "INVALID_BINARY", "PENDING_CONTRACT",
                       "PROCESSING_FOR_DISTRIBUTION"] {
@@ -929,6 +929,7 @@ final class ValidationTests: XCTestCase {
     func testStatusLabelsAndEditability() {
         let labels = [
             "PREPARE_FOR_SUBMISSION": "Draft",
+            "READY_FOR_REVIEW": "Waiting for Review",
             "WAITING_FOR_REVIEW": "Waiting for Review",
             "IN_REVIEW": "In Review",
             "PENDING_DEVELOPER_RELEASE": "Approved – Ready to Release",
@@ -946,7 +947,7 @@ final class ValidationTests: XCTestCase {
                       "METADATA_REJECTED", "INVALID_BINARY"] {
             XCTAssertTrue(isVersionEditable(appStoreState: state), state)
         }
-        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE",
+        for state in ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE",
                       "PENDING_CONTRACT", "PROCESSING_FOR_DISTRIBUTION",
                       "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE"] {
             XCTAssertFalse(isVersionEditable(appStoreState: state), state)
