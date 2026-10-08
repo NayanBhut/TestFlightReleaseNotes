@@ -1077,13 +1077,13 @@ final class ValidationTests: XCTestCase {
     func testCSVParsesCommaRowsWithHeader() {
         let content = """
         name,udid,platform
-        John's iPhone 16 Pro,00008101-001C25D40,IOS
+        John's iPhone 16 Pro,00008101-001C25D40C28001E,IOS
         iPad Air,abcdef1234567890abcdef1234567890abcd1234,
         """
         let parsed = DeviceCSVImport.parse(content)
         XCTAssertEqual(parsed.rejected, 0)
         XCTAssertEqual(parsed.rows.count, 2)
-        XCTAssertEqual(parsed.rows[0], DeviceCSVRow(name: "John's iPhone 16 Pro", udid: "00008101-001C25D40", platform: .IOS))
+        XCTAssertEqual(parsed.rows[0], DeviceCSVRow(name: "John's iPhone 16 Pro", udid: "00008101-001C25D40C28001E", platform: .IOS))
         // Blank platform defaults to iOS (same default as the form).
         XCTAssertEqual(parsed.rows[1].platform, .IOS)
     }
@@ -1091,11 +1091,11 @@ final class ValidationTests: XCTestCase {
     func testCSVSkipsCommentsBlanksAndRejectsBadRows() {
         let content = """
         # team devices
-        Legacy iPhone 12\t00008030-001A2B3C4\tMAC_OS
+        Legacy iPhone 12\t00008030-001A2B3C4D5E6F7A\tMAC_OS
 
         nameless,,IOS
         bad-udid,not-a-udid,IOS
-        mystery,00008101-001C25D40,WATCH_OS
+        mystery,00008101-001C25D40C28001E,WATCH_OS
         single-field-only
         """
         let parsed = DeviceCSVImport.parse(content)
@@ -1106,9 +1106,9 @@ final class ValidationTests: XCTestCase {
 
     func testCSVPlatformAliases() {
         let content = """
-        a,00008101-001C25D40,macos
-        b,00008101-001C25D40,universal
-        c,00008101-001C25D40,MAC
+        a,00008101-001C25D40C28001E,macos
+        b,00008101-001C25D40C28001E,universal
+        c,00008101-001C25D40C28001E,MAC
         """
         let parsed = DeviceCSVImport.parse(content)
         XCTAssertEqual(parsed.rows.map(\.platform), [.MAC_OS, .UNIVERSAL, .MAC_OS])
