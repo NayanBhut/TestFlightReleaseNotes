@@ -487,7 +487,7 @@ struct ReviewInfoBlock: View {
     }
 }
 
-// MARK: - 05 Waiting for Review
+// MARK: - 05 Ready / Waiting for Review
 
 struct WaitingVersionView: View {
     var version: AppStoreVersionsModel
@@ -496,12 +496,27 @@ struct WaitingVersionView: View {
     var primaryLocale: String?
     @ObservedObject var reviewsVM: ReviewsViewModel
 
+    private var isReadyForReview: Bool {
+        (version.appStoreState ?? version.appVersionState) == "READY_FOR_REVIEW"
+    }
+
+    private var alertTitle: String {
+        isReadyForReview ? "Ready for Review" : "Waiting for Review"
+    }
+
+    private var alertDetail: String {
+        if isReadyForReview {
+            return "Added to a draft submission. App Store Connect has not confirmed sending it to Apple yet."
+        }
+        return "Submitted \(releaseDayDisplay(reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)). Estimated review: 24–48 hours."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ReleaseAlert(
                 style: .warning,
-                title: "Waiting for Review",
-                detail: "Submitted \(releaseDayDisplay(reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)). Estimated review: 24–48 hours.")
+                title: alertTitle,
+                detail: alertDetail)
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
             SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)

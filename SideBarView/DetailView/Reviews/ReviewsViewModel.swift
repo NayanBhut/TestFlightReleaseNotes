@@ -72,6 +72,10 @@ enum ReviewStatusSyncState: Equatable {
         return false
     }
 
+    var isActive: Bool {
+        self != .idle
+    }
+
     func belongs(to candidateVersionId: String?) -> Bool {
         guard let candidateVersionId else { return false }
         return versionId == candidateVersionId
@@ -155,7 +159,8 @@ func getVersionCaseState(versions: [AppStoreVersionsModel]) -> AppStoreVersionCa
 func getStatusLabel(appStoreState: String?) -> String {
     switch appStoreState {
     case "PREPARE_FOR_SUBMISSION": return "Draft"
-    case "READY_FOR_REVIEW", "WAITING_FOR_REVIEW": return "Waiting for Review"
+    case "READY_FOR_REVIEW": return "Ready for Review"
+    case "WAITING_FOR_REVIEW": return "Waiting for Review"
     case "IN_REVIEW": return "In Review"
     case "PENDING_DEVELOPER_RELEASE": return "Approved – Ready to Release"
     case "REJECTED", "DEVELOPER_REJECTED": return "Rejected"
@@ -780,7 +785,8 @@ final class ReviewsViewModel: ObservableObject {
     }
 
     var canSubmitForReview: Bool {
-        guard let version = submissionVersion,
+        guard !reviewStatusSyncState.isActive,
+              let version = submissionVersion,
               isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState) else {
             return false
         }
@@ -1375,15 +1381,11 @@ final class ReviewsViewModel: ObservableObject {
     /// STATE_ERROR on the write).
     func refreshVersionForSave(versionId: String) async -> String? {
         guard currentAppId != nil, selectedAppStoreVersionId == versionId else { return nil }
-        guard let request = APIClient.shared.getRequest(
-            api: .get(name: .getAppStoreVersions, path: versionId),
-            apiVersion: .v1) else { return nil }
         do {
-            let data = try await APIClient.shared.callAPI(with: request)
+            let model = try await fetchVersionSnapshot(versionId: versionId)
             guard !Task.isCancelled,
                   currentAppId != nil,
                   selectedAppStoreVersionId == versionId else { return nil }
-            let model = try getDecoder().decode(AppStoreVersionsModel.self, from: data)
             mergeVersionSnapshot(model, versionId: versionId)
             return model.appStoreState ?? model.appVersionState
         } catch {
@@ -1900,7 +1902,7 @@ final class ReviewsViewModel: ObservableObject {
     /// `versionId` is required — the UI disables submit without one.
     func submitForReview(appId: String, versionId: String) async -> Bool {
         guard !submittingReview,
-              reviewStatusSyncState.versionId != versionId,
+              !reviewStatusSyncState.isActive,
               currentAppId == appId,
               let version = appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }),
               Self.isPendingApprovalVersion(version),
@@ -2013,6 +2015,10 @@ final class ReviewsViewModel: ObservableObject {
 
     nonisolated static func reviewStatusDidSettle(_ state: String?, submittedFrom initialState: String?) -> Bool {
         guard let state else { return false }
+        // READY_FOR_REVIEW is the intermediate draft-submission state:
+        // the item has been attached, but Apple has not received the
+        // submission yet. Keep polling until it advances beyond this state.
+        guard state != "READY_FOR_REVIEW" else { return false }
         if let initialState, state != initialState { return true }
         return !isVersionEditable(appStoreState: state)
     }
@@ -2065,6 +2071,15 @@ final class ReviewsViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled,
                       generation == reviewStatusSyncGeneration else { return }
+                if let apiError = error as? APIError, apiError.statusCode == 404 {
+                    // The version no longer exists, so retrying this exact
+                    // resource can never settle. Drop the stale local lock
+                    // and refresh the versions collection instead.
+                    reviewStatusInitialVersionState = nil
+                    reviewStatusSyncState = .idle
+                    load(appId: appId, force: true)
+                    return
+                }
                 reviewsLogger.error("Failed to refresh review status: \(error.localizedDescription)")
             }
         }
@@ -2122,6 +2137,13 @@ final class ReviewsViewModel: ObservableObject {
         reviewStatusSyncTask = nil
         reviewStatusInitialVersionState = nil
         reviewStatusSyncState = .idle
+    }
+
+    /// Lets the user leave a delayed status check after a persistent
+    /// network failure instead of trapping the release actions forever.
+    func dismissReviewStatusSync(versionId: String) {
+        guard reviewStatusSyncState == .delayed(versionId: versionId) else { return }
+        clearReviewStatusSync(afterCancellingVersionId: versionId)
     }
 
     /// States in which Apple accepts a cancel. IN_REVIEW intentionally

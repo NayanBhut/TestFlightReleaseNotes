@@ -212,13 +212,13 @@ struct ReleaseTabView: View {
     }
 
     private var reviewStatusSyncing: Bool {
-        reviewsVM.reviewStatusSyncState.versionId == shownVersion?.id
-            && reviewsVM.reviewStatusSyncState.isSyncing
+        reviewsVM.reviewStatusSyncState.isSyncing
+            && reviewsVM.reviewStatusSyncState.belongs(to: shownVersion?.id)
     }
 
     private var reviewStatusDelayed: Bool {
-        reviewsVM.reviewStatusSyncState.versionId == shownVersion?.id
-            && reviewsVM.reviewStatusSyncState.isDelayed
+        reviewsVM.reviewStatusSyncState.isDelayed
+            && reviewsVM.reviewStatusSyncState.belongs(to: shownVersion?.id)
     }
 
     /// Editable only when the shown version is the VM-selected pending
@@ -714,7 +714,9 @@ struct ReleaseTabView: View {
         switch shownState {
         case "PREPARE_FOR_SUBMISSION":
             return "Draft · Created \(releaseDayDisplay(version.createdDate))"
-        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+        case "READY_FOR_REVIEW":
+            return "Added to draft submission"
+        case "WAITING_FOR_REVIEW":
             return "Submitted \(submitted)"
         case "IN_REVIEW":
             return "In Review · submitted \(submitted)"
@@ -757,22 +759,26 @@ struct ReleaseTabView: View {
 
     @ViewBuilder
     private var overviewActionBar: some View {
-        switch shownState {
-        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
-            waitingActionBar
-        case "IN_REVIEW":
-            inReviewActionBar
-        case "PENDING_DEVELOPER_RELEASE":
-            pendingReleaseActionBar
-        case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
-             "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE",
-             "REPLACED_WITH_NEW_VERSION":
-            liveActionBar
-        default:
-            if canEditShown {
-                prepareActionBar
-            } else {
-                lockedActionBar
+        if reviewStatusSyncing || reviewStatusDelayed {
+            prepareActionBar
+        } else {
+            switch shownState {
+            case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+                waitingActionBar
+            case "IN_REVIEW":
+                inReviewActionBar
+            case "PENDING_DEVELOPER_RELEASE":
+                pendingReleaseActionBar
+            case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
+                 "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE",
+                 "REPLACED_WITH_NEW_VERSION":
+                liveActionBar
+            default:
+                if canEditShown {
+                    prepareActionBar
+                } else {
+                    lockedActionBar
+                }
             }
         }
     }
@@ -783,6 +789,11 @@ struct ReleaseTabView: View {
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let error = saveError ?? reviewsVM.releaseSettingsError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.danger)
+            }
             if reviewStatusSyncing {
                 ProgressView()
                     .scaleEffect(0.7)
@@ -795,12 +806,12 @@ struct ReleaseTabView: View {
                     reviewsVM.retryReviewStatusSync(appId: app.id, versionId: versionId)
                 }
                 .buttonStyle(.launchPrimary)
-            } else {
-                if let error = saveError ?? reviewsVM.releaseSettingsError, canEditShown {
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(ShipyardTheme.danger)
+                Button("Dismiss") {
+                    guard let versionId = shownVersion?.id else { return }
+                    reviewsVM.dismissReviewStatusSync(versionId: versionId)
                 }
+                .buttonStyle(.launchSecondary)
+            } else {
                 if saving {
                     ProgressView()
                         .scaleEffect(0.7)
@@ -1020,7 +1031,6 @@ struct ReleaseTabView: View {
     }
 
     private var canSubmit: Bool {
-        guard reviewsVM.reviewStatusSyncState.versionId != shownVersion?.id else { return false }
         return ReleaseSubmissionRequirements.canSubmit(
             canEdit: canEditShown,
             missingItems: missingItems,

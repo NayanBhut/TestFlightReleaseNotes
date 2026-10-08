@@ -929,7 +929,7 @@ final class ValidationTests: XCTestCase {
     func testStatusLabelsAndEditability() {
         let labels = [
             "PREPARE_FOR_SUBMISSION": "Draft",
-            "READY_FOR_REVIEW": "Waiting for Review",
+            "READY_FOR_REVIEW": "Ready for Review",
             "WAITING_FOR_REVIEW": "Waiting for Review",
             "IN_REVIEW": "In Review",
             "PENDING_DEVELOPER_RELEASE": "Approved – Ready to Release",
@@ -984,13 +984,16 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(syncing.versionId, "version-1")
         XCTAssertTrue(syncing.isSyncing)
         XCTAssertFalse(syncing.isDelayed)
+        XCTAssertTrue(syncing.isActive)
 
         let delayed = ReviewStatusSyncState.delayed(versionId: "version-1")
         XCTAssertEqual(delayed.versionId, "version-1")
         XCTAssertFalse(delayed.isSyncing)
         XCTAssertTrue(delayed.isDelayed)
+        XCTAssertTrue(delayed.isActive)
 
         XCTAssertNil(ReviewStatusSyncState.idle.versionId)
+        XCTAssertFalse(ReviewStatusSyncState.idle.isActive)
     }
 
     func testReviewStatusSyncBelongsOnlyToItsVersion() {
@@ -1005,7 +1008,10 @@ final class ValidationTests: XCTestCase {
         for state in ["PREPARE_FOR_SUBMISSION", "REJECTED", "METADATA_REJECTED"] {
             XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: state), state)
         }
-        for state in ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"] {
+        XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(
+            "READY_FOR_REVIEW",
+            submittedFrom: "PREPARE_FOR_SUBMISSION"))
+        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW"] {
             XCTAssertTrue(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: "PREPARE_FOR_SUBMISSION"), state)
         }
         XCTAssertTrue(ReviewsViewModel.reviewStatusDidSettle("REJECTED", submittedFrom: "PREPARE_FOR_SUBMISSION"))
