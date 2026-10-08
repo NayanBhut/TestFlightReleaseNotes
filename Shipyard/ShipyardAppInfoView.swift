@@ -28,6 +28,18 @@ struct ShipyardAppInfoView: View {
     @State private var saveError: String?
     @State private var showRemoveConfirm = false
     @State private var isAddingLocale = false
+    /// Flow 12C guards: leaving with dirty drafts asks first; a save whose
+    /// connection dropped reconciles via GET before any retry.
+    @State private var showUnsavedGuard = false
+    @State private var pendingNavigation: PendingNavigation?
+    @State private var showSaveUnconfirmed = false
+    @State private var saveUnconfirmedReconciled = false
+
+    /// Deferred navigation held by the unsaved-changes guard.
+    private enum PendingNavigation: Equatable {
+        case refresh
+        case locale(String)
+    }
     /// Tab switches remount this view — only wipe typing on actual app change.
     @State private var bootedAppId = ""
 
@@ -144,6 +156,110 @@ struct ShipyardAppInfoView: View {
             if let newId { detailVM.loadVersionLocalizations(versionId: newId) }
         }
         .onChange(of: draftSignatureSource) { _, _ in syncDrafts() }
+        .sheet(isPresented: $showUnsavedGuard) {
+            UnsavedChangesSheet(
+                changedFields: changedFields,
+                onCancel: {
+                    showUnsavedGuard = false
+                    pendingNavigation = nil
+                },
+                onDiscard: {
+                    for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
+                    draftSignature = ""
+                    syncDrafts()
+                    let pending = pendingNavigation
+                    showUnsavedGuard = false
+                    pendingNavigation = nil
+                    // Discard Local never undoes an Apple write — it only
+                    // clears local edits, then the held navigation proceeds.
+                    performPendingNavigation(pending)
+                },
+                onSaveAndContinue: {
+                    Task {
+                        await save()
+                        // Navigates only after a confirmed save.
+                        guard saveError == nil else {
+                            showUnsavedGuard = false
+                            return
+                        }
+                        let pending = pendingNavigation
+                        showUnsavedGuard = false
+                        pendingNavigation = nil
+                        performPendingNavigation(pending)
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showSaveUnconfirmed) {
+            SaveOutcomeUnconfirmedSheet(
+                isReconciled: saveUnconfirmedReconciled,
+                onCancel: { showSaveUnconfirmed = false },
+                onDiscardLocalEdits: {
+                    for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
+                    draftSignature = ""
+                    syncDrafts()
+                    saveUnconfirmedReconciled = false
+                    showSaveUnconfirmed = false
+                },
+                onRefreshSavedValues: {
+                    Task {
+                        refreshAll()
+                        // Reconciled when the server already holds the draft
+                        // values (the interrupted request landed) or when a
+                        // fresh comparison is possible — either way retry is
+                        // now an informed choice, not a blind repeat.
+                        saveUnconfirmedReconciled = true
+                        if !isDirty {
+                            saveUnconfirmedReconciled = false
+                            showSaveUnconfirmed = false
+                            toastCenter.show("App Info saved", detail: BetaLocalizationLocales.displayName(for: locale), variant: .success)
+                        }
+                    }
+                },
+                onRetry: {
+                    showSaveUnconfirmed = false
+                    saveUnconfirmedReconciled = false
+                    Task { await save() }
+                }
+            )
+        }
+    }
+
+    /// Fields with local edits, for the unsaved-changes guard table.
+    private var changedFields: [(field: String, locale: String)] {
+        Field.allCases
+            .filter { draft($0) != serverValue($0) }
+            .map { ($0.rawValue.capitalized, locale) }
+    }
+
+    private func performPendingNavigation(_ pending: PendingNavigation?) {
+        switch pending {
+        case .refresh:
+            refreshAll()
+        case .locale(let code):
+            switchToLocale(code)
+        case .none:
+            break
+        }
+    }
+
+    private func switchToLocale(_ code: String) {
+        locale = code
+        for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
+        draftSignature = ""
+        syncDrafts()
+    }
+
+    /// Connection loss mid-save: the server outcome is unknown, so the
+    /// unconfirmed sheet (not the inline error) owns the next step.
+    private func isConnectionLoss(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("offline")
+            || lower.contains("connection lost")
+            || lower.contains("network connection")
+            || lower.contains("not connected")
+            || lower.contains("timed out")
+            || lower.contains("could not be found")
     }
 
     private func boot() {
@@ -158,7 +274,12 @@ struct ShipyardAppInfoView: View {
             return
         }
         bootedAppId = app.id
-        locale = app.primaryLocale ?? BetaLocalizationLocales.defaultLocale
+        // Default editing locale (General settings) applies only when Apple
+        // reports no primaryLocale — it never overrides Apple's value.
+        let preferred = UserDefaults.standard.string(forKey: UserDefaultsKeys.defaultMetadataLocale)
+        let fallback = (preferred.flatMap { BetaLocalizationLocales.supported.contains($0) ? $0 : nil })
+            ?? BetaLocalizationLocales.defaultLocale
+        locale = app.primaryLocale ?? fallback
         drafts = [:]
         draftSignature = ""
         lastSyncedServerValues = [:]
@@ -240,10 +361,14 @@ struct ShipyardAppInfoView: View {
             Menu {
                 ForEach(locales, id: \.self) { code in
                     Button("\(BetaLocalizationLocales.displayName(for: code)) (\(code))") {
-                        locale = code
-                        for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
-                        draftSignature = ""
-                        syncDrafts()
+                        // Dirty drafts trigger the save-before-leaving guard;
+                        // clean switches swap immediately.
+                        if isDirty {
+                            pendingNavigation = .locale(code)
+                            showUnsavedGuard = true
+                        } else {
+                            switchToLocale(code)
+                        }
                     }
                 }
             } label: {
@@ -326,7 +451,12 @@ struct ShipyardAppInfoView: View {
             }
 
             Button {
-                refreshAll()
+                if isDirty {
+                    pendingNavigation = .refresh
+                    showUnsavedGuard = true
+                } else {
+                    refreshAll()
+                }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12))
@@ -798,6 +928,13 @@ struct ShipyardAppInfoView: View {
                 privacyChoicesUrl: appInfoLocalization?.privacyChoicesUrl ?? ""
             )
             if case .failure(let message) = infoResult {
+                // Connection loss after the request: outcome unknown, draft
+                // preserved — the unconfirmed sheet owns reconciliation.
+                if isConnectionLoss(message) {
+                    saveUnconfirmedReconciled = false
+                    showSaveUnconfirmed = true
+                    return
+                }
                 saveError = message
                 toastCenter.show("Couldn't save App Info", detail: message, variant: .error)
                 return
@@ -814,6 +951,11 @@ struct ShipyardAppInfoView: View {
                 supportUrl: draft(.support)
             )
             if case .failure(let message) = versionResult {
+                if isConnectionLoss(message) {
+                    saveUnconfirmedReconciled = false
+                    showSaveUnconfirmed = true
+                    return
+                }
                 saveError = message
                 toastCenter.show("Couldn't save App Info", detail: message, variant: .error)
                 return

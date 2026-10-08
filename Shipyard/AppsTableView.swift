@@ -164,7 +164,7 @@ struct AppsTableView: View {
                 Text("No Apps Found")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(ShipyardTheme.title)
-                Text("No iOS apps are available for this team")
+                Text("No apps are available for this team")
                     .font(.system(size: 13))
                     .foregroundColor(ShipyardTheme.body)
                 Button("Refresh") {

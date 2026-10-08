@@ -19,7 +19,24 @@ struct CertificatesTableView: View {
     @State private var detailCertificate: CertificateModel?
     @State private var bannerError: String?
 
+    /// Module 12 bulk selection (Flow 12D): independent per-row DELETE /
+    /// download over exactly the checked rows — never the whole list.
+    @State private var selection: Set<String> = []
+    @State private var showBulkDownload = false
+    @State private var showBulkRevoke = false
+    @State private var revokeConfirmation = ""
+    @State private var ledger: [BulkLedgerItem] = []
+    @State private var showBulkResult = false
+    @State private var bulkReconciled = false
+    @State private var downloadResults: [SigningFileResult] = []
+    @State private var showDownloadResult = false
+    @State private var isBulkWorking = false
+
     private var certificates: [CertificateModel] { viewModel.filteredCertificates }
+
+    private var selectedCertificates: [CertificateModel] {
+        certificates.filter { selection.contains($0.id) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,6 +110,256 @@ struct CertificatesTableView: View {
                 )
             }
         }
+        // MARK: - Module 12 bulk sheets (Flow 12D)
+        .sheet(isPresented: $showBulkDownload) {
+            DownloadSigningFilesSheet(
+                rows: selectedCertificates.map {
+                    SigningDownloadRow(
+                        id: $0.id,
+                        rowLabel: "\(certificateTypeDisplayName($0.certificateType)) · \($0.serialNumber ?? "—")",
+                        outputName: bulkCertificateFileName($0) + ".cer"
+                    )
+                },
+                destination: "~/Downloads/Shipyard/Signing",
+                onChooseDestination: {},
+                onCancel: { showBulkDownload = false },
+                onDownload: {
+                    showBulkDownload = false
+                    runBulkDownload()
+                }
+            )
+        }
+        .sheet(isPresented: $showBulkRevoke) {
+            RevokeCertificatesSheet(
+                certificates: selectedCertificates.map {
+                    (serial: $0.serialNumber ?? "—",
+                     type: certificateTypeDisplayName($0.certificateType),
+                     affectedProfiles: affectedProfiles(for: $0.id))
+                },
+                confirmationText: "REVOKE \(selectedCertificates.count)",
+                typedConfirmation: $revokeConfirmation,
+                onCancel: { showBulkRevoke = false },
+                onRevoke: {
+                    showBulkRevoke = false
+                    runBulkRevoke()
+                }
+            )
+        }
+        .sheet(isPresented: $showBulkResult) {
+            BulkRevocationResultSheet(
+                title: "Bulk revocation · partial result",
+                bannerTitle: bulkBannerTitle,
+                bannerBody: "Independent DELETE requests, not a signing operation. Do not repeat confirmed success. Resolve 403 access before retry; reconcile any unknown outcome first.",
+                items: $ledger,
+                isReconciled: bulkReconciled,
+                onExport: exportLedger,
+                onRefreshReconcile: {
+                    viewModel.load(.certificates)
+                    viewModel.load(.profiles)
+                    bulkReconciled = true
+                },
+                onRetryUnknown: runBulkRetryUnknown,
+                onDone: {
+                    showBulkResult = false
+                    selection = []
+                }
+            )
+        }
+        .sheet(isPresented: $showDownloadResult) {
+            SigningDownloadResultSheet(
+                results: downloadResults,
+                destinationNote: "Original selected folder · per-file save panels",
+                canRetryLocalWrite: downloadResults.contains { if case .failed = $0.writeResult { return true }; return false },
+                onChooseWritableFolder: {},
+                onExport: exportDownloadLedger,
+                onRetryLocalWrite: retryFailedDownloads,
+                onDone: {
+                    showDownloadResult = false
+                    selection = []
+                }
+            )
+        }
+    }
+
+    // MARK: - Module 12 bulk execution
+
+    private func bulkCertificateFileName(_ certificate: CertificateModel) -> String {
+        let raw = certificate.displayName ?? certificate.name ?? "download"
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed.isEmpty ? "download" : trimmed).replacingOccurrences(of: "/", with: "-")
+    }
+
+    /// Profiles whose hydrated certificate links include this certificate.
+    /// The list fetch does not always hydrate the relationship, so an empty
+    /// result honestly means "refresh actual dependencies" — never "none".
+    private func affectedProfiles(for certificateId: String) -> [String] {
+        let profiles: [ProfileModel]
+        if case .loaded(let loaded) = viewModel.profilesState {
+            profiles = loaded
+        } else {
+            profiles = []
+        }
+        let matches = profiles.filter { $0.certificates.contains(where: { $0.id == certificateId }) }
+        if matches.isEmpty {
+            return ["Refresh actual dependencies"]
+        }
+        return matches.map { $0.name ?? "Untitled profile" }
+    }
+
+    private var bulkBannerTitle: String {
+        let confirmed = ledger.filter { $0.outcome?.isConfirmed == true }.count
+        let unknown = ledger.filter { if case .unknown = $0.outcome { return true }; return false }.count
+        if unknown > 0 {
+            return "\(confirmed) revocation confirmed · \(unknown) outcome unknown"
+        }
+        return "\(confirmed) revocation confirmed · \(ledger.count - confirmed) denied"
+    }
+
+    /// Sequential independent DELETEs. A 204 drops the row locally (the VM
+    /// does that); every other outcome stays in the ledger with its guard.
+    private func runBulkRevoke() {
+        let targets = selectedCertificates
+        guard !targets.isEmpty else { return }
+        isBulkWorking = true
+        bulkReconciled = false
+        ledger = targets.map {
+            BulkLedgerItem(
+                id: $0.id,
+                label: "Serial \($0.serialNumber ?? "—") · \(certificateTypeDisplayName($0.certificateType))",
+                sublabel: "ID: \($0.id)",
+                outcome: nil
+            )
+        }
+        showBulkResult = true
+        Task { @MainActor in
+            for target in targets {
+                let result = await viewModel.revokeCertificate(id: target.id)
+                if let index = ledger.firstIndex(where: { $0.id == target.id }) {
+                    switch result {
+                    case .success:
+                        ledger[index].outcome = .confirmed("DELETE 204 · no response body")
+                    case .failure(let message):
+                        ledger[index].outcome = BulkOutcomeClassification.classify(message: message)
+                    case .ignored:
+                        ledger[index].outcome = .unknown("Request ignored — reconcile before retry")
+                    }
+                }
+            }
+            isBulkWorking = false
+            if ledger.allSatisfy({ $0.outcome?.isConfirmed == true }) {
+                selection = []
+                toastCenter.show("Certificates revoked", detail: "\(ledger.count) confirmed", variant: .success)
+            }
+        }
+    }
+
+    /// Retries only the unknown rows after Refresh / Reconcile unlocked
+    /// them. Confirmed rows are never touched again.
+    private func runBulkRetryUnknown() {
+        let unknownIds = Set(ledger.filter { if case .unknown = $0.outcome { return true }; return false }.map(\.id))
+        guard !unknownIds.isEmpty else { return }
+        Task { @MainActor in
+            for id in unknownIds {
+                let result = await viewModel.revokeCertificate(id: id)
+                if let index = ledger.firstIndex(where: { $0.id == id }) {
+                    switch result {
+                    case .success:
+                        ledger[index].outcome = .confirmed("DELETE 204 · no response body")
+                    case .failure(let message):
+                        ledger[index].outcome = BulkOutcomeClassification.classify(message: message)
+                    case .ignored:
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    private func exportLedger() {
+        LocalResultsExport.saveLedger(
+            filename: "bulk-revocation-results.txt",
+            lines: LocalResultsExport.lines(
+                title: "Bulk revocation · partial result",
+                scope: "Certificates",
+                when: Date(),
+                rows: ledger.map { ($0.label, $0.outcome?.detail ?? "No result") }
+            )
+        )
+    }
+
+    /// Sequential authenticated downloads (one save panel per file, same
+    /// as the single-download path). Fetch and write stages stay separate
+    /// in the result ledger.
+    private func runBulkDownload() {
+        let targets = selectedCertificates
+        guard !targets.isEmpty else { return }
+        downloadResults = targets.map {
+            SigningFileResult(
+                id: $0.id,
+                outputName: bulkCertificateFileName($0) + ".cer",
+                material: "Public certificate material",
+                fetchStage: "Authenticated GET certificate",
+                writeResult: nil
+            )
+        }
+        showDownloadResult = true
+        Task { @MainActor in
+            for target in targets {
+                let result = await viewModel.downloadCertificate(target)
+                if let index = downloadResults.firstIndex(where: { $0.id == target.id }) {
+                    switch result {
+                    case .success:
+                        downloadResults[index].writeResult = .saved
+                    case .failure(let message):
+                        downloadResults[index].writeResult = .failed(message)
+                    case .ignored:
+                        downloadResults[index].writeResult = .failed("Save panel cancelled — no file written")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Retries only failed local writes; completed files are never
+    /// re-downloaded.
+    private func retryFailedDownloads() {
+        let failedIds = Set(downloadResults.filter { if case .failed = $0.writeResult { return true }; return false }.map(\.id))
+        let targets = selectedCertificates.filter { failedIds.contains($0.id) }
+        Task { @MainActor in
+            for target in targets {
+                let result = await viewModel.downloadCertificate(target)
+                if let index = downloadResults.firstIndex(where: { $0.id == target.id }) {
+                    switch result {
+                    case .success:
+                        downloadResults[index].writeResult = .saved
+                    case .failure(let message):
+                        downloadResults[index].writeResult = .failed(message)
+                    case .ignored:
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    private func exportDownloadLedger() {
+        LocalResultsExport.saveLedger(
+            filename: "signing-download-results.txt",
+            lines: LocalResultsExport.lines(
+                title: "Signing downloads · local result",
+                scope: "Certificates",
+                when: Date(),
+                rows: downloadResults.map { ($0.outputName, writeOutcomeText($0.writeResult)) }
+            )
+        )
+    }
+
+    private func writeOutcomeText(_ result: WriteStageResult?) -> String {
+        switch result {
+        case .saved: return "Saved locally"
+        case .failed(let message): return "Local save failed — \(message)"
+        case .none: return "Not attempted"
+        }
     }
 
     // MARK: - Toolbar
@@ -104,6 +371,23 @@ struct CertificatesTableView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(ShipyardTheme.title)
                 ShipyardCountPill(text: totalText)
+                if !selection.isEmpty {
+                    Text("\(selection.count) selected")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.accent)
+                    Button("Download") { showBulkDownload = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    Button("Revoke…") {
+                        revokeConfirmation = ""
+                        showBulkRevoke = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("Clear") { selection = [] }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                }
             }
 
             Spacer()
@@ -200,6 +484,17 @@ struct CertificatesTableView: View {
 
     private var headerRow: some View {
         HStack(spacing: 12) {
+            Button {
+                let visible = Set(certificates.map(\.id))
+                selection = selection.isSuperset(of: visible) ? selection.subtracting(visible) : selection.union(visible)
+            } label: {
+                Image(systemName: certificates.allSatisfy { selection.contains($0.id) } && !certificates.isEmpty
+                      ? "checkmark.square.fill" : "square")
+                    .foregroundColor(ShipyardTheme.body)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 28, alignment: .leading)
+            .accessibilityLabel("Select all certificates")
             Text("Name").frame(width: 240, alignment: .leading)
             Text("Type").frame(width: 180, alignment: .leading)
             Text("Serial Number").frame(width: 140, alignment: .leading)
@@ -216,6 +511,19 @@ struct CertificatesTableView: View {
     private func certificateRow(_ certificate: CertificateModel) -> some View {
         let status = certificateStatus(certificate)
         return HStack(spacing: 12) {
+            Button {
+                if selection.contains(certificate.id) {
+                    selection.remove(certificate.id)
+                } else {
+                    selection.insert(certificate.id)
+                }
+            } label: {
+                Image(systemName: selection.contains(certificate.id) ? "checkmark.square.fill" : "square")
+                    .foregroundColor(selection.contains(certificate.id) ? ShipyardTheme.accent : ShipyardTheme.body)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 28, alignment: .leading)
+            .accessibilityLabel("Select \(certificate.displayName ?? certificate.name ?? "certificate")")
             Text(certificate.displayName ?? certificate.name ?? "Unknown certificate")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)

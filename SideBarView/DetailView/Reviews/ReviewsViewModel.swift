@@ -276,14 +276,56 @@ final class ReviewsViewModel: ObservableObject {
 
     /// Rating filter for customer reviews: 0 = All, 1–5 = specific rating.
     @Published var ratingFilter: Int = 0
-    /// State filter: all / replied / unreplied (based on developer reply presence).
-    @Published var stateFilter: AppConfigs.ReviewStateFilter = .all
     /// Local text search across title, body, and reviewer nickname.
     @Published var searchText: String = ""
+    /// Module 11 local filters (C11-H: territory/date/reply-state stay
+    /// local over correctly paginated requests).
+    @Published var territoryFilter: String? = nil
+    @Published var dateFilter: ReviewDateFilter = .all
+    @Published var reviewSort: ReviewSortOption = .newest
+    @Published var replyFilter: ReviewReplyFilter = .all
+    /// Review selected from the cross-app inbox, consumed by ReviewsView
+    /// to open the app detail's Reviews tab on that review.
+    @Published var pendingInboxReviewId: String? = nil
+    /// Last successful reviews sync (action-bar provenance, per app load).
+    @Published private(set) var reviewsLastSync: Date? = nil
+    /// Cached rows retained when a refresh fails (114:14026 error state):
+    /// shown stale with editing disabled until refresh succeeds. Nil when
+    /// no cache exists — then the error shows with Retry and no rows.
+    @Published private(set) var staleReviewsCache: [CustomerReviewModel]? = nil
+    /// A refresh is in flight while cached rows stay visible (114:13832).
+    @Published private(set) var isRefreshingReviews = false
+    /// Review ids with an in-flight POST (C11-S guard).
+    @Published private(set) var sendingResponseIds: Set<String> = []
+    /// Review ids with an in-flight DELETE.
+    @Published private(set) var deletingResponseIds: Set<String> = []
+    /// Review ids with an accepted DELETE awaiting refresh (114:10689).
+    /// No DELETION_PENDING enum exists — this is local operation status.
+    @Published private(set) var deleteAcceptedReviewIds: Set<String> = []
+    /// Last local check time per review (refresh-status provenance).
+    @Published private(set) var responseLastChecked: [String: Date] = [:]
 
-    /// Customer reviews after applying active filters (rating, state, search).
+    /// Customer reviews after applying active filters (all local).
     var filteredReviews: [CustomerReviewModel] {
-        filterReviews(reviewsState.loadedValue ?? [])
+        filterReviews(reviewRows)
+    }
+
+    /// Rows for the list: live state, or the retained stale cache when a
+    /// refresh failed (114:14026). Never mixes the two.
+    var reviewRows: [CustomerReviewModel] {
+        if let loaded = reviewsState.loadedValue {
+            return loaded
+        }
+        if case .error = reviewsState, let stale = staleReviewsCache {
+            return stale
+        }
+        return []
+    }
+
+    /// True when the list currently shows the stale cache (editing and
+    /// reply actions stay disabled until a refresh succeeds).
+    var isShowingStaleReviews: Bool {
+        reviewsState.loadedValue == nil && staleReviewsCache != nil
     }
 
     private func filterReviews(_ reviews: [CustomerReviewModel]) -> [CustomerReviewModel] {
@@ -291,12 +333,25 @@ final class ReviewsViewModel: ObservableObject {
         if ratingFilter > 0 {
             result = result.filter { ($0.rating ?? 0) == ratingFilter }
         }
-        switch stateFilter {
-        case .replied:
-            result = result.filter { $0.response != nil }
-        case .unreplied:
+        if let territory = territoryFilter {
+            result = result.filter { $0.territory == territory }
+        }
+        if let days = dateFilter.days {
+            let cutoff = Date().addingTimeInterval(TimeInterval(-days * 24 * 3600))
+            result = result.filter {
+                guard let raw = $0.createdDate,
+                      let date = Self.reviewDate(raw) else { return false }
+                return date >= cutoff
+            }
+        }
+        switch replyFilter {
+        case .unanswered:
             result = result.filter { $0.response == nil }
-        default:
+        case .pending:
+            result = result.filter { $0.response?.state == "PENDING_PUBLISH" }
+        case .published:
+            result = result.filter { $0.response?.state == "PUBLISHED" }
+        case .all:
             break
         }
         if !searchText.isEmpty {
@@ -307,7 +362,23 @@ final class ReviewsViewModel: ObservableObject {
                 ($0.reviewerNickname ?? "").localizedCaseInsensitiveContains(query)
             }
         }
+        // Local reorder over loaded pages (cursor was issued under the
+        // server's -createdDate; see ReviewSortOption).
+        switch reviewSort {
+        case .newest:
+            result.sort { ($0.createdDate ?? "") > ($1.createdDate ?? "") }
+        case .oldest:
+            result.sort { ($0.createdDate ?? "") < ($1.createdDate ?? "") }
+        case .highestRated:
+            result.sort { ($0.rating ?? 0) > ($1.rating ?? 0) }
+        case .lowestRated:
+            result.sort { ($0.rating ?? 0) < ($1.rating ?? 0) }
+        }
         return result
+    }
+
+    nonisolated static func reviewDate(_ raw: String) -> Date? {
+        ISO8601DateFormatter().date(from: raw)
     }
 
     // MARK: - Loading
@@ -361,6 +432,9 @@ final class ReviewsViewModel: ObservableObject {
             reviewDetailsVersionId = nil
             isPaginatingReviews = false
             isPaginatingSubmissions = false
+            isRefreshingReviews = false
+            staleReviewsCache = nil
+            reviewsLastSync = nil
             createVersionError = nil
             attachBuildError = nil
             releaseSettingsError = nil
@@ -424,6 +498,14 @@ final class ReviewsViewModel: ObservableObject {
         cancelSubmissionGeneration += 1
         reviewsState = .idle
         submissionsState = .idle
+        reviewsLastSync = nil
+        staleReviewsCache = nil
+        isRefreshingReviews = false
+        sendingResponseIds = []
+        deletingResponseIds = []
+        deleteAcceptedReviewIds = []
+        responseLastChecked = [:]
+        pendingInboxReviewId = nil
         appStoreVersionsState = .idle
         eligibleBuildsState = .idle
         candidateBuildsState = .idle
@@ -507,7 +589,7 @@ final class ReviewsViewModel: ObservableObject {
         submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: generation) }
     }
 
-    /// POST /v1/customerReviews/{id}/customerReviewResponses.
+    /// POST /v1/customerReviewResponses (create/overwrite).
     /// Optimistically updates the review's response relationship on
     /// success so the reply appears in the row without a refetch.
     /// Returns whether the reply posted — the row keeps the composer
@@ -531,9 +613,7 @@ final class ReviewsViewModel: ObservableObject {
 
         guard let data = try? encoder.encode(body),
               let request = APIClient.shared.getRequest(
-                api: .post(name: .postCustomerReviewResponse,
-                           body: data,
-                           path: "\(reviewId)/customerReviewResponses"),
+                api: .post(name: .customerReviewResponses, body: data),
                 apiVersion: .v1) else {
             return false
         }
@@ -2109,15 +2189,23 @@ final class ReviewsViewModel: ObservableObject {
         let isPaginating = cursor != nil
         // Ignore duplicate "Load more" taps while a page is in flight.
         if isPaginating, isPaginatingReviews { return }
+        // Stash the rows before .loading replaces the state: a failed
+        // refresh retains them as the marked-stale cache (114:14026).
+        let previousRows = reviewsState.loadedValue
         if isPaginating {
             isPaginatingReviews = true
-        } else {
+        } else if previousRows == nil {
+            // First load: skeletons. A refresh with existing data keeps
+            // cached rows visible instead of replacing them (114:13832).
             reviewsState = .loading
+        } else {
+            isRefreshingReviews = true
         }
         reviewsPaginationFailed = false
         defer {
             if generation == reviewsGeneration {
                 if isPaginating { isPaginatingReviews = false }
+                isRefreshingReviews = false
                 reviewsInFlightAppId = nil
             }
         }
@@ -2158,6 +2246,8 @@ final class ReviewsViewModel: ObservableObject {
             reviewsNextCursor = model.meta.paging.nextCursor
             // Staleness id only on success (see load(app:)).
             reviewsLoadedAppId = appId
+            reviewsLastSync = Date()
+            staleReviewsCache = nil
             reviewsState = merged.isEmpty ? .empty : .loaded(merged)
         } catch {
             guard !Task.isCancelled,
@@ -2167,6 +2257,9 @@ final class ReviewsViewModel: ObservableObject {
             if isPaginating {
                 reviewsPaginationFailed = true
             } else {
+                // Keep the previous rows as the stale cache when they
+                // exist; the error state renders them marked stale.
+                staleReviewsCache = previousRows
                 reviewsState = .error(friendlyMessage(for: error))
             }
         }
@@ -2197,8 +2290,8 @@ final class ReviewsViewModel: ObservableObject {
         }
 
         var queryParams = [
-            "filter[app]": appId,
-            "include": "submittedByActor",
+            "sort": "-createdDate",
+            "include": "response",
             "limit": String(AppConfigs.reviewLimit)
         ]
         if let cursor {
@@ -2288,4 +2381,402 @@ struct ReviewLinkage: Codable {
 struct ReviewLinkageData: Codable {
     var type: String = "customerReviews"
     let id: String
+}
+
+// MARK: - Module 11 · Customer Reviews (C11-H contract)
+
+/// Local date-window filter. Server offers no date parameter — this is
+/// applied locally over correctly paginated requests (C11-H).
+enum ReviewDateFilter: String, CaseIterable {
+    case all = "All dates"
+    case last30 = "Last 30 days"
+    case last90 = "Last 90 days"
+
+    var displayName: String {
+        switch self {
+        case .all: return "Date: All"
+        case .last30: return "Date: Last 30 days"
+        case .last90: return "Date: Last 90 days"
+        }
+    }
+
+    var days: Int? {
+        switch self {
+        case .all: return nil
+        case .last30: return 30
+        case .last90: return 90
+        }
+    }
+}
+
+/// Local sort over loaded pages. The server cursor was issued under
+/// sort=-createdDate, so (like the apps list) this reorders loaded pages
+/// rather than re-querying — never mixed into a cursor request.
+enum ReviewSortOption: String, CaseIterable {
+    case newest = "Newest"
+    case oldest = "Oldest"
+    case highestRated = "Highest rated"
+    case lowestRated = "Lowest rated"
+
+    var displayName: String {
+        switch self {
+        case .newest: return "Sort: Newest ↓"
+        case .oldest: return "Sort: Oldest ↑"
+        case .highestRated: return "Sort: Highest ★"
+        case .lowestRated: return "Sort: Lowest ★"
+        }
+    }
+}
+
+/// Local reply-state filter. Verified absence of a response → unanswered;
+/// PENDING_PUBLISH stays separate from PUBLISHED; an unknown or failed
+/// fetch is never unanswered (C11-H).
+enum ReviewReplyFilter: String, CaseIterable {
+    case all = "All"
+    case unanswered = "Unanswered"
+    case pending = "Pending"
+    case published = "Published"
+
+    var displayName: String {
+        switch self {
+        case .all: return "Reply: All"
+        case .unanswered: return "Reply: Unanswered"
+        case .pending: return "Reply: Pending"
+        case .published: return "Reply: Published"
+        }
+    }
+}
+
+/// Written-review sample statistics. These describe the loaded sample
+/// only — never official App Store all-ratings distributions (C11-H).
+struct ReviewSampleSummary: Equatable {
+    /// Total loaded written reviews in the sample.
+    let total: Int
+    /// Mean rating over the sample (nil when empty).
+    let average: Double?
+    /// Counts per star 1...5.
+    let perStar: [Int: Int]
+}
+
+/// Outcome of POST /v1/customerReviewResponses (create/overwrite).
+enum ReplySendOutcome: Equatable {
+    /// 201 with the returned resource. State is PENDING_PUBLISH or
+    /// PUBLISHED — never automatic storefront success.
+    case sent(state: String?, lastModifiedDate: String?)
+    /// Explicit Apple validation rejection (e.g. empty responseBody).
+    /// Correct the field before resubmitting (C11-E).
+    case validationError(String)
+    /// 403: reads stay permitted; writes disabled; Save Local Draft
+    /// remains useful (C11-R).
+    case forbidden(String)
+    /// Timeout / connection loss: Apple may have accepted the write.
+    /// Reconcile review/response before any retry (114:10569).
+    case connectionLost
+    /// Defensive no-op (a send is already in flight for this review).
+    case ignored
+}
+
+/// Outcome of refreshing one review's response (GET detail).
+enum ResponseRefreshOutcome: Equatable {
+    case updated(state: String?)
+    /// Verified absence on a successful fetch → unanswered.
+    case unanswered
+    /// Failed fetch: unknown, never unanswered.
+    case unknown
+}
+
+/// Outcome of DELETE /v1/customerReviewResponses/{id} (204, no body).
+/// Deletes the developer reply only — never the review or rating.
+enum ReplyDeleteOutcome: Equatable {
+    case deleted
+    case explicitError(String)
+    case forbidden(String)
+    case connectionLost
+    case ignored
+}
+
+/// App-owned reply drafts, keyed by account + app + review (C11-H: drafts
+/// survive credential and app-context switches; closing never cancels an
+/// accepted write).
+enum ReviewDraftStore {
+    private static let storageKey = "reviews.replyDrafts"
+    private struct Draft: Codable {
+        let text: String
+        let saved: Date
+    }
+
+    static func key(account: String?, appId: String, reviewId: String) -> String {
+        "\(account ?? "no-account")/\(appId)/\(reviewId)"
+    }
+
+    private static func all() -> [String: Draft] {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let decoded = try? JSONDecoder().decode([String: Draft].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
+    static func load(account: String?, appId: String, reviewId: String) -> (text: String, saved: Date)? {
+        guard let draft = all()[key(account: account, appId: appId, reviewId: reviewId)] else {
+            return nil
+        }
+        return (draft.text, draft.saved)
+    }
+
+    static func save(_ text: String, account: String?, appId: String, reviewId: String) {
+        var drafts = all()
+        drafts[key(account: account, appId: appId, reviewId: reviewId)] = Draft(text: text, saved: Date())
+        if let data = try? JSONEncoder().encode(drafts) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+
+    static func clear(account: String?, appId: String, reviewId: String) {
+        var drafts = all()
+        drafts.removeValue(forKey: key(account: account, appId: appId, reviewId: reviewId))
+        if let data = try? JSONEncoder().encode(drafts) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+}
+
+extension ReviewsViewModel {
+    // MARK: Module 11 filters (all local over paginated loads)
+
+    /// Territories present in the loaded sample (sorted), for the local
+    /// territory filter. The server filter[territory] values (USA/CAN/GBR/
+    /// DEU/JPN) are a subset of what may appear here.
+    var availableTerritories: [String] {
+        Array(Set((reviewsState.loadedValue ?? []).compactMap(\.territory))).sorted()
+    }
+
+    /// Sample statistics over the loaded written reviews.
+    var reviewSampleSummary: ReviewSampleSummary {
+        let reviews = reviewsState.loadedValue ?? []
+        var perStar: [Int: Int] = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
+        var sum = 0
+        var counted = 0
+        for review in reviews {
+            guard let rating = review.rating, (1...5).contains(rating) else { continue }
+            perStar[rating, default: 0] += 1
+            sum += rating
+            counted += 1
+        }
+        return ReviewSampleSummary(
+            total: reviews.count,
+            average: counted > 0 ? Double(sum) / Double(counted) : nil,
+            perStar: perStar
+        )
+    }
+
+    // MARK: Module 11 loading controls
+
+    /// Cancels an in-flight first load (Cancel Load, 114:13832). Cached
+    /// rows stay visible; with no data the state becomes a retryable
+    /// error instead of a permanent spinner.
+    func cancelReviewsLoad() {
+        reviewsFetchTask?.cancel()
+        reviewsGeneration += 1
+        isPaginatingReviews = false
+        reviewsInFlightAppId = nil
+        if reviewsState.loadedValue == nil {
+            reviewsState = .error("Load cancelled. Retry to fetch reviews.")
+        }
+    }
+
+    // MARK: Module 11 write paths
+
+    /// True while a POST is in flight for this review (C11-S: duplicate
+    /// POST and Delete stay disabled until it resolves).
+    func isSendingResponse(reviewId: String) -> Bool {
+        sendingResponseIds.contains(reviewId)
+    }
+
+    /// POST /v1/customerReviewResponses — create or overwrite the developer
+    /// response. Uses the 201-returned record and state; no PATCH and no
+    /// delete-first (C11-H).
+    func sendResponse(reviewId: String, responseBody: String) async -> ReplySendOutcome {
+        let trimmed = responseBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Client-side field error mirrors C11-E: an empty responseBody is
+        // rejected by Apple validation, so it never reaches the API.
+        guard !trimmed.isEmpty else {
+            return .validationError("Enter a response before submitting. Field: attributes.responseBody.")
+        }
+        guard !sendingResponseIds.contains(reviewId) else { return .ignored }
+        sendingResponseIds.insert(reviewId)
+        defer { sendingResponseIds.remove(reviewId) }
+
+        let body = CustomerReviewResponseRequest(
+            data: CustomerReviewResponseData(
+                attributes: CustomerReviewResponseAttributes(responseBody: trimmed),
+                relationships: CustomerReviewResponseRelationships(
+                    review: ReviewLinkage(data: ReviewLinkageData(id: reviewId))
+                )
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(body),
+              let request = APIClient.shared.getRequest(
+                api: .post(name: .customerReviewResponses, body: data),
+                apiVersion: .v1) else {
+            return .validationError("Couldn't build the submit request.")
+        }
+        do {
+            let responseData = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            let model = try getDecoder().decode(CustomerReviewResponseModel.self, from: responseData)
+            guard !Task.isCancelled else { return .ignored }
+            if case .loaded(var reviews) = reviewsState,
+               let index = reviews.firstIndex(where: { $0.id == reviewId }) {
+                reviews[index].response = model
+                reviewsState = .loaded(reviews)
+            }
+            responseLastChecked[reviewId] = Date()
+            return .sent(state: model.state, lastModifiedDate: model.lastModifiedDate)
+        } catch {
+            reviewsLogger.error("Failed to send reply: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            return Self.classifyReviewWriteError(error)
+        }
+    }
+
+    /// Classifies write failures into the Figma branches: connection loss
+    /// (unconfirmed → reconcile first), 403 (read-only), everything else
+    /// (explicit error → fix the cause before resubmitting).
+    static func classifyReviewWriteError(_ error: Error) -> ReplySendOutcome {
+        if let apiError = error as? APIError, apiError.statusCode == 403 {
+            return .forbidden(apiError.details)
+        }
+        if isReviewConnectivityError(error) {
+            return .connectionLost
+        }
+        if let apiError = error as? APIError {
+            return .validationError(apiError.details)
+        }
+        return .validationError(error.localizedDescription)
+    }
+
+    private static func isReviewConnectivityError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return isReviewConnectivityCode(urlError.code)
+        }
+        let nsError = error as NSError
+        if nsError.domain == (NSURLErrorDomain as String) {
+            return isReviewConnectivityCode(URLError.Code(rawValue: nsError.code))
+        }
+        return false
+    }
+
+    private static func isReviewConnectivityCode(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .notConnectedToInternet, .networkConnectionLost,
+             .dnsLookupFailed, .cannotFindHost, .cannotConnectToHost,
+             .timedOut, .dataNotAllowed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// GET /v1/customerReviews/{id}?include=response — refreshes one
+    /// review's response. A successful fetch with no response is verified
+    /// absence (unanswered); a failed fetch is unknown, never unanswered.
+    func refreshResponse(reviewId: String) async -> ResponseRefreshOutcome {
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .postCustomerReviewResponse,
+                      queryParams: ["include": "response"],
+                      path: reviewId),
+            apiVersion: .v1) else {
+            return .unknown
+        }
+        do {
+            let data = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .unknown }
+            // Single-resource documents decode like the list path (same
+            // pattern as the build follow-up fetch in BuildProcessingMonitor).
+            let review = try getDecoder().decode(CustomerReviewModel.self, from: data)
+            guard !Task.isCancelled else { return .unknown }
+            if case .loaded(var reviews) = reviewsState,
+               let index = reviews.firstIndex(where: { $0.id == reviewId }) {
+                reviews[index].response = review.response
+                reviewsState = .loaded(reviews)
+            }
+            responseLastChecked[reviewId] = Date()
+            if review.response == nil {
+                deleteAcceptedReviewIds.remove(reviewId)
+            }
+            return review.response == nil ? .unanswered : .updated(state: review.response?.state)
+        } catch {
+            reviewsLogger.error("Failed to refresh response: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .unknown }
+            return .unknown
+        }
+    }
+
+    /// DELETE /v1/customerReviewResponses/{id} — removes the developer
+    /// reply only (never the review/rating). 204 carries no body; the row
+    /// keeps its reply until Refresh verifies absence (storefront lag).
+    func deleteResponse(reviewId: String, responseId: String) async -> ReplyDeleteOutcome {
+        guard !deletingResponseIds.contains(reviewId) else { return .ignored }
+        deletingResponseIds.insert(reviewId)
+        defer { deletingResponseIds.remove(reviewId) }
+        guard let request = APIClient.shared.getRequest(
+            api: .delete(name: .customerReviewResponses, path: responseId),
+            apiVersion: .v1) else {
+            return .explicitError("Couldn't build the delete request.")
+        }
+        do {
+            _ = try await APIClient.shared.callAPI(with: request)
+            guard !Task.isCancelled else { return .ignored }
+            // Accepted, refresh pending: do NOT clear the row — verified
+            // absence only comes from a follow-up refresh (114:10689).
+            deleteAcceptedReviewIds.insert(reviewId)
+            return .deleted
+        } catch {
+            reviewsLogger.error("Failed to delete reply: \(error.localizedDescription)")
+            guard !Task.isCancelled else { return .ignored }
+            if let apiError = error as? APIError, apiError.statusCode == 403 {
+                return .forbidden(apiError.details)
+            }
+            if Self.isReviewConnectivityError(error) {
+                return .connectionLost
+            }
+            if let apiError = error as? APIError {
+                return .explicitError(apiError.details)
+            }
+            return .explicitError(error.localizedDescription)
+        }
+    }
+
+    // MARK: Module 11 cross-app page fetch
+
+    /// One page of reviews for any app (cross-app inbox). Same query as
+    /// the per-app fetch (sort=-createdDate, include=response, limit 50):
+    /// cursors stay scoped to the app+query that issued them.
+    struct ReviewListPage {
+        let reviews: [CustomerReviewModel]
+        let nextCursor: String?
+        let total: Int?
+    }
+
+    static func fetchReviewListPage(appId: String, cursor: String? = nil) async throws -> ReviewListPage {
+        var queryParams = [
+            "sort": "-createdDate",
+            "include": "response",
+            "limit": String(AppConfigs.reviewLimit)
+        ]
+        if let cursor {
+            queryParams["cursor"] = cursor
+        }
+        guard let request = APIClient.shared.getRequest(
+            api: .get(name: .getAllApps, queryParams: queryParams, path: "\(appId)/customerReviews"),
+            apiVersion: .v1) else {
+            throw APIError.apiError(error: "No team selected.")
+        }
+        let data = try await APIClient.shared.callAPI(with: request)
+        let model = try getDecoder().decode(CustomerReviewsDocument.self, from: data)
+        return ReviewListPage(reviews: model.data, nextCursor: model.meta.paging.nextCursor, total: model.meta.paging.total)
+    }
 }

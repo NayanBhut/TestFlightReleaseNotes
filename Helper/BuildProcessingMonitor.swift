@@ -104,11 +104,15 @@ final class SystemBuildNotifier: BuildNotificationPosting {
     }
 
     /// nil for non-terminal states — no notification.
+    ///
+    /// VALID copy must never imply TestFlight readiness or App Store /
+    /// production eligibility (M12-H): beta readiness comes from
+    /// BuildBetaDetail, which is checked separately.
     static func content(for build: BuildsModel) -> (title: String, body: String)? {
         let name = displayName(for: build)
         switch build.processingState {
         case "VALID":
-            return ("Build ready for testing", "\(name) finished processing and is ready.")
+            return ("Build processing completed", "\(name) processing is VALID. Check TestFlight readiness, production audience and compliance separately before distribution.")
         case "FAILED":
             // "Check App Store Connect", not "select the build": clicking the
             // notification doesn't navigate anywhere (no didReceive deep-link),
@@ -136,6 +140,42 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
     @Published private(set) var isPolling = false
     @Published private(set) var lastPollDate: Date?
     @Published private(set) var lastError: String?
+    /// HTTP status of the last failed poll, when the failure carried one
+    /// (used for the M12-L rate-limit branch; 429 enters scoped backoff).
+    @Published private(set) var lastStatusCode: Int?
+    /// True when the last failure was a connectivity loss (offline branch
+    /// M12-O), as opposed to an HTTP/application error.
+    @Published private(set) var lastErrorWasConnectivity = false
+    /// Wall-clock time of the last poll attempt (success or failure).
+    /// Drives the backoff "Retry locked until" date.
+    @Published private(set) var lastAttemptDate: Date?
+
+    /// Scoped connection state for the monitoring branches (M12-O/M12-L).
+    /// A plain error (401/403/…) is neither offline nor rate-limited.
+    enum ConnectionState: Equatable {
+        case online
+        case offline
+        case rateLimited
+    }
+
+    var connectionState: ConnectionState {
+        if lastStatusCode == 429 { return .rateLimited }
+        if lastError != nil, lastErrorWasConnectivity { return .offline }
+        return .online
+    }
+
+    /// Earliest date at which a retry is policy-eligible after a failed
+    /// poll. Nil when no backoff applies.
+    var backoffAvailableDate: Date? {
+        guard lastError != nil, let attempt = lastAttemptDate else { return nil }
+        return attempt.addingTimeInterval(errorPollInterval)
+    }
+
+    /// True while the local backoff policy forbids another request.
+    var isRetryLocked: Bool {
+        guard let available = backoffAvailableDate else { return false }
+        return available > Date()
+    }
 
     var processingCount: Int { processingBuilds.count }
 
@@ -163,6 +203,10 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
     private var lastTeamKey: String?
     private let notifier: BuildNotificationPosting
     private var teamsCancellable: AnyCancellable?
+    /// App-owned polling + notification preferences (Module 12). The loop
+    /// interval, the enabled gate and per-outcome notification toggles all
+    /// read from here.
+    private let prefs = MonitoringPreferences.shared
 
     init(pollInterval: TimeInterval = AppConfigs.buildStatusPollInterval,
          pollLimit: Int = AppConfigs.buildStatusPollLimit,
@@ -195,11 +239,16 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
         guard pollTask == nil else { return }
         pollTask = Task { [self] in
             while !Task.isCancelled {
-                await refresh()
+                // App-owned policy (M12-H): polling runs only while enabled.
+                // Disabled polling skips the refresh but keeps the loop so
+                // re-enabling resumes without a restart.
+                if prefs.pollingEnabled {
+                    await refresh()
+                }
                 // Sleep AFTER the refresh: fresh login / upload fires the
                 // pollNow path, while a failed poll backs off instead of
                 // hammering at full cadence.
-                let interval = lastError == nil ? pollInterval : errorPollInterval
+                let interval = lastError == nil ? prefs.activeBuildCadence : errorPollInterval
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
@@ -240,7 +289,10 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             followUpMisses = [:]
             lastTeamKey = nil
             lastError = nil
+            lastStatusCode = nil
+            lastErrorWasConnectivity = false
             lastPollDate = nil
+            lastAttemptDate = nil
             return
         }
 
@@ -252,11 +304,14 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             notifiedBuildIds = []
             followUpMisses = [:]
             lastError = nil
+            lastStatusCode = nil
+            lastErrorWasConnectivity = false
         }
 
         guard !Task.isCancelled else { return }
         isPolling = true
         defer { isPolling = false }
+        lastAttemptDate = Date()
         do {
             let builds = try await fetchProcessingBuilds()
             guard !Task.isCancelled else { return }
@@ -273,6 +328,8 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             }
             lastPollDate = Date()
             lastError = nil
+            lastStatusCode = nil
+            lastErrorWasConnectivity = false
             // Follow-ups resolve before committing: ids whose follow-up fails
             // (or that aren't terminal yet) stay known so the next poll
             // retries instead of dropping the transition on the floor.
@@ -288,7 +345,11 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
                         stillKnown.insert(id)
                         continue
                     }
-                    notifier.postTransitionNotification(build: terminal)
+                    // Per-outcome desktop toggle (Monitoring preferences):
+                    // in-app alert-center rows are unaffected.
+                    if prefs.allowsNotification(for: terminal.processingState) {
+                        notifier.postTransitionNotification(build: terminal)
+                    }
                     if !notifiedBuildIds.contains(id) {
                         notifiedBuildIds.append(id)
                     }
@@ -320,6 +381,34 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
             guard !Task.isCancelled else { return }
             buildMonitorLogger.error("Build status poll failed: \(error.localizedDescription)")
             lastError = (error as? APIError)?.details ?? error.localizedDescription
+            lastStatusCode = (error as? APIError)?.statusCode
+            lastErrorWasConnectivity = Self.isConnectivityError(error)
+        }
+    }
+
+    /// Offline (M12-O) means the request never reached Apple: DNS / host /
+    /// connection-loss URLErrors, including their NSError bridges. HTTP
+    /// failures (401/403/429/5xx) and timeouts are not offline — they keep
+    /// their own branches and guards.
+    private static func isConnectivityError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return isConnectivityCode(urlError.code)
+        }
+        let nsError = error as NSError
+        if nsError.domain == (NSURLErrorDomain as String) {
+            return isConnectivityCode(URLError.Code(rawValue: nsError.code))
+        }
+        return false
+    }
+
+    private static func isConnectivityCode(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .notConnectedToInternet, .networkConnectionLost,
+             .dnsLookupFailed, .cannotFindHost, .cannotConnectToHost,
+             .dataNotAllowed:
+            return true
+        default:
+            return false
         }
     }
 
@@ -371,43 +460,71 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
 
 // MARK: - Menu bar UI
 
-/// Content of the MenuBarExtra scene: processing count, per-build rows,
-/// last-checked state, manual refresh, and Quit (menu extras get no
-/// automatic Quit item).
+/// Content of the MenuBarExtra scene (Figma 3-4502 menu-bar-monitor):
+/// fetched-snapshot badge, per-build rows with relative upload age, local
+/// check time, manual refresh and Quit (menu extras get no automatic Quit
+/// item). Dark mode comes from system colors.
 struct MenuBarBuildsView: View {
     @ObservedObject var monitor: BuildProcessingMonitor
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        HStack {
+            Text("PROCESSING BUILDS")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            // "Fetched snapshots": only claimed when a poll actually
+            // succeeded — a stale cache never presents as fresh data.
+            if monitor.lastPollDate != nil {
+                Text("Fetched snapshots")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.12))
+                    .cornerRadius(6)
+            }
+        }
+        Divider()
         if monitor.processingBuilds.isEmpty {
             Text("No builds processing")
                 .font(.appBody)
                 .foregroundStyle(.secondary)
         } else {
             ForEach(monitor.processingBuilds) { build in
-                Text(menuLine(for: build))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(menuTitle(for: build))
+                    Text(menuSubtitle(for: build))
+                        .font(.appCaption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         Divider()
-        if let lastPoll = monitor.lastPollDate {
-            Text("Last checked \(lastPoll, style: .time)")
-                .font(.appCaption)
-                .foregroundStyle(.secondary)
+        HStack {
+            Button("Check Now") {
+                Task { await monitor.pollNow() }
+            }
+            .disabled(monitor.isPolling)
+            if let lastPoll = monitor.lastPollDate {
+                Text("Local check: \(lastPoll, style: .time)")
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Open Shipyard") {
+                // MenuBarExtras can be clicked with only the menu extra
+                // visible — bring up the main window so the notification
+                // context has a home.
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "main")
+            }
         }
         if let error = monitor.lastError {
             Text(error)
                 .font(.appCaption)
                 .foregroundStyle(.red)
-        }
-        Button("Check now") {
-            Task { await monitor.pollNow() }
-        }
-        .disabled(monitor.isPolling)
-        Button("Open App") {
-            // MenuBarExtras can be clicked with only the menu extra visible —
-            // bring up the main window so the notification context has a home.
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: "main")
         }
         Divider()
         Button("Quit") {
@@ -416,12 +533,21 @@ struct MenuBarBuildsView: View {
         .keyboardShortcut("q")
     }
 
-    private func menuLine(for build: ProcessingBuildInfo) -> String {
-        var line = build.displayName
+    private func menuTitle(for build: ProcessingBuildInfo) -> String {
+        let app = build.appName.isEmpty ? "Unknown App" : build.appName
+        let version = build.marketingVersion.map { "\($0) " } ?? ""
+        return "\(app) — \(version)(\(build.buildNumber))"
+    }
+
+    private func menuSubtitle(for build: ProcessingBuildInfo) -> String {
         if let uploaded = build.uploadedDate,
            let relative = BuildDisplayHelper.relativeUploadedTime(uploaded) {
-            line += " — uploaded \(relative)"
+            return "Processing… Uploaded \(relative)"
         }
-        return line
+        return "Processing…"
+    }
+
+    private func menuLine(for build: ProcessingBuildInfo) -> String {
+        "\(menuTitle(for: build)) — \(menuSubtitle(for: build))"
     }
 }

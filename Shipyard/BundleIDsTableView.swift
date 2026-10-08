@@ -16,6 +16,7 @@
 //  "Bundle ID detail (Module 04)" section in ResourcesViewModel.
 //
 
+import AppKit
 import SwiftUI
 
 struct BundleIDsTableView: View {
@@ -52,7 +53,21 @@ struct BundleIDsTableView: View {
     var onOpenApp: ((String) -> Void)?
     var onOpenProfile: ((String) -> Void)?
 
+    /// Module 12 copy scope (Figma 114-11227): identifier strings of
+    /// exactly the checked rows — never JSON:API resource IDs.
+    @State private var selection: Set<String> = []
+    @State private var showCopySheet = false
+    @State private var copyFilteredList = false
+    @State private var clipboardFormat: BundleIdentifierClipboardFormat = .onePerLine
+
     private var bundleIds: [BundleIdModel] { viewModel.filteredBundleIds }
+
+    private var selectedIdentifiers: [String] {
+        bundleIds
+            .filter { selection.contains($0.id) }
+            .compactMap { $0.identifier?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
 
     /// Live row for the open detail, or nil once it is deleted.
     private var detailModel: BundleIdModel? {
@@ -109,6 +124,28 @@ struct BundleIDsTableView: View {
         .sheet(isPresented: deleteSheetPresented) {
             deleteSheet
         }
+        .sheet(isPresented: $showCopySheet) {
+            CopyBundleIdentifiersSheet(
+                selectedIdentifiers: selectedIdentifiers,
+                filteredCount: bundleIds.compactMap(\.identifier).count,
+                copyFilteredList: $copyFilteredList,
+                clipboardFormat: $clipboardFormat,
+                onCancel: { showCopySheet = false },
+                onCopy: {
+                    let strings = copyFilteredList
+                        ? bundleIds.compactMap(\.identifier)
+                        : selectedIdentifiers
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(clipboardFormat.render(strings), forType: .string)
+                    showCopySheet = false
+                    toastCenter.show(
+                        "Copied \(strings.count) identifier\(strings.count == 1 ? "" : "s")",
+                        detail: "Bundle-identifier strings — not resource IDs",
+                        variant: .success
+                    )
+                }
+            )
+        }
     }
 
     private var deleteSheetPresented: Binding<Bool> {
@@ -164,6 +201,20 @@ struct BundleIDsTableView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(ShipyardTheme.title)
                 ShipyardCountPill(text: totalText)
+                if !selection.isEmpty {
+                    Text("\(selection.count) selected")
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.accent)
+                    Button("Copy…") {
+                        copyFilteredList = false
+                        showCopySheet = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("Clear") { selection = [] }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                }
             }
 
             Spacer()
@@ -378,6 +429,17 @@ struct BundleIDsTableView: View {
 
     private var headerRow: some View {
         HStack(spacing: 12) {
+            Button {
+                let visible = Set(bundleIds.map(\.id))
+                selection = selection.isSuperset(of: visible) ? selection.subtracting(visible) : selection.union(visible)
+            } label: {
+                Image(systemName: bundleIds.allSatisfy { selection.contains($0.id) } && !bundleIds.isEmpty
+                      ? "checkmark.square.fill" : "square")
+                    .foregroundColor(ShipyardTheme.body)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 28, alignment: .leading)
+            .accessibilityLabel("Select all bundle IDs")
             Text("Name").frame(width: 240, alignment: .leading)
             Text("Identifier").frame(width: 280, alignment: .leading)
             Text("Platform").frame(width: 120, alignment: .leading)
@@ -392,6 +454,19 @@ struct BundleIDsTableView: View {
 
     private func bundleRow(_ bundleId: BundleIdModel) -> some View {
         HStack(spacing: 12) {
+            Button {
+                if selection.contains(bundleId.id) {
+                    selection.remove(bundleId.id)
+                } else {
+                    selection.insert(bundleId.id)
+                }
+            } label: {
+                Image(systemName: selection.contains(bundleId.id) ? "checkmark.square.fill" : "square")
+                    .foregroundColor(selection.contains(bundleId.id) ? ShipyardTheme.accent : ShipyardTheme.body)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 28, alignment: .leading)
+            .accessibilityLabel("Select \(bundleId.name ?? bundleId.identifier ?? "bundle ID")")
             Text(bundleId.name ?? "Unknown bundle ID")
                 .font(.system(size: 13))
                 .foregroundColor(ShipyardTheme.title)

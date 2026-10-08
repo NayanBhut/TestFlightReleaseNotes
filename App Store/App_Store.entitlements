@@ -8,7 +8,7 @@
 	     Without this, sandboxed keychain access is unreliable. -->
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)com.demos.App-Store</string>
+		<string>$(AppIdentifierPrefix)com.sid.shipyardconnect</string>
 	</array>
 </dict>
 </plist>

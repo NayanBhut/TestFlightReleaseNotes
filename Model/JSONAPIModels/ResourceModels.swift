@@ -139,6 +139,13 @@ struct ProfileModel: Equatable, Identifiable {
     /// Bundle ID — hydrated only with include=bundleId (profiles list
     /// and detail fetches use it for the Bundle ID column/inspector).
     @ResourceRelationship var bundleId: BundleIdModel?
+
+    var provisioningFileExtension: String {
+        if platform == "MAC_OS" || profileType?.hasPrefix("MAC_") == true {
+            return "provisionprofile"
+        }
+        return "mobileprovision"
+    }
 }
 
 /// List/detail status. The API only reports ACTIVE/INVALID — "Expired"
@@ -473,9 +480,10 @@ struct DeviceCSVImportResult: Equatable, Identifiable {
     var id: String { "import-\(registered)-\(failures.count)" }
 }
 
-/// Certificate types (spec enum CertificateType, v4.4.1) for the create
-/// form's picker. A curated UI list would drift silently when Apple adds
-/// types, so this mirrors the full enum.
+/// Certificate types returned by the App Store Connect API. The enum mirrors
+/// Apple's full resource type list so existing certificates always decode,
+/// while `creatableCases` excludes Developer ID certificates because Apple
+/// only creates those through the Developer website or Xcode.
 enum CertificateTypeOption: String, CaseIterable {
     case APPLE_PAY
     case APPLE_PAY_MERCHANT_IDENTITY
@@ -495,6 +503,14 @@ enum CertificateTypeOption: String, CaseIterable {
     case MAC_APP_DEVELOPMENT
     case PASS_TYPE_ID
     case PASS_TYPE_ID_WITH_NFC
+
+    static var creatableCases: [Self] {
+        allCases.filter(\.canCreateViaAPI)
+    }
+
+    var canCreateViaAPI: Bool {
+        !rawValue.hasPrefix("DEVELOPER_ID_")
+    }
 
     /// SNAKE_CASE → title case for the picker (e.g. IOS_DEVELOPMENT →
     /// "Ios Development"). Derived, so new enum values render sanely

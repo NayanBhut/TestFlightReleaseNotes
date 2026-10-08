@@ -23,14 +23,16 @@ struct ShipyardShell: View {
     @StateObject private var toastCenter = ShipyardToastCenter()
     @ObservedObject private var credentialStorage = CredentialStorage.shared
 
-    @State private var section: ShipyardSection = .apps
+    /// Launch section honors the General settings default (Figma 3-4361).
+    @State private var section: ShipyardSection = ShipyardSection(
+        rawValue: UserDefaults.standard.string(forKey: UserDefaultsKeys.defaultStartupView) ?? "apps"
+    ) ?? .apps
     /// Per-app area (Figma sub-nav). Set by app tap; Back clears it.
     @State private var detailApp: AppsData?
     @State private var detailTab: AppDetailView.AppTab = .builds
     /// Full-screen build detail (Figma build-detail screen). Set by Manage;
     /// Back clears it to return to the builds table.
     @State private var detailBuild: BuildsModel?
-    @State private var reviewApp: AppsData?
     @State private var activeTeamKey: String?
 
     var body: some View {
@@ -80,6 +82,13 @@ struct ShipyardShell: View {
             guard activeTeamKey != newKey else { return }
             activeTeamKey = newKey
             refreshForActiveTeam(resetNavigation: true)
+        }
+        .onChange(of: credentialStorage.selectedTeam?.access) { _, _ in
+            guard isSectionVisible(section) else {
+                clearDetail()
+                section = .apps
+                return
+            }
         }
         // App tap lands on the builds list (Figma builds-list): auto-select
         // the newest version once versions arrive. Guarded by nil so user
@@ -135,7 +144,20 @@ struct ShipyardShell: View {
                     onBack: { section = .apps }
                 )
             case .monitoring:
-                MonitoringView(monitor: monitor)
+                MonitoringView(
+                    monitor: monitor,
+                    resourcesVM: resourcesVM,
+                    onOpenBuilds: { section = .builds },
+                    onOpenApps: { section = .apps },
+                    onOpenCertificate: { query in
+                        resourcesVM.searchTexts[.certificates] = query
+                        section = .certificates
+                    },
+                    onOpenProfile: { query in
+                        resourcesVM.searchTexts[.profiles] = query
+                        section = .profiles
+                    }
+                )
             case .devices:
                 DevicesView(
                     viewModel: resourcesVM,
@@ -187,13 +209,36 @@ struct ShipyardShell: View {
             case .users:
                 UsersTableView(viewModel: resourcesVM, apps: loadedApps)
             case .reviews:
-                ReviewsSectionView(reviewsVM: reviewsVM, apps: loadedApps, selectedApp: $reviewApp)
+                ReviewsInboxView(
+                    apps: loadedApps,
+                    onOpenReview: { app, reviewId in
+                        // Jump into the app's detail Reviews tab on that
+                        // review (114:10235 "Open Selected Review").
+                        sidebarVM.setSelectedAppAndGetVersions(app: app)
+                        detailTab = .reviews
+                        reviewsVM.pendingInboxReviewId = reviewId
+                        detailApp = app
+                    }
+                )
             }
         }
     }
 
     private var loadedApps: [AppsData] {
         sidebarVM.appsState.loadedValue ?? []
+    }
+
+    private func isSectionVisible(_ section: ShipyardSection) -> Bool {
+        guard let credential = credentialStorage.selectedTeam else { return true }
+        switch section {
+        case .apps: return true
+        case .builds: return credential.shows(.builds)
+        case .monitoring: return credential.shows(.monitoring)
+        case .devices, .certificates, .identifiers, .bundleIDs, .profiles:
+            return credential.shows(.provisioningResources)
+        case .users: return credential.shows(.users)
+        case .reviews: return credential.shows(.reviews)
+        }
     }
 
     /// Switches the active team: the keychain write alone refreshes
@@ -242,56 +287,22 @@ struct ShipyardShell: View {
     private func clearDetail() {
         detailApp = nil
         detailBuild = nil
-        reviewApp = nil
     }
 }
 
-/// Reviews needs an app context (Figma shows per-app "Orbit Reviews"):
-/// app picker over the existing ReviewsView, or a fixed app inside the
-/// app detail (picker hidden, loads directly). Internal so AppDetailView
-/// reuses it.
+/// Reviews are app-scoped, so the screen lives only inside App Detail.
 struct ReviewsSectionView: View {
     @ObservedObject var reviewsVM: ReviewsViewModel
-    var apps: [AppsData]
-    @Binding var selectedApp: AppsData?
-    var fixedApp: AppsData? = nil
+    var app: AppsData
 
     var body: some View {
-        VStack(spacing: 0) {
-            if fixedApp == nil {
-                HStack(spacing: 12) {
-                    Text("\(selectedApp?.name ?? "Reviews")")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(ShipyardTheme.title)
-                    Menu {
-                        ForEach(apps, id: \.id) { app in
-                            Button(app.name ?? "Unknown App") {
-                                selectedApp = app
-                                reviewsVM.load(app: app)
-                            }
-                        }
-                    } label: {
-                        ShipyardMenuLabel(text: selectedApp?.name ?? "Select App")
-                    }
-                    .menuStyle(.borderlessButton)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 44)
-                .background(LaunchTheme.page)
-                Divider()
+        ReviewsView(reviewsViewModel: reviewsVM, selectedApp: app)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                reviewsVM.load(app: app)
             }
-            ReviewsView(reviewsViewModel: reviewsVM, selectedApp: fixedApp ?? selectedApp)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .onAppear {
-            if let fixedApp {
-                selectedApp = fixedApp
-                reviewsVM.load(app: fixedApp)
-            } else if selectedApp == nil, let first = apps.first {
-                selectedApp = first
-                reviewsVM.load(app: first)
+            .onChange(of: app.id) { _, _ in
+                reviewsVM.load(app: app)
             }
-        }
     }
 }

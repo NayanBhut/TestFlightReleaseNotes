@@ -76,13 +76,13 @@ struct ReleasePrepareView: View {
             whatsNewField
 
             Text("Build *")
-                .font(.system(size: 13))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
                 .padding(.top, 8)
             buildSelectorCard
 
             Text("Version release")
-                .font(.system(size: 13))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
                 .padding(.top, 8)
             releaseTypeOptions
@@ -328,7 +328,7 @@ struct ReleasePrepareView: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Phased release")
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(ShipyardTheme.title)
                 Text(phasedReleaseSubtitle)
                     .font(.system(size: 11))
@@ -390,7 +390,7 @@ struct ReleasePrepareView: View {
     private var reviewInformationColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("App Review information")
-                .font(.system(size: 13))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
             reviewField(label: "First name *", text: $draftFirstName, prompt: "Sarah")
             reviewField(label: "Last name *", text: $draftLastName, prompt: "Connor")
@@ -502,7 +502,7 @@ struct ReleasePrepareView: View {
 
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundColor(ShipyardTheme.title)
     }
 

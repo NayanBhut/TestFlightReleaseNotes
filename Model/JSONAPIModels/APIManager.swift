@@ -35,8 +35,16 @@ final class APIClient: @unchecked Sendable {
     /// pulled near the end of its life can't expire server-side mid-request.
     private let jwtCacheLifetime: TimeInterval = JWTLimits.expiryInterval - 120
 
-    private init(session: URLSession = .shared) {
-        self.session = session
+    private init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+            return
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        self.session = URLSession(configuration: configuration)
     }
 
     /// Cache key includes a stable hash of the private key so re-adding a
@@ -129,17 +137,11 @@ final class APIClient: @unchecked Sendable {
 
             #if DEBUG
             apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
-            apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
-            // Bodies and queries carry PII (tester emails/names): emails
-            // stay redacted, but bodies log in full (see sanitizedBody).
-            if let url = request.url, let query = url.query {
-                apiLogger.debug("[API] Query: \(Self.redactingPII(in: query))")
-            }
             if let body = request.httpBody {
-                apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body))")
+                apiLogger.debug("[API] Request body: \(body.count) bytes")
             }
             if let data = data {
-                apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data))")
+                apiLogger.debug("[API] Response body: \(data.count) bytes")
             }
             #endif
             
@@ -158,13 +160,9 @@ final class APIClient: @unchecked Sendable {
         return task
     }
     
-    /// DEBUG-only API logging. Release builds emit nothing that can
-    /// carry credentials or payloads: every request/response/curl line
-    /// below is compiled out via #if DEBUG. In DEBUG, emails (PII) and
-    /// the Bearer token are always redacted, but bodies log in full (no
-    /// truncation) so failing writes can be debugged from the console.
-    /// Use the [API][CURL] line to reproduce any request (fill in a fresh
-    /// token — tokens are deliberately never printed).
+    /// Redacts PII from diagnostic commands used by focused unit tests.
+    /// Runtime diagnostics intentionally log only methods, paths, status
+    /// codes, and byte counts so API payloads never enter unified logging.
     private static let piiRedactionRegex = try? NSRegularExpression(
         pattern: #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
 
@@ -175,26 +173,8 @@ final class APIClient: @unchecked Sendable {
             in: text, options: [], range: range, withTemplate: "[redacted]")
     }
 
-    private static func sanitizedBody(_ data: Data) -> String {
-        // Slice BEFORE String conversion so multi-MB payloads never
-        // allocate a full string just to be truncated; PII regex then
-        // runs over at most maxLogBytes.
-        let isTruncated = data.count > maxLogBytes
-        let slice = isTruncated ? data.prefix(maxLogBytes) : data[...]
-        guard let text = String(data: slice, encoding: .utf8) else {
-            return "<\(data.count) bytes, non-UTF-8>"
-        }
-        return redactingPII(in: text) + (isTruncated ? "…(truncated, \(data.count) bytes total)" : "")
-    }
-
-    /// Generous cap (512 KB) — every realistic request/response logs in
-    /// full for debugging; only genuinely huge payloads truncate.
-    private static let maxLogBytes = 512 * 1024
-
-    /// Copy-pasteable curl for the Xcode console (DEBUG only at call
-    /// sites). Single-quoted throughout; embedded quotes are escaped.
-    /// The Bearer token and emails in URLs/bodies are always redacted —
-    /// fill in a fresh token.
+    /// Builds a redacted curl command for unit tests and local diagnostics.
+    /// Runtime code never writes the command to unified logging.
     static func curlCommand(for request: URLRequest) -> String {
         func shellQuoted(_ value: String) -> String {
             "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -233,9 +213,8 @@ final class APIClient: @unchecked Sendable {
     func callAPI(with request: URLRequest) async throws -> Data {
         #if DEBUG
         apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
-        apiLogger.debug("[API][CURL] \(Self.curlCommand(for: request), privacy: .private)")
         if let body = request.httpBody, !body.isEmpty {
-            apiLogger.debug("[API] Request body (\(body.count) bytes): \(Self.sanitizedBody(body), privacy: .private)")
+            apiLogger.debug("[API] Request body: \(body.count) bytes")
         }
         #endif
         do {
@@ -244,7 +223,7 @@ final class APIClient: @unchecked Sendable {
                 throw APIError.requestFailed
             }
             #if DEBUG
-            apiLogger.debug("[API] Response body (\(data.count) bytes): \(Self.sanitizedBody(data), privacy: .private)")
+            apiLogger.debug("[API] Response body: \(data.count) bytes")
             #endif
             guard (200..<300).contains(httpResponse.statusCode) else {
                 apiLogger.error("[API] \(request.httpMethod ?? "GET") \(httpResponse.statusCode) \(request.url?.path ?? "")")
@@ -265,6 +244,9 @@ final class APIClient: @unchecked Sendable {
     /// signed URLs). Auth comes from the operation's own headers, not the
     /// JWT — no Authorization header is attached here.
     func upload(to url: URL, method: String, headers: [String: String], body: Data) async throws {
+        guard url.scheme?.lowercased() == "https" else {
+            throw APIError.apiError(error: "Upload rejected because the server URL was not secure")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = method
         for (field, value) in headers {
@@ -316,7 +298,7 @@ final class APIClient: @unchecked Sendable {
         guard let team = CredentialStorage.shared.selectedTeam else { return nil }
         guard let token = try? signingToken(for: team) else {
             // Distinguish 'bad private key' from 'no team selected' in logs.
-            apiLogger.error("JWT signing failed — check the stored private key for team '\(team.key)'")
+            apiLogger.error("JWT signing failed — check the stored private key for team '\(team.key, privacy: .private)'")
             return nil
         }
         if let url = getURL(api: api, apiVersion: apiVersion) {
@@ -366,36 +348,6 @@ final class APIClient: @unchecked Sendable {
     }
 }
 
-extension Dictionary {
-    var json: String {
-        let invalidJson = "Not a valid JSON"
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: self, options: .prettyPrinted)
-            return String(bytes: jsonData, encoding: String.Encoding.utf8) ?? invalidJson
-        } catch {
-            return invalidJson
-        }
-    }
-
-    func printJson() {
-        #if DEBUG
-        print("======= API Body Params:======= \n\(json)\n\n")
-        #endif
-    }
-
-    func printJsonResponse() {
-        #if DEBUG
-        print("======= API Response:======= \n\(json)\n=====================\n\n")
-        #endif
-    }
-
-    func printHeader() {
-        #if DEBUG
-        print("======= API Header:======= \n\(json)\n")
-        #endif
-    }
-}
-
 extension Data {
     func getJsonValue() -> [String: AnyObject]? {
         do {
@@ -407,7 +359,7 @@ extension Data {
             }
         } catch {
             #if DEBUG
-            print("❌ \(String(data: self, encoding: .utf8) ?? error.localizedDescription)")
+            apiLogger.error("Unable to decode JSON response (\(self.count) bytes): \(error.localizedDescription, privacy: .public)")
             #endif
         }
         return nil
@@ -520,10 +472,14 @@ enum APIName: String {
     // relationship doesn't exist on apps (server 400s it).
     case getAppEncryptionDeclarations = "/appEncryptionDeclarations"
     // MARK: - Write operations
-    // POST /v1/customerReviews/{id}/customerReviewResponses — reply to a review.
-    // C3: review replies (POST /v1/customerReviews/{id}/customerReviewResponses).
-    // Not under /apps/{id}/ — it's a top-level subpath of /customerReviews.
+    // Customer review replies (Module 11, verified against Apple's OpenAPI
+    // spec — the create route is the top-level collection, not a nested
+    // /v1/customerReviews/{id}/customerReviewResponses subpath).
+    // POST /v1/customerReviewResponses — create/overwrite the developer
+    // response (attributes.responseBody + relationships.review; 201 returns
+    // the response resource with state PENDING_PUBLISH/PUBLISHED).
     case postCustomerReviewResponse = "/customerReviews"
+    case customerReviewResponses = "/customerReviewResponses"
 
     // C2: team-scoped resources (top-level collections). Verb-neutral names:
     // the enum is a URL prefix, not a GET — the verb comes from APIMethod

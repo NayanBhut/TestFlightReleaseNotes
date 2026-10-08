@@ -286,7 +286,7 @@ struct CreateCertificateForm: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(ShipyardTheme.body)
                     Menu {
-                        ForEach(CertificateTypeOption.allCases, id: \.self) { option in
+                        ForEach(CertificateTypeOption.creatableCases, id: \.self) { option in
                             Button(option.displayName) {
                                 let oldRelationship = certificateType.requiredCreateRelationship
                                 certificateType = option
@@ -321,6 +321,11 @@ struct CreateCertificateForm: View {
                     .menuStyle(.borderlessButton)
                     .disabled(isSaving)
                     .accessibilityLabel("Select certificate type")
+
+                    Link("Developer ID certificates must be created on the Apple Developer website or in Xcode.",
+                         destination: URL(string: "https://developer.apple.com/help/account/certificates/create-developer-id-certificates/")!)
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.accent)
                 }
 
                 if let relationship = certificateType.requiredCreateRelationship {

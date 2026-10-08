@@ -22,6 +22,7 @@ struct AppDetailView: View {
 
     @Binding var tab: AppTab
     @StateObject private var releaseSection = ReleaseSectionState()
+    @ObservedObject private var credentialStorage = CredentialStorage.shared
 
     enum AppTab: String, CaseIterable {
         case builds = "Builds"
@@ -30,28 +31,48 @@ struct AppDetailView: View {
         case release = "App Store Versions"
     }
 
+    private var visibleTabs: [AppTab] {
+        guard let credential = credentialStorage.selectedTeam else { return AppTab.allCases }
+        return AppTab.allCases.filter { item in
+            switch item {
+            case .builds: return credential.shows(.builds)
+            case .appInfo: return credential.shows(.appInfo)
+            case .reviews: return credential.shows(.reviews)
+            case .release: return credential.shows(.appStoreVersions)
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider()
             subNavigation
-            switch tab {
-            case .builds:
-                BuildsTableView(sidebarVM: sidebarVM, detailVM: detailVM, onManage: onManage, onBack: onBack)
-            case .appInfo:
-                ShipyardAppInfoView(detailVM: detailVM, reviewsVM: reviewsVM, app: app)
-            case .reviews:
-                ReviewsSectionView(reviewsVM: reviewsVM, apps: [], selectedApp: .constant(app), fixedApp: app)
-            case .release:
-                ReleaseTabView(app: app, detailVM: detailVM, reviewsVM: reviewsVM, section: releaseSection) {
-                    tab = .appInfo
-                } onOpenBuilds: {
-                    tab = .builds
+            if visibleTabs.contains(tab) {
+                switch tab {
+                case .builds:
+                    BuildsTableView(sidebarVM: sidebarVM, detailVM: detailVM, onManage: onManage, onBack: onBack)
+                case .appInfo:
+                    ShipyardAppInfoView(detailVM: detailVM, reviewsVM: reviewsVM, app: app)
+                case .reviews:
+                    ReviewsSectionView(reviewsVM: reviewsVM, app: app)
+                case .release:
+                    ReleaseTabView(app: app, detailVM: detailVM, reviewsVM: reviewsVM, section: releaseSection) {
+                        tab = .appInfo
+                    } onOpenBuilds: {
+                        tab = .builds
+                    }
                 }
+            } else {
+                accessUnavailable
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ShipyardTheme.tableBackground)
+        .onAppear(perform: selectFirstVisibleTab)
+        .onChange(of: credentialStorage.selectedTeam?.access) { _, _ in
+            selectFirstVisibleTab()
+        }
     }
 
     private var toolbar: some View {
@@ -113,7 +134,7 @@ struct AppDetailView: View {
 
     private var subNavigation: some View {
         HStack(spacing: 16) {
-            ForEach(AppTab.allCases, id: \.self) { item in
+            ForEach(visibleTabs, id: \.self) { item in
                 Button {
                     tab = item
                 } label: {
@@ -141,5 +162,25 @@ struct AppDetailView: View {
             ShipyardTheme.rowDivider.frame(height: 1),
             alignment: .bottom
         )
+    }
+
+    private var accessUnavailable: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "lock")
+                .font(.system(size: 24))
+                .foregroundColor(ShipyardTheme.body)
+            Text("No App Features Configured")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(ShipyardTheme.title)
+            Text("Update this team's declared key role in Settings, or use an API key with app access.")
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func selectFirstVisibleTab() {
+        guard !visibleTabs.contains(tab), let first = visibleTabs.first else { return }
+        tab = first
     }
 }

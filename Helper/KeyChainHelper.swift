@@ -12,11 +12,94 @@ import OSLog
 
 private let keychainLogger = Logger(subsystem: "com.appstore.release-notes", category: "Keychain")
 
+enum AppStoreConnectKeyKind: String, Codable, CaseIterable, Identifiable {
+    case team
+    case individual
+
+    var id: String { rawValue }
+    var displayName: String { self == .team ? "Team Key" : "Individual Key" }
+}
+
+enum AppStoreConnectKeyRole: String, Codable, CaseIterable, Identifiable {
+    case admin
+    case appManager
+    case developer
+    case marketing
+    case customerSupport
+    case finance
+    case sales
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .admin: return "Admin"
+        case .appManager: return "App Manager"
+        case .developer: return "Developer"
+        case .marketing: return "Marketing"
+        case .customerSupport: return "Customer Support"
+        case .finance: return "Finance"
+        case .sales: return "Sales"
+        }
+    }
+}
+
+struct AppStoreConnectKeyAccess: Codable, Equatable {
+    var kind: AppStoreConnectKeyKind
+    var role: AppStoreConnectKeyRole
+
+    var displayName: String { "\(kind.displayName) · \(role.displayName)" }
+}
+
+enum ShipyardFeature {
+    case builds
+    case appInfo
+    case reviews
+    case appStoreVersions
+    case monitoring
+    case provisioningResources
+    case users
+}
+
 struct Credential: Codable {
     let key: String
     let issuerID: String
     let privateKey: String
     let keyID: String
+    let access: AppStoreConnectKeyAccess?
+
+    init(key: String,
+         issuerID: String,
+         privateKey: String,
+         keyID: String,
+         access: AppStoreConnectKeyAccess? = nil) {
+        self.key = key
+        self.issuerID = issuerID
+        self.privateKey = privateKey
+        self.keyID = keyID
+        self.access = access
+    }
+
+    func shows(_ feature: ShipyardFeature) -> Bool {
+        // Older saved credentials have no declared role. Keep their current
+        // full UI until the user configures access in Settings.
+        guard let access else { return true }
+
+        switch feature {
+        case .builds, .monitoring:
+            return [.admin, .appManager, .developer].contains(access.role)
+        case .appInfo:
+            return [.admin, .appManager, .marketing].contains(access.role)
+        case .reviews:
+            return [.admin, .appManager, .customerSupport].contains(access.role)
+        case .appStoreVersions:
+            return [.admin, .appManager, .developer].contains(access.role)
+        case .provisioningResources:
+            return access.kind == .team && access.role == .admin
+        case .users:
+            return access.role == .admin
+        }
+    }
 }
 
 @MainActor
@@ -161,13 +244,13 @@ final class CredentialStorage: ObservableObject {
 
             var add = Self.addAttributes(forKey: teamName)
             add[kSecValueData as String] = winner
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             if SecItemAdd(add as CFDictionary, nil) != errSecSuccess {
                 let rollback: [String: Any] = [
                     kSecClass as String: kSecClassGenericPassword,
                     kSecAttrAccount as String: account,
                     kSecValueData as String: legacyData,
-                    kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
+                    kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
                 ]
                 SecItemAdd(rollback as CFDictionary, nil)
                 keychainLogger.error("Migration: scoped write failed for '\(teamName, privacy: .public)', legacy item restored")
@@ -256,16 +339,36 @@ final class CredentialStorage: ObservableObject {
         }
     }
 
+    @discardableResult
+    func updateAccess(_ access: AppStoreConnectKeyAccess?, for teamName: String) -> Bool {
+        guard let credential = getCredential(key: teamName) else { return false }
+        let updated = Credential(
+            key: credential.key,
+            issuerID: credential.issuerID,
+            privateKey: credential.privateKey,
+            keyID: credential.keyID,
+            access: access
+        )
+        guard saveData(credential: updated, teamName: teamName) else { return false }
+        if selectedTeam?.key == teamName {
+            selectedTeam = updated
+        }
+        return true
+    }
+
     /// Add, or update in place when the scoped item already exists.
     private func upsert(key: String, data: Data) -> OSStatus {
         var addQuery = Self.addAttributes(forKey: key)
         addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecDuplicateItem {
             return SecItemUpdate(
                 Self.baseQuery(forKey: key) as CFDictionary,
-                [kSecValueData as String: data] as CFDictionary)
+                [
+                    kSecValueData as String: data,
+                    kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                ] as CFDictionary)
         }
         return status
     }

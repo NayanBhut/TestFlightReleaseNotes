@@ -82,6 +82,15 @@ struct UserDefaultsKeys {
     /// Reviews tab and the Resources sidebar section. Read via @AppStorage
     /// so every view observes UserDefaults and stays in sync.
     static let showExtendedInfo = "showExtendedInfo"
+    /// Module 12 (Figma 3-4361 General Configuration): the section shown
+    /// on launch ("apps", "builds" or "monitoring").
+    static let defaultStartupView = "shipyard.defaultStartupView"
+    /// Module 12: default editing locale only — never changes Apple's
+    /// primaryLocale. Falls back to en-US.
+    static let defaultMetadataLocale = "shipyard.defaultMetadataLocale"
+    /// Module 12: redirect App Store Connect links to the default macOS
+    /// browser instead of any in-app presentation.
+    static let openLinksInExternalBrowser = "shipyard.openLinksExternal"
 }
 
 // MARK: - Shared error + Retry view

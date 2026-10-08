@@ -68,7 +68,24 @@ struct ShipyardSidebar: View {
     @ObservedObject private var credentialStorage = CredentialStorage.shared
     @State private var showTeams = false
     @State private var showSettings = false
+    @State private var showHelp = false
     @State private var pendingDeleteTeam: String?
+
+    private var activeCredential: Credential? { credentialStorage.selectedTeam }
+
+    private var resourceSections: [ShipyardSection] {
+        var sections: [ShipyardSection] = []
+        if activeCredential?.shows(.provisioningResources) ?? true {
+            sections += [.devices, .certificates, .identifiers, .bundleIDs, .profiles]
+        }
+        if activeCredential?.shows(.users) ?? true {
+            sections.append(.users)
+        }
+        if activeCredential?.shows(.reviews) ?? true {
+            sections.append(.reviews)
+        }
+        return sections
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -78,15 +95,19 @@ struct ShipyardSidebar: View {
                 VStack(alignment: .leading, spacing: 18) {
                     navRow(.apps)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        sectionHeader("MONITORING")
-                        monitoringRow
+                    if activeCredential?.shows(.monitoring) ?? true {
+                        VStack(alignment: .leading, spacing: 4) {
+                            sectionHeader("MONITORING")
+                            monitoringRow
+                        }
                     }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        sectionHeader("TEAM RESOURCES")
-                        ForEach([ShipyardSection.devices, .certificates, .identifiers, .bundleIDs, .profiles, .users, .reviews], id: \.self) { section in
-                            navRow(section)
+                    if !resourceSections.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            sectionHeader("TEAM RESOURCES")
+                            ForEach(resourceSections, id: \.self) { section in
+                                navRow(section)
+                            }
                         }
                     }
                 }
@@ -302,21 +323,25 @@ struct ShipyardSidebar: View {
                 }
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showSettings, arrowEdge: .bottom) {
-                ShipyardSettingsPopover()
-                    .padding(12)
-                    .frame(width: 240)
+            .sheet(isPresented: $showSettings) {
+                ShipyardSettingsSheet(onClose: { showSettings = false })
             }
 
             Spacer()
 
-            Link(destination: URL(string: "https://developer.apple.com/documentation/appstoreconnectapi")!) {
+            Button {
+                showHelp.toggle()
+            } label: {
                 HStack(spacing: 6) {
                     ShipyardIcon(name: "ShipyardHelp")
                     Text("Help")
                         .font(.system(size: 11))
                         .foregroundColor(ShipyardTheme.body)
                 }
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showHelp) {
+                ShipyardHelpSheet(onClose: { showHelp = false })
             }
         }
         .padding(.horizontal, 16)
@@ -328,25 +353,104 @@ struct ShipyardSidebar: View {
     }
 }
 
-/// Real settings behind the footer entry: appearance plus the Batch C
-/// extended-info flag that gates App Info / Reviews / Resources detail.
-private struct ShipyardSettingsPopover: View {
-    @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
-    @Environment(\.colorScheme) private var colorScheme
+private struct ShipyardHelpSheet: View {
+    let onClose: () -> Void
+
+    private let steps: [(title: String, detail: String)] = [
+        ("1. Membership and access", "Join the Apple Developer Program, accept current agreements, and confirm your App Store Connect role."),
+        ("2. App identity and signing", "Create the Bundle ID, enable required capabilities, and prepare distribution signing."),
+        ("3. App record", "Create the App Store Connect record with the correct platform, name, Bundle ID, SKU, and primary language."),
+        ("4. Build and upload", "Archive and upload from Xcode, then wait for Apple to finish processing the build."),
+        ("5. Store information", "Complete metadata, privacy, age rating, pricing, availability, screenshots, and every enabled locale."),
+        ("6. Review and submit", "Add review contact details and demo credentials, answer compliance questions, choose a build, and submit.")
+    ]
+
+    private let links: [(title: String, url: String)] = [
+        ("Apple Developer Program", "https://developer.apple.com/help/account/membership/programs-overview"),
+        ("Create an app record", "https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/"),
+        ("Upload builds", "https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/"),
+        ("Required metadata", "https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties/"),
+        ("App privacy", "https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy"),
+        ("Screenshots and previews", "https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots/"),
+        ("Submit for review", "https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app/"),
+        ("App Review Guidelines", "https://developer.apple.com/app-store/review/guidelines/"),
+        ("App Store Connect API", "https://developer.apple.com/documentation/appstoreconnectapi")
+    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Settings")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(ShipyardTheme.title)
-            Toggle("Dark Mode", isOn: Binding(
-                get: { colorScheme == .dark },
-                set: { _ in AppAppearance.toggle() }
-            ))
-            .font(.system(size: 12))
-            Toggle("Show App Info, Reviews & Resources", isOn: $showExtendedInfo)
-                .font(.system(size: 12))
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Publish Your First App")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(ShipyardTheme.title)
+                    Text("A practical checklist from account setup to App Review")
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.body)
+                }
+                Spacer()
+                Button("Done", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(20)
+
+            ShipyardTheme.rowDivider.frame(height: 1)
+
+            ScrollView {
+                HStack(alignment: .top, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Submission checklist")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+
+                        ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(step.title)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(ShipyardTheme.title)
+                                Text(step.detail)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(ShipyardTheme.body)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        Text("Shipyard manages App Store Connect data and developer resources. Use Xcode or Transporter to build, sign, archive, and upload the binary.")
+                            .font(.system(size: 11))
+                            .foregroundColor(ShipyardTheme.body)
+                            .padding(12)
+                            .background(ShipyardTheme.infoSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Official Apple help")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+
+                        ForEach(Array(links.enumerated()), id: \.offset) { _, item in
+                            if let destination = URL(string: item.url) {
+                                Link(destination: destination) {
+                                    HStack(spacing: 6) {
+                                        Text(item.title)
+                                        Image(systemName: "arrow.up.right")
+                                            .font(.system(size: 9, weight: .semibold))
+                                    }
+                                    .font(.system(size: 11))
+                                    .foregroundColor(ShipyardTheme.accent)
+                                }
+                                .accessibilityHint("Opens Apple Developer documentation")
+                            }
+                        }
+                    }
+                    .frame(width: 220, alignment: .leading)
+                }
+                .padding(20)
+            }
         }
+        .frame(width: 760, height: 580)
+        .background(ShipyardTheme.tableBackground)
     }
 }
 
