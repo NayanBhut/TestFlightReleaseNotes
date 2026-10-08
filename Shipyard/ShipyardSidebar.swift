@@ -64,10 +64,11 @@ struct ShipyardSidebar: View {
     /// new team and resets the section — the keychain write alone does not
     /// refresh anything.
     var onSelectTeam: (String) -> Void
+    /// Opens the full-screen Settings screen in the section content area.
+    var onShowSettings: (() -> Void)? = nil
 
     @ObservedObject private var credentialStorage = CredentialStorage.shared
     @State private var showTeams = false
-    @State private var showSettings = false
     @State private var showHelp = false
     @State private var pendingDeleteTeam: String?
 
@@ -313,7 +314,7 @@ struct ShipyardSidebar: View {
     private var footer: some View {
         HStack {
             Button {
-                showSettings.toggle()
+                onShowSettings?()
             } label: {
                 HStack(spacing: 6) {
                     ShipyardIcon(name: "ShipyardGear")
@@ -323,9 +324,6 @@ struct ShipyardSidebar: View {
                 }
             }
             .buttonStyle(.plain)
-            .sheet(isPresented: $showSettings) {
-                ShipyardSettingsSheet(onClose: { showSettings = false })
-            }
 
             Spacer()
 

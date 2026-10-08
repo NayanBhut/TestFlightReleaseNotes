@@ -34,6 +34,9 @@ struct ShipyardShell: View {
     /// Back clears it to return to the builds table.
     @State private var detailBuild: BuildsModel?
     @State private var activeTeamKey: String?
+    /// Full-screen Settings screen (not a modal sheet). Sidebar Settings
+    /// swaps the section content while keeping navigation chrome.
+    @State private var settingsPresented = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -42,7 +45,8 @@ struct ShipyardShell: View {
                 processingCount: monitor.processingBuilds.count,
                 onAddTeam: onAddTeam,
                 onDeleteTeam: deleteTeam,
-                onSelectTeam: selectTeam
+                onSelectTeam: selectTeam,
+                onShowSettings: { settingsPresented = true }
             )
             .frame(width: 260)
 
@@ -71,6 +75,7 @@ struct ShipyardShell: View {
         .onChange(of: section) { _, _ in
             detailApp = nil
             detailBuild = nil
+            settingsPresented = false
         }
         .onChange(of: sidebarVM.isTeamChanged) { _, changed in
             if changed {
@@ -102,7 +107,10 @@ struct ShipyardShell: View {
 
     @ViewBuilder
     private var sectionContent: some View {
-        if let detailBuild {
+        if settingsPresented {
+            ShipyardSettingsSheet(onClose: { settingsPresented = false })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let detailBuild {
             BuildDetailView(
                 build: detailBuild,
                 detailVM: detailVM,
@@ -272,6 +280,7 @@ struct ShipyardShell: View {
         if resetNavigation {
             section = .apps
             clearDetail()
+            settingsPresented = false
             detailTab = .builds
         }
         detailVM.resetForTeamSwitch()

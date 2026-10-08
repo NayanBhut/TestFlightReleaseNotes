@@ -937,17 +937,39 @@ struct ShipyardSettingsSheet: View {
     var onClose: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(selection: $pane) {
-                ForEach(Pane.allCases, id: \.self) { item in
-                    Text(item.title).tag(item)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button(action: onClose) {
+                    Text("‹ Settings")
+                        .font(.system(size: 13))
+                        .foregroundColor(ShipyardTheme.accent)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to monitoring")
+                Text("Settings")
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.title)
+                Spacer()
             }
-            .frame(width: 200)
-            paneContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .background(LaunchTheme.page)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                List(selection: $pane) {
+                    ForEach(Pane.allCases, id: \.self) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .frame(width: 200)
+                paneContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        .frame(width: 760, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ShipyardTheme.tableBackground)
     }
 
     @ViewBuilder
