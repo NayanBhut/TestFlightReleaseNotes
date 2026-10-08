@@ -979,6 +979,31 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(ReviewsViewModel.responseIsCurrent(generation: 2, current: 3))
     }
 
+    func testReviewStatusSyncStateIdentifiesPendingVersionAndPhase() {
+        let syncing = ReviewStatusSyncState.syncing(versionId: "version-1")
+        XCTAssertEqual(syncing.versionId, "version-1")
+        XCTAssertTrue(syncing.isSyncing)
+        XCTAssertFalse(syncing.isDelayed)
+
+        let delayed = ReviewStatusSyncState.delayed(versionId: "version-1")
+        XCTAssertEqual(delayed.versionId, "version-1")
+        XCTAssertFalse(delayed.isSyncing)
+        XCTAssertTrue(delayed.isDelayed)
+
+        XCTAssertNil(ReviewStatusSyncState.idle.versionId)
+    }
+
+    func testReviewStatusSettlesWhenServerStateChangesOrLocks() {
+        for state in ["PREPARE_FOR_SUBMISSION", "REJECTED", "METADATA_REJECTED"] {
+            XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: state), state)
+        }
+        for state in ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"] {
+            XCTAssertTrue(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: "PREPARE_FOR_SUBMISSION"), state)
+        }
+        XCTAssertTrue(ReviewsViewModel.reviewStatusDidSettle("REJECTED", submittedFrom: "PREPARE_FOR_SUBMISSION"))
+        XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(nil, submittedFrom: "PREPARE_FOR_SUBMISSION"))
+    }
+
     @MainActor
     func testWorkflowFailurePreservesLoadedVersions() {
         let vm = ReviewsViewModel()

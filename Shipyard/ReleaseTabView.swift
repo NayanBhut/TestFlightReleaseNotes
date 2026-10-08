@@ -211,6 +211,16 @@ struct ReleaseTabView: View {
         return version.appStoreState ?? version.appVersionState
     }
 
+    private var reviewStatusSyncing: Bool {
+        reviewsVM.reviewStatusSyncState.versionId == shownVersion?.id
+            && reviewsVM.reviewStatusSyncState.isSyncing
+    }
+
+    private var reviewStatusDelayed: Bool {
+        reviewsVM.reviewStatusSyncState.versionId == shownVersion?.id
+            && reviewsVM.reviewStatusSyncState.isDelayed
+    }
+
     /// Editable only when the shown version is the VM-selected pending
     /// version — every write guards on selectedAppStoreVersionId.
     private var canEditShown: Bool {
@@ -363,7 +373,6 @@ struct ReleaseTabView: View {
                     phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
                     reviewsVM: reviewsVM
                 ) {
-                    reviewsVM.refreshAfterWrite(appId: app.id)
                     showToast(title: "Submitted for review",
                               detail: "\(app.name ?? "App") \(version.versionString ?? "") · Build #\(version.build?.version ?? "—")")
                 }
@@ -775,35 +784,49 @@ struct ReleaseTabView: View {
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let error = saveError ?? reviewsVM.releaseSettingsError, canEditShown {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(ShipyardTheme.danger)
-            }
-            if saving {
+            if reviewStatusSyncing {
                 ProgressView()
                     .scaleEffect(0.7)
-            } else {
-                Button("Save") {
-                    save()
-                }
-                .buttonStyle(.launchSecondary)
-                .disabled(!canEditShown || !isDirty)
-            }
-            if reviewsVM.submittingReview {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else if canSubmit {
-                Button("Submit for Review") {
-                    showSubmitDialog = true
+                Text("Updating status…")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(ShipyardTheme.body)
+            } else if reviewStatusDelayed {
+                Button("Check Again") {
+                    guard let versionId = shownVersion?.id else { return }
+                    reviewsVM.retryReviewStatusSync(appId: app.id, versionId: versionId)
                 }
                 .buttonStyle(.launchPrimary)
             } else {
-                Button("Submit for Review") {
-                    showSubmitDialog = true
+                if let error = saveError ?? reviewsVM.releaseSettingsError, canEditShown {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(ShipyardTheme.danger)
                 }
-                .buttonStyle(.launchSecondary)
-                .disabled(true)
+                if saving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Save") {
+                        save()
+                    }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(!canEditShown || !isDirty)
+                }
+                if reviewsVM.submittingReview {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else if canSubmit {
+                    Button("Submit for Review") {
+                        showSubmitDialog = true
+                    }
+                    .buttonStyle(.launchPrimary)
+                } else {
+                    Button("Submit for Review") {
+                        showSubmitDialog = true
+                    }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(true)
+                }
             }
         }
         .padding(.horizontal, 24)
@@ -975,6 +998,12 @@ struct ReleaseTabView: View {
 
     private var actionBarText: String {
         guard shownVersion != nil else { return "" }
+        if reviewStatusSyncing {
+            return "Submission accepted · Waiting for App Store Connect to update the review status."
+        }
+        if reviewStatusDelayed {
+            return "Submission accepted · The review status is taking longer than expected to update."
+        }
         if !canEditShown {
             return "Version is \(getStatusLabel(appStoreState: shownState).lowercased()) — metadata is locked while Apple has it."
         }
@@ -992,7 +1021,8 @@ struct ReleaseTabView: View {
     }
 
     private var canSubmit: Bool {
-        ReleaseSubmissionRequirements.canSubmit(
+        guard reviewsVM.reviewStatusSyncState.versionId != shownVersion?.id else { return false }
+        return ReleaseSubmissionRequirements.canSubmit(
             canEdit: canEditShown,
             missingItems: missingItems,
             isDirty: isDirty,
