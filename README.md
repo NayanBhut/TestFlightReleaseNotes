@@ -2,6 +2,12 @@
 
 A native macOS (SwiftUI) client for the App Store Connect API. Browse apps, pre-release versions, and TestFlight builds, and manage release notes (`whatsNew`), beta groups/testers, app info localizations, customer reviews, and team resources — without opening the App Store Connect web portal.
 
+## User Documentation
+
+- [Complete Shipyard User Guide](docs/SHIPYARD_USER_GUIDE.md) — connect teams, navigate every screen, use each feature, follow common task recipes, and understand safety limits.
+- [App Submission Beginner Guide](docs/APP_SUBMISSION_BEGINNER_GUIDE.md) — requirements and checklist for creating and submitting an app.
+- [Known Blockers and Bugs](docs/SHIPYARD_BLOCKERS_AND_BUGS.md) — current limitations and unresolved behavior.
+
 ## Why Use This App? (Real-Time Use)
 
 Releasing a TestFlight build normally means: upload from Xcode → wait for processing → open App Store Connect in a browser → click through Apps → TestFlight → build → fill in "What to Test" per locale → add groups/testers → check processing state by refreshing the page. This app collapses that loop into one native window:
@@ -105,7 +111,7 @@ Not supported (Apple has no public API or it's web-only): sales/finance reports,
 - Invite/edit-roles/remove users, resend invitations.
 
 ### Monitoring
-- Menu-bar build monitor polls `filter[processingState]=PROCESSING` every 120 s (300 s backoff on error) with count badge, per-build rows, and local notifications on `PROCESSING` → terminal-state transitions.
+- Menu-bar build monitor polls `filter[processingState]=PROCESSING` every 30 s by default (adjustable in Monitoring Preferences; 300 s backoff on error) with count badge, per-build rows, and local notifications on `PROCESSING` → terminal-state transitions.
 
 ### Auth & Security
 - Multi-team support; credentials (Issuer ID, Key ID, `.p8` private key) stored in Keychain and never logged.

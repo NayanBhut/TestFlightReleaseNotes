@@ -1138,6 +1138,9 @@ final class ResourcesViewModel: ObservableObject {
     func createCertificate(certificateType: CertificateTypeOption,
                            csrContent: String,
                            relatedResourceId: String? = nil) async -> WriteResult {
+        guard certificateType.canCreateViaAPI else {
+            return .failure("Developer ID certificates must be created on the Apple Developer website or in Xcode.")
+        }
         let trimmedCSR = csrContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedRelatedResourceId = relatedResourceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmedCSR.isEmpty else { return .failure("Select a CSR file first.") }
@@ -2255,7 +2258,7 @@ final class ResourcesViewModel: ObservableObject {
     }
 
     /// GET /v1/profiles/{id} → attributes.profileContent (base64
-    /// .mobileprovision) → NSSavePanel. Same contract as
+    /// provisioning file) → NSSavePanel. Same contract as
     /// downloadCertificate: save-panel cancel reports .ignored.
     func downloadProfile(_ profile: ProfileModel) async -> WriteResult {
         let key = "download-profile-\(profile.id)"
@@ -2276,7 +2279,7 @@ final class ResourcesViewModel: ObservableObject {
             guard !Task.isCancelled else { return .ignored }
             return saveDownloadedFile(data: fileData,
                                       suggestedName: fileName,
-                                      fileExtension: "mobileprovision")
+                                      fileExtension: profile.provisioningFileExtension)
         } catch {
             resourcesLogger.error("Failed to download profile: \(error.localizedDescription)")
             guard !Task.isCancelled else { return .ignored }
@@ -2317,7 +2320,8 @@ final class ResourcesViewModel: ObservableObject {
               let fileData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
             return nil
         }
-        let fileName = safeFileName(profile.name) + ".mobileprovision"
+        let fileName = safeFileName(model.name ?? profile.name)
+            + "." + model.provisioningFileExtension
         return (fileData, fileName)
     }
 
@@ -2407,9 +2411,9 @@ final class ResourcesViewModel: ObservableObject {
         case ignored
     }
 
-    /// Install for Xcode (Figma 114-3716): fetch the .mobileprovision and
+    /// Install for Xcode (Figma 114-3716): fetch the provisioning file and
     /// save it via a panel rooted at Xcode's provisioning-profiles
-    /// directory (~/Library/MobileDevice/Provisioning Profiles/). A save
+    /// directory (~/Library/Developer/Xcode/UserData/Provisioning Profiles/). A save
     /// panel carries user consent, so this works under the app sandbox —
     /// a silent copy would not. Cancel reports .ignored.
     func installProfileForXcode(_ profile: ProfileModel) async -> ProfileInstallOutcome {
@@ -2424,12 +2428,12 @@ final class ResourcesViewModel: ObservableObject {
             }
             guard !Task.isCancelled else { return .ignored }
             let profilesDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/MobileDevice/Provisioning Profiles", isDirectory: true)
+                .appendingPathComponent("Library/Developer/Xcode/UserData/Provisioning Profiles", isDirectory: true)
             let panel = NSSavePanel()
             panel.directoryURL = profilesDir
             panel.nameFieldStringValue = fileName
             panel.canCreateDirectories = true
-            if let fileType = UTType(filenameExtension: "mobileprovision") {
+            if let fileType = UTType(filenameExtension: profile.provisioningFileExtension) {
                 panel.allowedContentTypes = [fileType]
             }
             panel.message = "Save into Provisioning Profiles so Xcode picks it up automatically."

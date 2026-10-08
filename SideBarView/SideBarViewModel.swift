@@ -42,7 +42,7 @@ class SideBarViewModel: ObservableObject {
     @Published var selectedStateFilter: AppConfigs.AppStateFilter = .all {
         didSet {
             guard !suppressFilterObservers, selectedStateFilter != oldValue else { return }
-            getiOSApps()
+            getApps()
         }
     }
     @Published var selectedSortOption: AppConfigs.SortOption = .nameDescending
@@ -106,7 +106,7 @@ class SideBarViewModel: ObservableObject {
 
     // MARK: - Apps
 
-    func getiOSApps(nextPage: String? = nil, isSearchRefresh: Bool = false) {
+    func getApps(nextPage: String? = nil, isSearchRefresh: Bool = false) {
         let isPaginating = nextPage != nil
         // Ignore duplicate "Load more" taps while a page request is in flight
         // (double-tapping would otherwise append the same rows twice).
@@ -141,7 +141,6 @@ class SideBarViewModel: ObservableObject {
         // silently skip rows during pagination.
         var queryParams: [String: String] = [
             "include": "appStoreVersions,appStoreIcon",
-            "filter[appStoreVersions.platform]": "IOS",
             "fields[builds]": "icons",
             "limit": String(AppConfigs.appListLimit)
         ]
@@ -208,7 +207,7 @@ class SideBarViewModel: ObservableObject {
         searchDebounceTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
-            self?.getiOSApps(isSearchRefresh: true)
+            self?.getApps(isSearchRefresh: true)
         }
     }
 
@@ -292,7 +291,7 @@ class SideBarViewModel: ObservableObject {
         selectedStateFilter = .all
         suppressFilterObservers = false
         searchDebounceTask?.cancel()
-        getiOSApps()
+        getApps()
     }
 
     /// Full reset for logout (last team deleted): cancels in-flight work
@@ -319,13 +318,13 @@ class SideBarViewModel: ObservableObject {
     }
 
     func retryApps() {
-        getiOSApps()
+        getApps()
     }
 
     /// Loads the next page. Guarded against duplicate concurrent requests
-    /// via the isPaginatingApps flag inside getiOSApps(nextPage:).
+    /// via the isPaginatingApps flag inside getApps(nextPage:).
     func loadMoreApps(cursor: String) {
-        getiOSApps(nextPage: cursor)
+        getApps(nextPage: cursor)
     }
 
     // MARK: - Versions

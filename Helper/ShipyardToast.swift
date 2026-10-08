@@ -162,11 +162,9 @@ struct ShipyardToastView: View {
     var variant: ToastVariant
     var onDismiss: () -> Void
 
-    /// Caps how wide the text column grows so a long failure message wraps
-    /// onto multiple lines instead of stretching into one very long line
-    /// across the window. Sized to keep the Figma 348pt toast intact for
-    /// short copy while giving ~3–4 wrapped lines for verbose API errors.
-    private let maxTextWidth: CGFloat = 360
+    /// Keeps every toast readable and predictable while allowing verbose API
+    /// failures to grow vertically across as many wrapped lines as needed.
+    private let toastWidth: CGFloat = 360
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -190,9 +188,7 @@ struct ShipyardToastView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // Bound the text column so it wraps; `fixedSize(vertical:)` above
-            // then lets the toast grow downward as lines are added.
-            .frame(maxWidth: maxTextWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 0)
 
@@ -206,6 +202,7 @@ struct ShipyardToastView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .frame(width: toastWidth, alignment: .leading)
         .background(variant.toastBackground)
         .cornerRadius(8)
         .overlay(
@@ -213,8 +210,7 @@ struct ShipyardToastView: View {
                 .stroke(ShipyardTheme.rowDivider, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
-        // Width follows the content up to the cap; height always fits the
-        // content, so no message is ever clipped vertically.
+        // Height always fits the wrapped content, so no message is clipped.
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isStaticText)

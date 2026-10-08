@@ -2,9 +2,23 @@
 //  ReviewsView.swift
 //  App Store
 //
-//  Batch C3: Reviews tab — customer reviews (rating/title/body) and
-//  review submissions (state). Reply via POST /customerReviewResponses
-//  is implemented in replyToReview().
+//  Module 11 (Customer Reviews): written-review summary (average +
+//  histogram over the loaded sample), filter chips, the Review / Rating /
+//  Date / Response table, the reply editor with its lifecycle branches,
+//  and the independent list states (loading / empty / error / no filter
+//  results). The review-submissions card below is preserved unchanged —
+//  App Store review submission is outside Module 11 scope.
+//
+//  API contract notes (C11-H, Apple OpenAPI 4.5):
+//  - Reads: GET /v1/apps/{id}/customerReviews (sort=-createdDate,
+//    include=response). Rating/territory server filters exist, but text
+//    search, date windows, reply-state filters, cross-app aggregation and
+//    averages stay local over correctly paginated requests.
+//  - Histograms describe the loaded written-review sample only — never
+//    official App Store all-ratings distributions. Partial coverage and
+//    per-request provenance stay visible.
+//  - Verified absence of a response → Unanswered. PENDING_PUBLISH stays
+//    separate from PUBLISHED. Unknown/failed fetches are never unanswered.
 //
 
 import SwiftUI
@@ -15,39 +29,47 @@ struct ReviewsView: View {
     @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var confirmingSubmit = false
     @State private var submissionToCancel: ReviewSubmissionModel?
+    /// Master-detail navigation inside the tab (Figma editor screens).
+    @State private var selectedReviewId: String? = nil
+    @State private var highlightedReviewId: String? = nil
+    @State private var showSyncDetails = false
 
     var body: some View {
         Group {
             if let app = selectedApp {
                 VStack(spacing: 0) {
                     header(app: app)
-                    filterBar(app: app)
                     Divider()
-                    // Side-by-side columns, each with its own scroll: a tall
-                    // submissions list can no longer push reviews off-screen.
-                    // Horizontal padding lives here, not inside the
-                    // ScrollViews, so the inter-column gap is exactly the
-                    // HStack spacing (16pt) instead of padding+spacing+padding.
-                    HStack(alignment: .top, spacing: 16) {
+                    if let reviewId = selectedReviewId {
+                        ReviewReplyEditorView(
+                            reviewId: reviewId,
+                            app: app,
+                            reviewsVM: reviewsViewModel,
+                            isStale: reviewsViewModel.isShowingStaleReviews,
+                            onReturnToInbox: nil,
+                            onBack: { selectedReviewId = nil }
+                        )
+                    } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
+                                customerReviewsSection(app: app)
                                 submissionsSection(app: app)
                             }
-                            .padding(.vertical, 20)
-                        }
-                        ScrollView {
-                            reviewsSection
-                                .padding(.vertical, 20)
+                            .padding(20)
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
                 .onAppear {
                     reviewsViewModel.load(app: app)
+                    consumePendingInboxReview()
                 }
                 .onChange(of: app.id) { _, _ in
+                    selectedReviewId = nil
                     reviewsViewModel.load(app: app)
+                    consumePendingInboxReview()
+                }
+                .onChange(of: reviewsViewModel.pendingInboxReviewId) { _, _ in
+                    consumePendingInboxReview()
                 }
                 .onChange(of: reviewsViewModel.writeError) { _, message in
                     if let message {
@@ -65,6 +87,9 @@ struct ReviewsView: View {
                 } message: { message in
                     Text(message)
                 }
+                .sheet(isPresented: $showSyncDetails) {
+                    syncDetailsSheet(app: app)
+                }
             } else {
                 EmptyStateView(icon: "star.bubble", title: "No App Selected",
                                subtitle: "Select an app from the sidebar to view its reviews")
@@ -72,11 +97,19 @@ struct ReviewsView: View {
         }
     }
 
+    /// Review opened from the cross-app inbox: jump the tab onto it.
+    private func consumePendingInboxReview() {
+        guard let reviewId = reviewsViewModel.pendingInboxReviewId else { return }
+        reviewsViewModel.pendingInboxReviewId = nil
+        highlightedReviewId = reviewId
+        selectedReviewId = reviewId
+    }
+
     // MARK: - Header
 
     private func header(app: AppsData) -> some View {
         HStack {
-            Text("Reviews")
+            Text(selectedReviewId == nil ? "Reviews" : "Review Detail")
                 .font(.sectionHeader)
                 .fontWeight(.semibold)
             Spacer()
@@ -84,6 +117,11 @@ struct ReviewsView: View {
                 .font(.appCaption)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
+            if reviewsViewModel.isRefreshingReviews {
+                ProgressView()
+                    .controlSize(.small)
+                    .help("Refreshing reviews… cached rows stay visible")
+            }
             Button(action: { reviewsViewModel.retryAll() }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
                     .font(.appCaption)
@@ -95,49 +133,542 @@ struct ReviewsView: View {
         .background(AppTheme.secondaryBackground)
     }
 
-    // MARK: - Filter bar
+    // MARK: - Written-review summary (114:10098)
 
-    private func filterBar(app: AppsData) -> some View {
-        HStack(spacing: 12) {
-            Picker("Rating", selection: $reviewsViewModel.ratingFilter) {
-                ForEach(AppConfigs.ratingOptions, id: \.self) { value in
-                    Text(value == 0 ? "All ratings" : "\(value) ★").tag(value)
+    @ViewBuilder
+    private func customerReviewsSection(app: AppsData) -> some View {
+        InfoCard(title: "Customer Reviews", systemImage: "star.bubble") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("\(app.name ?? "App") · written customer reviews")
+                    .font(.appBody)
+                    .fontWeight(.semibold)
+                filterChips
+                provenanceBanner
+                switch reviewsViewModel.reviewsState {
+                case .idle, .loading:
+                    if reviewsViewModel.reviewRows.isEmpty {
+                        loadingState(app)
+                    } else {
+                        reviewsTable(app: app)
+                    }
+                case .empty:
+                    emptyState(app: app)
+                case .error(let message):
+                    errorState(app: app, message: message)
+                case .loaded:
+                    if reviewsViewModel.filteredReviews.isEmpty {
+                        if reviewsViewModel.reviewRows.isEmpty {
+                            emptyState(app: app)
+                        } else {
+                            noFilterResultsState(app)
+                        }
+                    } else {
+                        summaryBlock
+                        reviewsTable(app: app)
+                    }
                 }
             }
-            .pickerStyle(.menu)
-            .frame(width: 110)
+        }
+    }
 
-            Picker("State", selection: $reviewsViewModel.stateFilter) {
-                ForEach(AppConfigs.ReviewStateFilter.allCases, id: \.self) { filter in
-                    Text(filter.displayName).tag(filter)
+    // MARK: Filters (all local)
+
+    private var hasActiveFilters: Bool {
+        reviewsViewModel.ratingFilter > 0
+            || reviewsViewModel.territoryFilter != nil
+            || reviewsViewModel.dateFilter != .all
+            || reviewsViewModel.reviewSort != .newest
+            || reviewsViewModel.replyFilter != .all
+            || !reviewsViewModel.searchText.isEmpty
+    }
+
+    private var filterChips: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button("All ratings") { reviewsViewModel.ratingFilter = 0 }
+                ForEach(AppConfigs.ratingOptions.filter { $0 > 0 }, id: \.self) { value in
+                    Button("\(value) ★") { reviewsViewModel.ratingFilter = value }
                 }
+            } label: {
+                Text(reviewsViewModel.ratingFilter == 0 ? "Rating: All" : "Rating: \(reviewsViewModel.ratingFilter) ★")
+                    .font(.appCaption)
             }
-            .pickerStyle(.menu)
-            .frame(width: 110)
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Menu {
+                Button("All territories") { reviewsViewModel.territoryFilter = nil }
+                ForEach(reviewsViewModel.availableTerritories, id: \.self) { territory in
+                    Button(territory) { reviewsViewModel.territoryFilter = territory }
+                }
+            } label: {
+                Text("Territory: \(reviewsViewModel.territoryFilter ?? "All")")
+                    .font(.appCaption)
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Menu {
+                ForEach(ReviewDateFilter.allCases, id: \.self) { option in
+                    Button(option.rawValue) { reviewsViewModel.dateFilter = option }
+                }
+            } label: {
+                Text(reviewsViewModel.dateFilter.displayName)
+                    .font(.appCaption)
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Menu {
+                ForEach(ReviewSortOption.allCases, id: \.self) { option in
+                    Button(option.rawValue) { reviewsViewModel.reviewSort = option }
+                }
+            } label: {
+                Text(reviewsViewModel.reviewSort.displayName)
+                    .font(.appCaption)
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Menu {
+                ForEach(ReviewReplyFilter.allCases, id: \.self) { option in
+                    Button(option.rawValue) { reviewsViewModel.replyFilter = option }
+                }
+            } label: {
+                Text(reviewsViewModel.replyFilter.displayName)
+                    .font(.appCaption)
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
 
             TextField("Search title / body / author", text: $reviewsViewModel.searchText)
                 .textFieldStyle(.roundedBorder)
                 .font(.appCaption)
                 .frame(maxWidth: 200)
 
-            Spacer()
+            if hasActiveFilters {
+                Button("Clear") { clearFilters() }
+                    .font(.appCaption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+    }
 
-            if reviewsViewModel.ratingFilter > 0 || reviewsViewModel.stateFilter != .all || !reviewsViewModel.searchText.isEmpty {
-                Button("Clear") {
-                    reviewsViewModel.ratingFilter = 0
-                    reviewsViewModel.stateFilter = .all
-                    reviewsViewModel.searchText = ""
+    private func clearFilters() {
+        reviewsViewModel.ratingFilter = 0
+        reviewsViewModel.territoryFilter = nil
+        reviewsViewModel.dateFilter = .all
+        reviewsViewModel.reviewSort = .newest
+        reviewsViewModel.replyFilter = .all
+        reviewsViewModel.searchText = ""
+    }
+
+    private var provenanceBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Scope: loaded written reviews only — not official App Store rating totals. API: rating/territory filters and createdDate sorting.")
+                .font(.appCaption2)
+                .foregroundColor(.secondary)
+            Text("Text, date-window and reply-state filters are local over paginated results; partial coverage remains visible.")
+                .font(.appCaption2)
+                .foregroundColor(.secondary)
+            Text("No response → Unanswered. PENDING_PUBLISH and PUBLISHED are separate; no published response can still have a pending reply.")
+                .font(.appCaption2)
+                .foregroundColor(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.06))
+        .cornerRadius(6)
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.blue.opacity(0.25), lineWidth: 0.5))
+    }
+
+    // MARK: Summary (sample statistics)
+
+    private var summaryBlock: some View {
+        let summary = reviewsViewModel.reviewSampleSummary
+        return HStack(alignment: .top, spacing: 32) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let average = summary.average {
+                    Text(String(format: "%.1f", average))
+                        .font(.system(size: 36, weight: .semibold))
+                    StarRating(rating: Int(round(average)))
+                    Text("\(summary.total) loaded written reviews")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("—")
+                        .font(.system(size: 36, weight: .semibold))
+                    Text("\(summary.total) loaded written reviews")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
                 }
-                .font(.appCaption)
-                .buttonStyle(.bordered)
+            }
+            .frame(width: 180, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach((1...5).reversed(), id: \.self) { stars in
+                    let count = summary.perStar[stars, default: 0]
+                    let share = summary.total > 0 ? Double(count) / Double(summary.total) : 0
+                    HStack(spacing: 12) {
+                        Text("\(stars) ★")
+                            .font(.appCaption)
+                            .foregroundColor(.secondary)
+                            .frame(width: 36, alignment: .leading)
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(height: 8)
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.blue)
+                                    .frame(width: proxy.size.width * share, height: 8)
+                            }
+                        }
+                        .frame(height: 8)
+                        Text("\(count)")
+                            .font(.appCaption)
+                            .foregroundColor(.secondary)
+                            .frame(width: 40, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(AppTheme.windowBackground)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.border, lineWidth: 1))
+    }
+
+    // MARK: Reviews table
+
+    private func reviewsTable(app: AppsData) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if reviewsViewModel.isRefreshingReviews {
+                Text("Refreshing reviews… cached rows stay visible.")
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 8)
+            }
+            if reviewsViewModel.isShowingStaleReviews {
+                Text("Cached snapshot · stale · editing disabled until refresh succeeds.")
+                    .font(.appCaption2)
+                    .foregroundColor(.orange)
+                    .padding(.bottom, 8)
+            }
+            tableHeader(columns: ["Review", "Rating", "Date", "Response"])
+            ForEach(reviewsViewModel.filteredReviews, id: \.id) { review in
+                Button {
+                    highlightedReviewId = review.id
+                    selectedReviewId = review.id
+                } label: {
+                    HStack(spacing: 12) {
+                        Text(review.title?.isEmpty == false ? review.title! : String((review.body ?? "").prefix(60)))
+                            .font(.appBody)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(reviewStarsText(review.rating))
+                            .font(.appCaption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(review.createdDate.map(reviewDisplayDate) ?? "—")
+                            .font(.appCaption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(responseCellText(review))
+                            .font(.appCaption)
+                            .foregroundColor(.blue)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(highlightedReviewId == review.id ? Color.blue.opacity(0.08) : Color.clear)
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                Divider()
+            }
+            tableFooter(app)
+        }
+    }
+
+    private func responseCellText(_ review: CustomerReviewModel) -> String {
+        switch review.response?.state {
+        case "PUBLISHED":
+            return "PUBLISHED · edit reply →"
+        case "PENDING_PUBLISH":
+            return "PENDING_PUBLISH · open detail →"
+        default:
+            return "No response · open detail →"
+        }
+    }
+
+    private func tableHeader(columns: [String]) -> some View {
+        HStack(spacing: 12) {
+            ForEach(columns, id: \.self) { column in
+                Text(column)
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(AppTheme.secondaryBackground)
+    }
+
+    private func tableFooter(_ app: AppsData) -> some View {
+        HStack(spacing: 12) {
+            Text(syncStatusLine(app))
+                .font(.appCaption2)
+                .foregroundColor(.secondary)
+            Spacer()
+            if let cursor = reviewsViewModel.reviewsNextCursor {
+                if reviewsViewModel.reviewsPaginationFailed {
+                    Button("Couldn't load more — Retry") {
+                        reviewsViewModel.loadMoreReviews(cursor: cursor)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button("Load more") {
+                        reviewsViewModel.loadMoreReviews(cursor: cursor)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            Button("Open Selected Review") {
+                let target = highlightedReviewId
+                    ?? reviewsViewModel.filteredReviews.first?.id
+                if let target {
+                    highlightedReviewId = target
+                    selectedReviewId = target
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(reviewsViewModel.filteredReviews.isEmpty)
+        }
+        .padding(.top, 12)
+    }
+
+    private func syncStatusLine(_ app: AppsData) -> String {
+        var parts: [String] = []
+        if let sync = reviewsViewModel.reviewsLastSync {
+            parts.append("Last synced \(reviewDateTime(sync))")
+        } else {
+            parts.append("Not yet synced")
+        }
+        parts.append(CredentialStorage.shared.selectedTeam?.key ?? "Team")
+        if reviewsViewModel.reviewsNextCursor != nil || (reviewsViewModel.reviewsMeta?.paging.total ?? 0) > reviewsViewModel.reviewRows.count {
+            parts.append("paginated sample · partial coverage")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - List states (11S, independent alternatives)
+
+    /// First load: info banner + skeleton rows + Cancel Load. A refresh
+    /// with existing data never replaces rows with skeletons (114:13832).
+    private func loadingState(_ app: AppsData) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Loading reviews…")
+                        .font(.appBody)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue)
+                    Text("First load · controls that require loaded resources are unavailable. A refresh with existing data keeps cached rows visible instead of replacing them with skeletons.")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(8)
+            VStack(spacing: 0) {
+                ForEach(0..<6, id: \.self) { _ in
+                    HStack(spacing: 24) {
+                        RoundedRectangle(cornerRadius: 3).fill(Color.gray.opacity(0.2)).frame(width: 180, height: 10)
+                        RoundedRectangle(cornerRadius: 3).fill(Color.gray.opacity(0.2)).frame(width: 240, height: 10)
+                        RoundedRectangle(cornerRadius: 3).fill(Color.gray.opacity(0.2)).frame(width: 140, height: 10)
+                        RoundedRectangle(cornerRadius: 3).fill(Color.gray.opacity(0.2)).frame(width: 100, height: 10)
+                    }
+                    .padding(12)
+                    .frame(height: 38)
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel Load") {
+                    reviewsViewModel.cancelReviewsLoad()
+                }
+                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 4)
     }
 
-    // MARK: - Review submissions
+    /// Empty team: reviews appear after customers post them — Shipyard
+    /// cannot create customer reviews (114:13942).
+    private func emptyState(app: AppsData) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No reviews yet")
+                        .font(.appBody)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue)
+                    Text("Customer reviews will appear after customers post them. Reviews cannot be created by Shipyard.")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(8)
+            Text("Get started")
+                .font(.appBody)
+                .fontWeight(.medium)
+            Text("Open App Store Listing opens the public listing in your browser. Shipyard cannot create customer reviews.")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("Open App Store Listing") {
+                    openStoreListing(app: app)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private func openStoreListing(app: AppsData) {
+        let query = app.bundleId ?? app.name ?? ""
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        if let url = URL(string: "https://apps.apple.com/us/search?term=\(encoded)") {
+            ASCLink.open(url)
+        }
+    }
+
+    /// Failed refresh: retained cache shows marked stale with editing
+    /// disabled; with no cache the error shows with Retry and no rows.
+    private func errorState(app: AppsData, message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Unable to refresh reviews")
+                        .font(.appBody)
+                        .fontWeight(.medium)
+                        .foregroundColor(.red)
+                    if reviewsViewModel.staleReviewsCache != nil {
+                        Text("Network connection failed. Cached data is retained below and marked stale. If no cache exists, show this error with Retry and no resource rows.")
+                            .font(.appCaption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text(message)
+                            .font(.appCaption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color.red.opacity(0.06))
+            .cornerRadius(8)
+            if reviewsViewModel.staleReviewsCache != nil {
+                reviewsTable(app: app)
+            }
+            HStack {
+                Text(staleFooterText)
+                    .font(.appCaption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Show Sync Details") { showSyncDetails = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button("Retry Refresh") {
+                    reviewsViewModel.retryReviews()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private var staleFooterText: String {
+        "Cached snapshot · stale · editing disabled until refresh succeeds"
+    }
+
+    /// Filters match nothing: reviews still exist — clear search & filters.
+    /// Distinct from an empty team (114:14123).
+    private func noFilterResultsState(_ app: AppsData) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No matching reviews")
+                        .font(.appBody)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue)
+                    Text("No rows match “\(reviewsViewModel.searchText)”. Your reviews still exist; clear the search and filters to see them. This is not an empty team.")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(8)
+            HStack {
+                Spacer()
+                Button("Clear Search & Filters") { clearFilters() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func syncDetailsSheet(app: AppsData) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sync Details")
+                .font(.system(size: 16, weight: .semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("App: \(app.name ?? app.id)")
+                Text("Scope: \(CredentialStorage.shared.selectedTeam?.key ?? "Team")")
+                Text("Last sync: \(reviewsViewModel.reviewsLastSync.map(reviewDateTime) ?? "never")")
+                Text("Loaded rows: \(reviewsViewModel.reviewRows.count)")
+                if let total = reviewsViewModel.reviewsMeta?.paging.total {
+                    Text("Server total: \(total) (paginated sample · partial coverage)")
+                }
+                Text("Filters: rating \(reviewsViewModel.ratingFilter == 0 ? "all" : "\(reviewsViewModel.ratingFilter)"), territory \(reviewsViewModel.territoryFilter ?? "all"), reply \(reviewsViewModel.replyFilter.rawValue)")
+            }
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("Close") { showSyncDetails = false }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    // MARK: - Review submissions (preserved; outside Module 11 scope)
 
     @ViewBuilder private func submissionsSection(app: AppsData) -> some View {
         InfoCard(title: "Review Submissions", systemImage: "doc.badge.gearshape") {
@@ -267,103 +798,6 @@ struct ReviewsView: View {
                 } message: {
                     Text("This submits \(app.name ?? "the app") \(submittableVersion?.versionString ?? "") to App Store review.")
                 }
-            }
-        }
-    }
-
-    // MARK: - Customer reviews
-
-    @ViewBuilder private var reviewsSection: some View {
-        InfoCard(title: "Customer Reviews", systemImage: "star.bubble") {
-            switch reviewsViewModel.reviewsState {
-            case .idle, .loading:
-                LoadingStateView(text: "Loading...")
-            case .empty:
-                Text("No customer reviews")
-                    .font(.appCaption)
-                    .foregroundColor(.secondary)
-            case .error(let message):
-                sectionError(message: message) {
-                    reviewsViewModel.retryReviews()
-                }
-            case .loaded:
-                VStack(alignment: .leading, spacing: 12) {
-                    let filtered = reviewsViewModel.filteredReviews
-                    if filtered.isEmpty {
-                        Text(reviewsViewModel.ratingFilter > 0 || reviewsViewModel.stateFilter != .all || !reviewsViewModel.searchText.isEmpty
-                              ? "No reviews match your filters" : "No customer reviews")
-                            .font(.appCaption)
-                            .foregroundColor(.secondary)
-                    } else {
-                        if let total = reviewsViewModel.reviewsMeta?.paging.total {
-                            Text("\(filtered.count) of \(total) total")
-                                .font(.appCaption2)
-                                .foregroundColor(.secondary)
-                                .contentTransition(.numericText())
-                        }
-                        ForEach(filtered, id: \.id) { review in
-                            if review.id != filtered.first?.id { Divider() }
-                            reviewRow(review)
-                        }
-                        paginationControls(
-                            nextCursor: reviewsViewModel.reviewsNextCursor,
-                            paginationFailed: reviewsViewModel.reviewsPaginationFailed,
-                            onLoadMore: { cursor in reviewsViewModel.loadMoreReviews(cursor: cursor) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private func reviewRow(_ review: CustomerReviewModel) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                StarRating(rating: review.rating ?? 0)
-                Text(review.title ?? "")
-                    .font(.appBody)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                Spacer()
-                Text(review.territory ?? "")
-                    .font(.appCaption2)
-                    .foregroundColor(.secondary)
-            }
-            Text(review.reviewerNickname ?? "")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
-            Text(review.body ?? "")
-                .font(.appBody)
-                .foregroundColor(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-            Text(review.createdDate ?? "")
-                .font(.appCaption2)
-                .foregroundColor(.secondary)
-            if let response = review.response {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "arrowshape.turn.up.left")
-                        .font(.appCaption2)
-                        .foregroundColor(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Developer reply (\(response.state ?? "PUBLISHED"))")
-                            .font(.appCaption2)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                        Text(response.responseBody ?? "")
-                            .font(.appCaption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(8)
-                .background(AppTheme.windowBackground)
-                .cornerRadius(6)
-            }
-            if review.response == nil {
-                ReplySection(reviewId: review.id,
-                              reviewsViewModel: reviewsViewModel)
             }
         }
     }
@@ -498,67 +932,6 @@ struct NewVersionView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-}
-
-// MARK: - Reply controls
-
-struct ReplySection: View {
-    let reviewId: String
-    @ObservedObject var reviewsViewModel: ReviewsViewModel
-    @EnvironmentObject private var toastCenter: ShipyardToastCenter
-    @State private var isReplying = false
-    @State private var replyText: String = ""
-
-    var body: some View {
-        if isReplying {
-            VStack(alignment: .leading, spacing: 8) {
-                TextField("Write a reply...", text: $replyText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.appCaption)
-                HStack {
-                    Button("Cancel") {
-                        isReplying = false
-                        replyText = ""
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.secondary)
-                    Spacer()
-                    Button("Send") {
-                        Task { @MainActor in
-                            let posted = await reviewsViewModel.replyToReview(
-                                reviewId: reviewId,
-                                responseBody: replyText
-                            )
-                            // Keep the composer open on failure so the
-                            // typed reply is never silently discarded.
-                            if posted {
-                                isReplying = false
-                                replyText = ""
-                                toastCenter.show("Reply sent", variant: .success)
-                            } else if let message = reviewsViewModel.writeError {
-                                toastCenter.show("Couldn't send reply", detail: message, variant: .error)
-                            }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .padding(8)
-            .background(AppTheme.windowBackground)
-            .cornerRadius(6)
-        } else {
-            Button("Reply") {
-                isReplying = true
-            }
-            .font(.appCaption)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .padding(.top, 4)
-        }
     }
 }
 

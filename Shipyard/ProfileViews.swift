@@ -165,7 +165,7 @@ struct ProfileDetailView: View {
                 if isDownloading {
                     ProgressView().scaleEffect(0.7)
                 } else {
-                    Button("Download .mobileprovision") {
+                    Button("Download .\(profile.provisioningFileExtension)") {
                         Task { @MainActor in await runDownload() }
                     }
                     .buttonStyle(.launchPrimary)
@@ -1069,7 +1069,7 @@ struct RegenerateProfileSheet: View {
 
 // MARK: - Created success + Xcode install (Figma 114-3716 / 114-3746)
 
-/// Post-create success (Figma 114-3716): Download the .mobileprovision,
+/// Post-create success (Figma 114-3716): Download the provisioning file,
 /// Install for Xcode (save panel rooted at Xcode's provisioning
 /// directory — works sandboxed), then Done.
 struct ProfileCreatedSheet: View {
@@ -1107,7 +1107,7 @@ struct ProfileCreatedSheet: View {
                     if isWorking {
                         ProgressView().scaleEffect(0.7)
                     } else {
-                        Button("Download .mobileprovision") {
+                        Button("Download .\(profile.provisioningFileExtension)") {
                             Task { @MainActor in await runDownload() }
                         }
                         .buttonStyle(.launchSecondary)

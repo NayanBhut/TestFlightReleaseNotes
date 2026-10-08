@@ -684,6 +684,12 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(CertificateTypeOption.PASS_TYPE_ID.isSigningIdentity)
         XCTAssertFalse(CertificateTypeOption.IDENTITY_ACCESS.isSigningIdentity)
         XCTAssertFalse(CertificateTypeOption.DEVELOPER_ID_APPLICATION.isSigningIdentity)
+        XCTAssertFalse(CertificateTypeOption.DEVELOPER_ID_APPLICATION.canCreateViaAPI)
+        XCTAssertFalse(CertificateTypeOption.DEVELOPER_ID_APPLICATION_G2.canCreateViaAPI)
+        XCTAssertFalse(CertificateTypeOption.DEVELOPER_ID_KEXT.canCreateViaAPI)
+        XCTAssertFalse(CertificateTypeOption.DEVELOPER_ID_KEXT_G2.canCreateViaAPI)
+        XCTAssertFalse(CertificateTypeOption.creatableCases.contains(.DEVELOPER_ID_APPLICATION_G2))
+        XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.canCreateViaAPI)
         // Kind matching: development kinds take *DEVELOPMENT* only.
         XCTAssertTrue(CertificateTypeOption.IOS_DEVELOPMENT.matchesKind(development: true))
         XCTAssertFalse(CertificateTypeOption.IOS_DEVELOPMENT.matchesKind(development: false))
@@ -984,11 +990,53 @@ final class ValidationTests: XCTestCase {
 
 
     func testCredentialCodableRoundTrip() throws {
-        let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id")
+        let access = AppStoreConnectKeyAccess(kind: .team, role: .appManager)
+        let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id", access: access)
         let data = try JSONEncoder().encode(credential)
         let decoded = try JSONDecoder().decode(Credential.self, from: data)
         XCTAssertEqual(decoded.key, "Team")
         XCTAssertEqual(decoded.issuerID, "issuer")
+        XCTAssertEqual(decoded.access, access)
+    }
+
+    func testLegacyCredentialWithoutAccessStillDecodesAndShowsExistingUI() throws {
+        let data = Data(#"{"key":"Team","issuerID":"issuer","privateKey":"key","keyID":"id"}"#.utf8)
+        let decoded = try JSONDecoder().decode(Credential.self, from: data)
+        XCTAssertNil(decoded.access)
+        XCTAssertTrue(decoded.shows(.appInfo))
+        XCTAssertTrue(decoded.shows(.provisioningResources))
+    }
+
+    func testDeclaredAccessVisibilityMatrix() {
+        let developer = Credential(
+            key: "Developer", issuerID: "issuer", privateKey: "key", keyID: "id",
+            access: AppStoreConnectKeyAccess(kind: .team, role: .developer)
+        )
+        XCTAssertTrue(developer.shows(.builds))
+        XCTAssertTrue(developer.shows(.appStoreVersions))
+        XCTAssertFalse(developer.shows(.appInfo))
+        XCTAssertFalse(developer.shows(.reviews))
+        XCTAssertFalse(developer.shows(.provisioningResources))
+
+        let support = Credential(
+            key: "Support", issuerID: "issuer", privateKey: "key", keyID: "id",
+            access: AppStoreConnectKeyAccess(kind: .individual, role: .customerSupport)
+        )
+        XCTAssertTrue(support.shows(.reviews))
+        XCTAssertFalse(support.shows(.builds))
+
+        let individualAdmin = Credential(
+            key: "Admin", issuerID: "issuer", privateKey: "key", keyID: "id",
+            access: AppStoreConnectKeyAccess(kind: .individual, role: .admin)
+        )
+        XCTAssertTrue(individualAdmin.shows(.users))
+        XCTAssertFalse(individualAdmin.shows(.provisioningResources))
+
+        let teamAdmin = Credential(
+            key: "Team Admin", issuerID: "issuer", privateKey: "key", keyID: "id",
+            access: AppStoreConnectKeyAccess(kind: .team, role: .admin)
+        )
+        XCTAssertTrue(teamAdmin.shows(.provisioningResources))
     }
 
     // NOTE: CredentialStorage's selection logic (changeTeam /

@@ -18,11 +18,12 @@ enum AppConfigs {
     /// Batch C: page size for team-scoped resources (devices, certificates,
     /// bundle IDs, profiles, users).
     static let resourceLimit: Int = 50
-    /// Batch H: menu bar build-status poller. One small filtered request
-    /// (filter[processingState]=PROCESSING) per interval — 120s keeps it
-    /// lightweight against API rate limits while staying timely enough
-    /// for build processing (typically minutes).
-    static let buildStatusPollInterval: TimeInterval = 120
+    /// Module 12: active-build poller. One small filtered request
+    /// (filter[processingState]=PROCESSING) per interval — 30s per the M12
+    /// client policy (general resources: 5 min), adjustable in Monitoring
+    /// Preferences. Failed polls still back off (see below) so an erroring
+    /// key never hammers the API; 429 enters scoped backoff.
+    static let buildStatusPollInterval: TimeInterval = 30
     /// Batch H: cap on PROCESSING builds per poll; processing builds are a
     /// handful at a time, so one page always covers it.
     static let buildStatusPollLimit: Int = 50
@@ -91,19 +92,4 @@ enum AppConfigs {
 
     /// Rating filter values for the Reviews tab (0 = All ratings).
     static let ratingOptions: [Int] = [0, 1, 2, 3, 4, 5]
-
-    /// State filter for customer reviews in the Reviews tab.
-    enum ReviewStateFilter: String, CaseIterable {
-        case all = "All"
-        case replied = "Replied"
-        case unreplied = "Unreplied"
-
-        var displayName: String {
-            switch self {
-            case .all: return "All States"
-            case .replied: return "Replied"
-            case .unreplied: return "Unreplied"
-            }
-        }
-    }
 }

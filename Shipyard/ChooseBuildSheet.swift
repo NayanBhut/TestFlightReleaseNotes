@@ -164,10 +164,12 @@ struct ChooseBuildSheet: View {
                 Text("Status")
                     .frame(width: 134, alignment: .leading)
                 Text("Selection")
+                Spacer(minLength: 0)
             }
             .font(.system(size: 11))
             .foregroundColor(ShipyardTheme.body)
             .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 28)
             .background(ShipyardTheme.tableHeader)
 
@@ -247,6 +249,7 @@ struct ChooseBuildSheet: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 46)
         .background(selected ? ShipyardTheme.tableHeader : ShipyardTheme.tableBackground)
         .overlay(

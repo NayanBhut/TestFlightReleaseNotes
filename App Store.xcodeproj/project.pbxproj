@@ -35,6 +35,8 @@
 		B47A0013B47A0013001A9E13 /* ReviewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0012B47A0012001A9E12 /* ReviewModels.swift */; };
 		B47A0017B47A0017001A9E17 /* ReviewsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0016B47A0016001A9E16 /* ReviewsViewModel.swift */; };
 		B47A0019B47A0019001A9E19 /* ReviewsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0018B47A0018001A9E18 /* ReviewsView.swift */; };
+		F47A0112F47A0112001A9E12 /* ReviewReplyFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47A0110F47A0110001A9E10 /* ReviewReplyFlow.swift */; };
+		F47A0113F47A0113001A9E13 /* ReviewsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47A0111F47A0111001A9E11 /* ReviewsInboxView.swift */; };
 		B47A001BB47A001B001A9E1B /* ResourcesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */; };
 		B47A001DB47A001D001A9E1D /* ResourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A001CB47A001C001A9E1C /* ResourcesView.swift */; };
 		B47A0029B47A0029001A9E29 /* ScreenshotsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */; };
@@ -45,6 +47,9 @@
 		C47A0044C47A0044001A9E04 /* AppsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0034C47A0034001A9E04 /* AppsTableView.swift */; };
 		C47A0045C47A0045001A9E05 /* BuildsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0035C47A0035001A9E05 /* BuildsTableView.swift */; };
 		C47A0046C47A0046001A9E06 /* MonitoringView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0036C47A0036001A9E06 /* MonitoringView.swift */; };
+		F47A0103F47A0103001A9E03 /* MonitoringCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47A0100F47A0100001A9E00 /* MonitoringCenter.swift */; };
+		F47A0104F47A0104001A9E04 /* SharedActionSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47A0101F47A0101001A9E01 /* SharedActionSheets.swift */; };
+		F47A0105F47A0105001A9E05 /* MonitoringDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47A0102F47A0102001A9E02 /* MonitoringDiagnostics.swift */; };
 		C47A0047C47A0047001A9E07 /* CertificatesTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0037C47A0037001A9E07 /* CertificatesTableView.swift */; };
 		C47A0048C47A0048001A9E08 /* UsersTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0038C47A0038001A9E08 /* UsersTableView.swift */; };
 		C47A0049C47A0049001A9E09 /* BundleIDsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A0039C47A0039001A9E09 /* BundleIDsTableView.swift */; };
@@ -69,6 +74,7 @@
 		CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */; };
 		CD616D8A2A8F62A5004ADF44 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CD616D892A8F62A5004ADF44 /* Assets.xcassets */; };
 		CD616D8D2A8F62A5004ADF44 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CD616D8C2A8F62A5004ADF44 /* Preview Assets.xcassets */; };
+		E19A15B42E45A00100D15A01 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E19A15B32E45A00100D15A01 /* PrivacyInfo.xcprivacy */; };
 		CD9DD4942BE3DDB400820E2F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9DD4932BE3DDB400820E2F /* ContentView.swift */; };
 		CD9DD4A02BE3DE9500820E2F /* SideBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9DD49F2BE3DE9500820E2F /* SideBarViewModel.swift */; };
 		CD9DD4C22BE3ECE000820E2F /* ECPrivateKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9DD4B92BE3EBC300820E2F /* ECPrivateKey.swift */; };
@@ -120,6 +126,8 @@
 		B47A0012B47A0012001A9E12 /* ReviewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewModels.swift; sourceTree = "<group>"; };
 		B47A0016B47A0016001A9E16 /* ReviewsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsViewModel.swift; sourceTree = "<group>"; };
 		B47A0018B47A0018001A9E18 /* ReviewsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsView.swift; sourceTree = "<group>"; };
+		F47A0110F47A0110001A9E10 /* ReviewReplyFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewReplyFlow.swift; sourceTree = "<group>"; };
+		F47A0111F47A0111001A9E11 /* ReviewsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsInboxView.swift; sourceTree = "<group>"; };
 		B47A001AB47A001A001A9E1A /* ResourcesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourcesViewModel.swift; sourceTree = "<group>"; };
 		B47A001CB47A001C001A9E1C /* ResourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourcesView.swift; sourceTree = "<group>"; };
 		B47A0028B47A0028001A9E28 /* ScreenshotsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotsSheet.swift; sourceTree = "<group>"; };
@@ -152,12 +160,16 @@
 		C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseStatusViews.swift; sourceTree = "<group>"; };
 		C47A005FC47A005F001A9E5F /* UserPermissionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserPermissionViews.swift; sourceTree = "<group>"; };
 		C47A0061C47A0061001A9E61 /* ProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViews.swift; sourceTree = "<group>"; };
+		F47A0100F47A0100001A9E00 /* MonitoringCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringCenter.swift; sourceTree = "<group>"; };
+		F47A0101F47A0101001A9E01 /* SharedActionSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedActionSheets.swift; sourceTree = "<group>"; };
+		F47A0102F47A0102001A9E02 /* MonitoringDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringDiagnostics.swift; sourceTree = "<group>"; };
 		CD51EBA72C5FB91F004DBAC1 /* AppConfigs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigs.swift; sourceTree = "<group>"; };
 		CD616D822A8F62A4004ADF44 /* Shipyard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Shipyard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD616D852A8F62A4004ADF44 /* App_StoreApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App_StoreApp.swift; sourceTree = "<group>"; };
 		CD616D892A8F62A5004ADF44 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CD616D8C2A8F62A5004ADF44 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		CD616D8E2A8F62A5004ADF44 /* App_Store.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App_Store.entitlements; sourceTree = "<group>"; };
+		E19A15B32E45A00100D15A01 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		CD9DD4932BE3DDB400820E2F /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CD9DD49F2BE3DE9500820E2F /* SideBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideBarViewModel.swift; sourceTree = "<group>"; };
 		CD9DD4B62BE3EBC300820E2F /* JWT.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = JWT.swift; sourceTree = "<group>"; };
@@ -245,6 +257,7 @@
 			children = (
 				B47A0016B47A0016001A9E16 /* ReviewsViewModel.swift */,
 				B47A0018B47A0018001A9E18 /* ReviewsView.swift */,
+				F47A0110F47A0110001A9E10 /* ReviewReplyFlow.swift */,
 			);
 			path = Reviews;
 			sourceTree = "<group>";
@@ -287,6 +300,10 @@
 				C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */,
 				C47A005FC47A005F001A9E5F /* UserPermissionViews.swift */,
 				C47A0061C47A0061001A9E61 /* ProfileViews.swift */,
+				F47A0100F47A0100001A9E00 /* MonitoringCenter.swift */,
+				F47A0101F47A0101001A9E01 /* SharedActionSheets.swift */,
+				F47A0102F47A0102001A9E02 /* MonitoringDiagnostics.swift */,
+				F47A0111F47A0111001A9E11 /* ReviewsInboxView.swift */,
 			);
 			path = Shipyard;
 			sourceTree = "<group>";
@@ -325,6 +342,7 @@
 			children = (
 				CD616D892A8F62A5004ADF44 /* Assets.xcassets */,
 				CD616D8E2A8F62A5004ADF44 /* App_Store.entitlements */,
+				E19A15B32E45A00100D15A01 /* PrivacyInfo.xcprivacy */,
 				CD616D8B2A8F62A5004ADF44 /* Preview Content */,
 			);
 			path = "App Store";
@@ -527,6 +545,7 @@
 			files = (
 				CD616D8D2A8F62A5004ADF44 /* Preview Assets.xcassets in Resources */,
 				CD616D8A2A8F62A5004ADF44 /* Assets.xcassets in Resources */,
+				E19A15B42E45A00100D15A01 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -577,6 +596,8 @@
 				B47A0013B47A0013001A9E13 /* ReviewModels.swift in Sources */,
 				B47A0017B47A0017001A9E17 /* ReviewsViewModel.swift in Sources */,
 				B47A0019B47A0019001A9E19 /* ReviewsView.swift in Sources */,
+				F47A0112F47A0112001A9E12 /* ReviewReplyFlow.swift in Sources */,
+				F47A0113F47A0113001A9E13 /* ReviewsInboxView.swift in Sources */,
 				B47A0029B47A0029001A9E29 /* ScreenshotsSheet.swift in Sources */,
 				B47A001BB47A001B001A9E1B /* ResourcesViewModel.swift in Sources */,
 				8D00F6222DCB34BC004CCA36 /* StateView.swift in Sources */,
@@ -590,6 +611,9 @@
 				C47A0044C47A0044001A9E04 /* AppsTableView.swift in Sources */,
 				C47A0045C47A0045001A9E05 /* BuildsTableView.swift in Sources */,
 				C47A0046C47A0046001A9E06 /* MonitoringView.swift in Sources */,
+				F47A0103F47A0103001A9E03 /* MonitoringCenter.swift in Sources */,
+				F47A0104F47A0104001A9E04 /* SharedActionSheets.swift in Sources */,
+				F47A0105F47A0105001A9E05 /* MonitoringDiagnostics.swift in Sources */,
 				C47A0047C47A0047001A9E07 /* CertificatesTableView.swift in Sources */,
 				C47A0048C47A0048001A9E08 /* UsersTableView.swift in Sources */,
 				C47A0049C47A0049001A9E09 /* BundleIDsTableView.swift in Sources */,
@@ -837,19 +861,21 @@
 				DEVELOPMENT_ASSET_PATHS = "\"App Store/Preview Content\"";
 				DEVELOPMENT_TEAM = SQ2XJ67YNR;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Shipyard;
+				INFOPLIST_KEY_CFBundleDisplayName = "Shipyard Connect";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.demos.App-Store";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sid.shipyardconnect;
 				PRODUCT_NAME = Shipyard;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -872,19 +898,21 @@
 				DEVELOPMENT_ASSET_PATHS = "\"App Store/Preview Content\"";
 				DEVELOPMENT_TEAM = SQ2XJ67YNR;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Shipyard;
+				INFOPLIST_KEY_CFBundleDisplayName = "Shipyard Connect";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.demos.App-Store";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sid.shipyardconnect;
 				PRODUCT_NAME = Shipyard;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
