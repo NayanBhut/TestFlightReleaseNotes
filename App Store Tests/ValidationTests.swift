@@ -993,6 +993,14 @@ final class ValidationTests: XCTestCase {
         XCTAssertNil(ReviewStatusSyncState.idle.versionId)
     }
 
+    func testReviewStatusSyncBelongsOnlyToItsVersion() {
+        let syncing = ReviewStatusSyncState.syncing(versionId: "version-1")
+        XCTAssertTrue(syncing.belongs(to: "version-1"))
+        XCTAssertFalse(syncing.belongs(to: "version-2"))
+        XCTAssertFalse(syncing.belongs(to: nil))
+        XCTAssertFalse(ReviewStatusSyncState.idle.belongs(to: "version-1"))
+    }
+
     func testReviewStatusSettlesWhenServerStateChangesOrLocks() {
         for state in ["PREPARE_FOR_SUBMISSION", "REJECTED", "METADATA_REJECTED"] {
             XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: state), state)

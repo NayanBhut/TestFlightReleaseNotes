@@ -71,6 +71,11 @@ enum ReviewStatusSyncState: Equatable {
         if case .delayed = self { return true }
         return false
     }
+
+    func belongs(to candidateVersionId: String?) -> Bool {
+        guard let candidateVersionId else { return false }
+        return versionId == candidateVersionId
+    }
 }
 
 struct AppStoreVersionCaseState {
@@ -2058,7 +2063,8 @@ final class ReviewsViewModel: ObservableObject {
                     return
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      generation == reviewStatusSyncGeneration else { return }
                 reviewsLogger.error("Failed to refresh review status: \(error.localizedDescription)")
             }
         }
@@ -2105,12 +2111,26 @@ final class ReviewsViewModel: ObservableObject {
         reviewStatusSyncState = .idle
     }
 
+    /// Cancellation can happen from the separate Reviews tab while this
+    /// version is still waiting for its post-submit state refresh. End that
+    /// polling epoch so the editable version cannot be stranded in the
+    /// delayed state with Save and Submit disabled.
+    private func clearReviewStatusSync(afterCancellingVersionId versionId: String?) {
+        guard reviewStatusSyncState.belongs(to: versionId) else { return }
+        reviewStatusSyncGeneration += 1
+        reviewStatusSyncTask?.cancel()
+        reviewStatusSyncTask = nil
+        reviewStatusInitialVersionState = nil
+        reviewStatusSyncState = .idle
+    }
+
     /// States in which Apple accepts a cancel. IN_REVIEW intentionally
     /// excluded — the server 422s cancels once review has started.
     static let cancellableSubmissionStates: Set<String> = ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW"]
 
-    /// PATCH /v1/reviewSubmissions/{id} {canceled: true}. Refetches the
-    /// list on success so the row state updates; true = cancelled.
+    /// PATCH /v1/reviewSubmissions/{id} {canceled: true}. Refetches both the
+    /// version and submissions on success so every cancel entry point sees
+    /// the version return to its editable state; true = cancelled.
     func cancelSubmission(_ submission: ReviewSubmissionModel) async -> Bool {
         guard cancellingSubmissionId == nil else { return false }
         guard let appId = currentAppId else { return false }
@@ -2140,10 +2160,8 @@ final class ReviewsViewModel: ObservableObject {
             guard !Task.isCancelled,
                   operationGeneration == cancelSubmissionGeneration,
                   currentAppId == appId else { return false }
-            submissionsLoadedAppId = nil
-            submissionsGeneration += 1
-            let generation = submissionsGeneration
-            submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: generation) }
+            clearReviewStatusSync(afterCancellingVersionId: submission.appStoreVersionForReview?.id)
+            refreshAfterWrite(appId: appId)
             return true
         } catch {
             guard !Task.isCancelled,

@@ -387,9 +387,8 @@ struct ReleaseTabView: View {
                     submission: reviewsVM.cancellableSubmission(for: version),
                     reviewsVM: reviewsVM
                 ) {
-                    // Never assume the post-cancel state — refetch and
-                    // route by whatever Apple returns (usually Prepare).
-                    reviewsVM.refreshAfterWrite(appId: app.id)
+                    // cancelSubmission refreshes the version and routes the
+                    // UI by whatever Apple returns (usually Prepare).
                     featureTab = .overview
                     showToast(title: "Submission cancelled",
                               detail: "\(app.name ?? "App") \(version.versionString ?? "") · Build #\(version.build?.version ?? "—")")
