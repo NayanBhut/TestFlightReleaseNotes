@@ -695,7 +695,7 @@ struct ReviewsView: View {
                                 Text(submission.platform ?? "")
                                     .font(.appBody)
                                     .fontWeight(.medium)
-                                if let version = submission.appStoreVersion?.versionString, !version.isEmpty {
+                                if let version = submission.appStoreVersionForReview?.versionString, !version.isEmpty {
                                     Text("Version \(version)")
                                         .font(.appCaption)
                                         .foregroundColor(.secondary)

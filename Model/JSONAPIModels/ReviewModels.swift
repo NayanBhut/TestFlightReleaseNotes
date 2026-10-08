@@ -4,7 +4,7 @@
 //
 //  Batch C3: Customer reviews + review submissions (read-only).
 //  - GET /v1/apps/{id}/customerReviews?include=response&sort=-createdDate
-//  - GET /v1/reviewSubmissions?filter[app]={id}
+//  - GET /v1/apps/{id}/reviewSubmissions
 //
 
 import Foundation
@@ -55,8 +55,10 @@ struct ReviewSubmissionModel: Equatable {
     /// CANCELING, COMPLETING, COMPLETE.
     @ResourceAttribute var state: String?
     @ResourceAttribute var submittedDate: String?
-    /// Included via include=appStoreVersion; nil when not requested.
-    @ResourceRelationship var appStoreVersion: AppStoreVersionsModel?
+    /// Included by the app-scoped submissions endpoint. Matching this id
+    /// before cancellation prevents an items-only submission on the same
+    /// platform from being withdrawn by mistake.
+    @ResourceRelationship var appStoreVersionForReview: AppStoreVersionsModel?
     /// Included via include=submittedByActor (verified against a recorded
     /// GET /v1/reviewSubmissions/{id} response); nil when not requested.
     @ResourceRelationship var submittedByActor: ActorModel?

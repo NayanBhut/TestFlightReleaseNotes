@@ -877,7 +877,7 @@ final class ValidationTests: XCTestCase {
     @MainActor
     func testVersionCaseStateUsesSpecifiedLivePendingAndIgnoredStates() {
         var version = AppStoreVersionsModel(id: "version-1", appStoreVersionLocalizations: [])
-        for state in ["PREPARE_FOR_SUBMISSION", "WAITING_FOR_REVIEW", "IN_REVIEW",
+        for state in ["PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW",
                       "PENDING_DEVELOPER_RELEASE", "REJECTED", "METADATA_REJECTED",
                       "DEVELOPER_REJECTED", "INVALID_BINARY", "PENDING_CONTRACT",
                       "PROCESSING_FOR_DISTRIBUTION"] {
@@ -929,6 +929,7 @@ final class ValidationTests: XCTestCase {
     func testStatusLabelsAndEditability() {
         let labels = [
             "PREPARE_FOR_SUBMISSION": "Draft",
+            "READY_FOR_REVIEW": "Ready for Review",
             "WAITING_FOR_REVIEW": "Waiting for Review",
             "IN_REVIEW": "In Review",
             "PENDING_DEVELOPER_RELEASE": "Approved – Ready to Release",
@@ -946,7 +947,7 @@ final class ValidationTests: XCTestCase {
                       "METADATA_REJECTED", "INVALID_BINARY"] {
             XCTAssertTrue(isVersionEditable(appStoreState: state), state)
         }
-        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE",
+        for state in ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE",
                       "PENDING_CONTRACT", "PROCESSING_FOR_DISTRIBUTION",
                       "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE"] {
             XCTAssertFalse(isVersionEditable(appStoreState: state), state)
@@ -976,6 +977,45 @@ final class ValidationTests: XCTestCase {
     func testStaleResponseProtection() {
         XCTAssertTrue(ReviewsViewModel.responseIsCurrent(generation: 3, current: 3))
         XCTAssertFalse(ReviewsViewModel.responseIsCurrent(generation: 2, current: 3))
+    }
+
+    func testReviewStatusSyncStateIdentifiesPendingVersionAndPhase() {
+        let syncing = ReviewStatusSyncState.syncing(versionId: "version-1")
+        XCTAssertEqual(syncing.versionId, "version-1")
+        XCTAssertTrue(syncing.isSyncing)
+        XCTAssertFalse(syncing.isDelayed)
+        XCTAssertTrue(syncing.isActive)
+
+        let delayed = ReviewStatusSyncState.delayed(versionId: "version-1")
+        XCTAssertEqual(delayed.versionId, "version-1")
+        XCTAssertFalse(delayed.isSyncing)
+        XCTAssertTrue(delayed.isDelayed)
+        XCTAssertTrue(delayed.isActive)
+
+        XCTAssertNil(ReviewStatusSyncState.idle.versionId)
+        XCTAssertFalse(ReviewStatusSyncState.idle.isActive)
+    }
+
+    func testReviewStatusSyncBelongsOnlyToItsVersion() {
+        let syncing = ReviewStatusSyncState.syncing(versionId: "version-1")
+        XCTAssertTrue(syncing.belongs(to: "version-1"))
+        XCTAssertFalse(syncing.belongs(to: "version-2"))
+        XCTAssertFalse(syncing.belongs(to: nil))
+        XCTAssertFalse(ReviewStatusSyncState.idle.belongs(to: "version-1"))
+    }
+
+    func testReviewStatusSettlesWhenServerStateChangesOrLocks() {
+        for state in ["PREPARE_FOR_SUBMISSION", "REJECTED", "METADATA_REJECTED"] {
+            XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: state), state)
+        }
+        XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(
+            "READY_FOR_REVIEW",
+            submittedFrom: "PREPARE_FOR_SUBMISSION"))
+        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW"] {
+            XCTAssertTrue(ReviewsViewModel.reviewStatusDidSettle(state, submittedFrom: "PREPARE_FOR_SUBMISSION"), state)
+        }
+        XCTAssertTrue(ReviewsViewModel.reviewStatusDidSettle("REJECTED", submittedFrom: "PREPARE_FOR_SUBMISSION"))
+        XCTAssertFalse(ReviewsViewModel.reviewStatusDidSettle(nil, submittedFrom: "PREPARE_FOR_SUBMISSION"))
     }
 
     @MainActor
@@ -1051,13 +1091,13 @@ final class ValidationTests: XCTestCase {
     func testCSVParsesCommaRowsWithHeader() {
         let content = """
         name,udid,platform
-        John's iPhone 16 Pro,00008101-001C25D40,IOS
+        John's iPhone 16 Pro,00008101-001C25D40C28001E,IOS
         iPad Air,abcdef1234567890abcdef1234567890abcd1234,
         """
         let parsed = DeviceCSVImport.parse(content)
         XCTAssertEqual(parsed.rejected, 0)
         XCTAssertEqual(parsed.rows.count, 2)
-        XCTAssertEqual(parsed.rows[0], DeviceCSVRow(name: "John's iPhone 16 Pro", udid: "00008101-001C25D40", platform: .IOS))
+        XCTAssertEqual(parsed.rows[0], DeviceCSVRow(name: "John's iPhone 16 Pro", udid: "00008101-001C25D40C28001E", platform: .IOS))
         // Blank platform defaults to iOS (same default as the form).
         XCTAssertEqual(parsed.rows[1].platform, .IOS)
     }
@@ -1065,11 +1105,11 @@ final class ValidationTests: XCTestCase {
     func testCSVSkipsCommentsBlanksAndRejectsBadRows() {
         let content = """
         # team devices
-        Legacy iPhone 12\t00008030-001A2B3C4\tMAC_OS
+        Legacy iPhone 12\t00008030-001A2B3C4D5E6F7A\tMAC_OS
 
         nameless,,IOS
         bad-udid,not-a-udid,IOS
-        mystery,00008101-001C25D40,WATCH_OS
+        mystery,00008101-001C25D40C28001E,WATCH_OS
         single-field-only
         """
         let parsed = DeviceCSVImport.parse(content)
@@ -1080,9 +1120,9 @@ final class ValidationTests: XCTestCase {
 
     func testCSVPlatformAliases() {
         let content = """
-        a,00008101-001C25D40,macos
-        b,00008101-001C25D40,universal
-        c,00008101-001C25D40,MAC
+        a,00008101-001C25D40C28001E,macos
+        b,00008101-001C25D40C28001E,universal
+        c,00008101-001C25D40C28001E,MAC
         """
         let parsed = DeviceCSVImport.parse(content)
         XCTAssertEqual(parsed.rows.map(\.platform), [.MAC_OS, .UNIVERSAL, .MAC_OS])

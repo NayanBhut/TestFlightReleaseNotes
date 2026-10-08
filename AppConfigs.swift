@@ -30,6 +30,11 @@ enum AppConfigs {
     /// Batch H: backoff between polls after a failure — an erroring key
     /// (expired/revoked) must not hit the API with 401s every 120 s.
     static let buildStatusPollErrorInterval: TimeInterval = 300
+    /// App Store Connect can briefly return the pre-submit version state
+    /// after accepting a review submission. Keep the release UI visibly
+    /// pending while bounded follow-up reads wait for that state to settle.
+    static let reviewStatusPollInterval: TimeInterval = 2
+    static let reviewStatusPollAttempts: Int = 10
 
     enum SortOption: String, CaseIterable {
         case nameAscending = "nameAscending"

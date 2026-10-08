@@ -410,9 +410,14 @@ enum DeviceCSVImport {
         // Security-scoped URLs (open panel) need explicit access.
         let didStart = url.startAccessingSecurityScopedResource()
         defer { if didStart { url.stopAccessingSecurityScopedResource() } }
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-        guard fileSize > 0, fileSize <= maxCSVFileSize else {
+        // A file we cannot stat (missing / permission) is unreadable, not
+        // oversized — the message is shown verbatim in the form.
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = (attributes[.size] as? NSNumber)?.int64Value,
+              fileSize > 0 else {
+            throw CSVFileLoadError.unreadable
+        }
+        guard fileSize <= maxCSVFileSize else {
             throw CSVFileLoadError.tooLarge
         }
         guard let data = try? Data(contentsOf: url),
@@ -653,9 +658,14 @@ enum ProvisioningWriteValidation {
     /// form just displays `errorDescription` — the raw CSR text never
     /// surfaces in the UI.
     static func loadCSR(from url: URL) throws -> String {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-        guard fileSize > 0, fileSize <= maxCSRFileSize else {
+        // Missing/unstat-able → unreadable; only a file that really is too
+        // big gets the size message. Both strings are shown verbatim.
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = (attributes[.size] as? NSNumber)?.int64Value,
+              fileSize > 0 else {
+            throw CSRFileLoadError.unreadable
+        }
+        guard fileSize <= maxCSRFileSize else {
             throw CSRFileLoadError.tooLarge
         }
         guard let data = try? Data(contentsOf: url) else {

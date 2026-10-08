@@ -13,6 +13,71 @@ import JSONAPI
 @testable import Shipyard
 
 final class JSONDecodingTests: XCTestCase {
+    @MainActor
+    func testReviewSubmissionsDecodeAndCancelMatchesExactVersion() throws {
+        let json = """
+        {
+          "data": [
+            {
+              "type": "reviewSubmissions",
+              "id": "submission-version-1",
+              "attributes": {"platform": "IOS", "state": "WAITING_FOR_REVIEW", "submittedDate": "2026-10-08T10:00:00Z"},
+              "relationships": {
+                "appStoreVersionForReview": {"data": {"type": "appStoreVersions", "id": "version-1"}},
+                "submittedByActor": {"data": null}
+              }
+            },
+            {
+              "type": "reviewSubmissions",
+              "id": "submission-version-2",
+              "attributes": {"platform": "IOS", "state": "WAITING_FOR_REVIEW", "submittedDate": "2026-10-08T11:00:00Z"},
+              "relationships": {
+                "appStoreVersionForReview": {"data": {"type": "appStoreVersions", "id": "version-2"}},
+                "submittedByActor": {"data": null}
+              }
+            },
+            {
+              "type": "reviewSubmissions",
+              "id": "submission-items-only",
+              "attributes": {"platform": "IOS", "state": "WAITING_FOR_REVIEW", "submittedDate": "2026-10-08T12:00:00Z"},
+              "relationships": {
+                "appStoreVersionForReview": {"data": null},
+                "submittedByActor": {"data": null}
+              }
+            }
+          ],
+          "included": [
+            {
+              "type": "appStoreVersions",
+              "id": "version-1",
+              "attributes": {"versionString": "8.8", "platform": "IOS", "appVersionState": "WAITING_FOR_REVIEW"},
+              "relationships": {"appStoreVersionLocalizations": {"data": []}, "build": {"data": null}}
+            },
+            {
+              "type": "appStoreVersions",
+              "id": "version-2",
+              "attributes": {"versionString": "8.9", "platform": "IOS", "appVersionState": "WAITING_FOR_REVIEW"},
+              "relationships": {"appStoreVersionLocalizations": {"data": []}, "build": {"data": null}}
+            }
+          ],
+          "meta": {"paging": {"total": 3, "limit": 50}}
+        }
+        """
+
+        let document = try getDecoder().decode(ReviewSubmissionsDocument.self, from: Data(json.utf8))
+        XCTAssertEqual(document.data[0].appStoreVersionForReview?.id, "version-1")
+        XCTAssertEqual(document.data[0].appStoreVersionForReview?.versionString, "8.8")
+
+        let vm = ReviewsViewModel()
+        vm.submissionsState = .loaded(document.data)
+        let version = try XCTUnwrap(document.data[0].appStoreVersionForReview)
+        XCTAssertEqual(vm.cancellableSubmission(for: version)?.id, "submission-version-1")
+
+        var unrelated = version
+        unrelated.id = "version-without-submission"
+        XCTAssertNil(vm.cancellableSubmission(for: unrelated))
+    }
+
     func testBundleIdsDocumentDecodes() throws {
         let json = """
         {"data":[{"type":"bundleIds","id":"bundle-1","attributes":{"name":"My App","identifier":"com.example.app","platform":"IOS","seedId":"ABCD1234"}}],"meta":{"paging":{"total":1,"limit":50}}}

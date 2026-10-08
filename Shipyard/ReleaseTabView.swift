@@ -211,6 +211,16 @@ struct ReleaseTabView: View {
         return version.appStoreState ?? version.appVersionState
     }
 
+    private var reviewStatusSyncing: Bool {
+        reviewsVM.reviewStatusSyncState.isSyncing
+            && reviewsVM.reviewStatusSyncState.belongs(to: shownVersion?.id)
+    }
+
+    private var reviewStatusDelayed: Bool {
+        reviewsVM.reviewStatusSyncState.isDelayed
+            && reviewsVM.reviewStatusSyncState.belongs(to: shownVersion?.id)
+    }
+
     /// Editable only when the shown version is the VM-selected pending
     /// version — every write guards on selectedAppStoreVersionId.
     private var canEditShown: Bool {
@@ -363,7 +373,6 @@ struct ReleaseTabView: View {
                     phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
                     reviewsVM: reviewsVM
                 ) {
-                    reviewsVM.refreshAfterWrite(appId: app.id)
                     showToast(title: "Submitted for review",
                               detail: "\(app.name ?? "App") \(version.versionString ?? "") · Build #\(version.build?.version ?? "—")")
                 }
@@ -375,12 +384,11 @@ struct ReleaseTabView: View {
                     appName: app.name ?? "this app",
                     version: version,
                     phasedState: reviewsVM.phasedRelease?.phasedReleaseState,
-                    submission: reviewsVM.cancellableSubmission(forPlatform: version.platform),
+                    submission: reviewsVM.cancellableSubmission(for: version),
                     reviewsVM: reviewsVM
                 ) {
-                    // Never assume the post-cancel state — refetch and
-                    // route by whatever Apple returns (usually Prepare).
-                    reviewsVM.refreshAfterWrite(appId: app.id)
+                    // cancelSubmission refreshes the version and routes the
+                    // UI by whatever Apple returns (usually Prepare).
                     featureTab = .overview
                     showToast(title: "Submission cancelled",
                               detail: "\(app.name ?? "App") \(version.versionString ?? "") · Build #\(version.build?.version ?? "—")")
@@ -706,7 +714,9 @@ struct ReleaseTabView: View {
         switch shownState {
         case "PREPARE_FOR_SUBMISSION":
             return "Draft · Created \(releaseDayDisplay(version.createdDate))"
-        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+        case "READY_FOR_REVIEW":
+            return "Added to draft submission"
+        case "WAITING_FOR_REVIEW":
             return "Submitted \(submitted)"
         case "IN_REVIEW":
             return "In Review · submitted \(submitted)"
@@ -749,22 +759,26 @@ struct ReleaseTabView: View {
 
     @ViewBuilder
     private var overviewActionBar: some View {
-        switch shownState {
-        case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
-            waitingActionBar
-        case "IN_REVIEW":
-            inReviewActionBar
-        case "PENDING_DEVELOPER_RELEASE":
-            pendingReleaseActionBar
-        case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
-             "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE",
-             "REPLACED_WITH_NEW_VERSION":
-            liveActionBar
-        default:
-            if canEditShown {
-                prepareActionBar
-            } else {
-                lockedActionBar
+        if reviewStatusSyncing || reviewStatusDelayed {
+            prepareActionBar
+        } else {
+            switch shownState {
+            case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+                waitingActionBar
+            case "IN_REVIEW":
+                inReviewActionBar
+            case "PENDING_DEVELOPER_RELEASE":
+                pendingReleaseActionBar
+            case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
+                 "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE",
+                 "REPLACED_WITH_NEW_VERSION":
+                liveActionBar
+            default:
+                if canEditShown {
+                    prepareActionBar
+                } else {
+                    lockedActionBar
+                }
             }
         }
     }
@@ -775,35 +789,54 @@ struct ReleaseTabView: View {
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let error = saveError ?? reviewsVM.releaseSettingsError, canEditShown {
+            if let error = saveError ?? reviewsVM.releaseSettingsError {
                 Text(error)
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.danger)
             }
-            if saving {
+            if reviewStatusSyncing {
                 ProgressView()
                     .scaleEffect(0.7)
-            } else {
-                Button("Save") {
-                    save()
-                }
-                .buttonStyle(.launchSecondary)
-                .disabled(!canEditShown || !isDirty)
-            }
-            if reviewsVM.submittingReview {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else if canSubmit {
-                Button("Submit for Review") {
-                    showSubmitDialog = true
+                Text("Updating status…")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(ShipyardTheme.body)
+            } else if reviewStatusDelayed {
+                Button("Check Again") {
+                    guard let versionId = shownVersion?.id else { return }
+                    reviewsVM.retryReviewStatusSync(appId: app.id, versionId: versionId)
                 }
                 .buttonStyle(.launchPrimary)
-            } else {
-                Button("Submit for Review") {
-                    showSubmitDialog = true
+                Button("Dismiss") {
+                    guard let versionId = shownVersion?.id else { return }
+                    reviewsVM.dismissReviewStatusSync(versionId: versionId)
                 }
                 .buttonStyle(.launchSecondary)
-                .disabled(true)
+            } else {
+                if saving {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button("Save") {
+                        save()
+                    }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(!canEditShown || !isDirty)
+                }
+                if reviewsVM.submittingReview {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else if canSubmit {
+                    Button("Submit for Review") {
+                        showSubmitDialog = true
+                    }
+                    .buttonStyle(.launchPrimary)
+                } else {
+                    Button("Submit for Review") {
+                        showSubmitDialog = true
+                    }
+                    .buttonStyle(.launchSecondary)
+                    .disabled(true)
+                }
             }
         }
         .padding(.horizontal, 24)
@@ -822,14 +855,14 @@ struct ReleaseTabView: View {
             }
             .buttonStyle(.launchSecondary)
             if let version = shownVersion,
-               reviewsVM.cancellableSubmission(forPlatform: version.platform) != nil {
-                Button("Cancel Submission") {
+               reviewsVM.cancellableSubmission(for: version) != nil {
+                Button("Remove from Review") {
                     showCancelDialog = true
                 }
                 .buttonStyle(.launchDestructive)
             }
             Button("Request Expedited Review") {
-                openASC()
+                openExpeditedReview()
             }
             .buttonStyle(.launchSecondary)
         }
@@ -904,8 +937,8 @@ struct ReleaseTabView: View {
                 .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let version = shownVersion,
-               reviewsVM.cancellableSubmission(forPlatform: version.platform) != nil {
-                Button("Cancel Submission") {
+               reviewsVM.cancellableSubmission(for: version) != nil {
+                Button("Remove from Review") {
                     showCancelDialog = true
                 }
                 .buttonStyle(.launchDestructive)
@@ -975,6 +1008,12 @@ struct ReleaseTabView: View {
 
     private var actionBarText: String {
         guard shownVersion != nil else { return "" }
+        if reviewStatusSyncing {
+            return "Submission accepted · Waiting for App Store Connect to update the review status."
+        }
+        if reviewStatusDelayed {
+            return "Submission accepted · The review status is taking longer than expected to update."
+        }
         if !canEditShown {
             return "Version is \(getStatusLabel(appStoreState: shownState).lowercased()) — metadata is locked while Apple has it."
         }
@@ -992,7 +1031,7 @@ struct ReleaseTabView: View {
     }
 
     private var canSubmit: Bool {
-        ReleaseSubmissionRequirements.canSubmit(
+        return ReleaseSubmissionRequirements.canSubmit(
             canEdit: canEditShown,
             missingItems: missingItems,
             isDirty: isDirty,
@@ -1380,7 +1419,7 @@ struct ReleaseTabView: View {
         if draftEmail != (details.contactEmail ?? "") { return true }
         if draftDemoRequired != (details.demoAccountRequired ?? false) { return true }
         if draftDemoUser != (details.demoAccountName ?? "") { return true }
-        if !draftDemoPass.isEmpty { return true }
+        if draftDemoPass != (details.demoAccountPassword ?? "") { return true }
         if draftNotes != (details.notes ?? "") { return true }
         return false
     }
@@ -1614,6 +1653,12 @@ struct ReleaseTabView: View {
 
     private func openASC() {
         if let url = URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)") {
+            openURL(url)
+        }
+    }
+
+    private func openExpeditedReview() {
+        if let url = URL(string: "https://developer.apple.com/contact/app-store/?topic=expedite") {
             openURL(url)
         }
     }
