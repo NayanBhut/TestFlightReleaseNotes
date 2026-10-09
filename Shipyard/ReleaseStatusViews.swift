@@ -22,7 +22,7 @@ struct SubmittedSummaryCard: View {
 
     private var submittedDate: String {
         releaseDateTimeDisplay(
-            reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)
+            reviewsVM.latestSubmission(for: version)?.submittedDate)
     }
 
     private var phasedText: String {
@@ -508,7 +508,7 @@ struct WaitingVersionView: View {
         if isReadyForReview {
             return "Added to a draft submission. App Store Connect has not confirmed sending it to Apple yet."
         }
-        return "Submitted \(releaseDayDisplay(reviewsVM.latestSubmission(forPlatform: version.platform)?.submittedDate)). Estimated review: 24–48 hours."
+        return "Submitted \(releaseDayDisplay(reviewsVM.latestSubmission(for: version)?.submittedDate)). Estimated review: 24–48 hours."
     }
 
     var body: some View {
@@ -517,6 +517,7 @@ struct WaitingVersionView: View {
                 style: .warning,
                 title: alertTitle,
                 detail: alertDetail)
+                .accessibilityIdentifier(isReadyForReview ? "review.ready.card" : "review.waiting.card")
             SubmittedSummaryCard(version: version, reviewsVM: reviewsVM)
             SubmittedMetadataCard(detailVM: detailVM, localizations: localizations, primaryLocale: primaryLocale)
             ReviewInfoBlock(reviewsVM: reviewsVM, versionId: version.id)
@@ -641,18 +642,21 @@ struct LiveVersionView: View {
                         .buttonStyle(.launchSecondary)
                         .controlSize(.small)
                         .disabled(isPaused || reviewsVM.phasedActionInFlight)
+                        .accessibilityIdentifier("review.phased.pause")
                         Button("Resume") {
                             Task { await reviewsVM.setPhasedReleaseState("ACTIVE") }
                         }
                         .buttonStyle(.launchSecondary)
                         .controlSize(.small)
                         .disabled(!isPaused || reviewsVM.phasedActionInFlight)
+                        .accessibilityIdentifier("review.phased.resume")
                         Button("Release to All Users") {
                             showCompleteConfirm = true
                         }
                         .buttonStyle(.launchPrimary)
                         .controlSize(.small)
                         .disabled(reviewsVM.phasedActionInFlight)
+                        .accessibilityIdentifier("review.phased.complete")
                         .confirmationDialog(
                             "End the phased rollout? All remaining users receive the update immediately.",
                             isPresented: $showCompleteConfirm,

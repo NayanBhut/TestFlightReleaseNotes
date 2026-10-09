@@ -232,13 +232,38 @@ struct ActorModel: Equatable {
     @ResourceAttribute var userFirstName: String?
     @ResourceAttribute var userLastName: String?
 
-    /// "First Last"; falls back to email, then "Unknown" (names are
-    /// null for APPLE and API-key actors), so PII only shows when no
-    /// name exists. Mirrors BetaTesterModel.displayName.
+    /// Human-readable audit actor. People use their name/email; service
+    /// actors use Apple's actor type because they do not have user fields.
     var displayName: String {
-        let first = userFirstName ?? ""
-        let last = userLastName ?? ""
-        let full = "\(first) \(last)".trimmingCharacters(in: .whitespaces)
-        return full.isEmpty ? (userEmail ?? "Unknown") : full
+        let first = userFirstName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let last = userLastName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fullName = "\(first) \(last)".trimmingCharacters(in: .whitespaces)
+        if !fullName.isEmpty { return fullName }
+
+        if let email = userEmail?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !email.isEmpty {
+            return email
+        }
+
+        switch actorType {
+        case "API_KEY":
+            if let keyID = apiKeyId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !keyID.isEmpty {
+                return "API user \(keyID)"
+            }
+            return "API user"
+        case "XCODE_CLOUD":
+            return "Xcode Cloud"
+        case "APPLE":
+            return "Apple"
+        case "USER":
+            return "App Store Connect User"
+        case let type?:
+            let normalized = type.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else { return "Unknown actor" }
+            return normalized.replacingOccurrences(of: "_", with: " ").capitalized
+        case nil:
+            return "Unknown actor"
+        }
     }
 }

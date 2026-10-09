@@ -78,6 +78,39 @@ final class JSONDecodingTests: XCTestCase {
         XCTAssertNil(vm.cancellableSubmission(for: unrelated))
     }
 
+    func testActorDisplayNameUsesActorTypeWhenUserIdentityIsUnavailable() {
+        var user = ActorModel(id: "actor-user")
+        user.actorType = "USER"
+        user.userFirstName = " Ada "
+        user.userLastName = " Lovelace "
+        XCTAssertEqual(user.displayName, "Ada Lovelace")
+
+        var emailOnlyUser = ActorModel(id: "actor-email")
+        emailOnlyUser.actorType = "USER"
+        emailOnlyUser.userEmail = " ada@example.com "
+        XCTAssertEqual(emailOnlyUser.displayName, "ada@example.com")
+
+        var apiKey = ActorModel(id: "actor-api-key")
+        apiKey.actorType = "API_KEY"
+        apiKey.apiKeyId = " ABC123DEF4 "
+        XCTAssertEqual(apiKey.displayName, "API user ABC123DEF4")
+
+        var xcodeCloud = ActorModel(id: "actor-xcode-cloud")
+        xcodeCloud.actorType = "XCODE_CLOUD"
+        XCTAssertEqual(xcodeCloud.displayName, "Xcode Cloud")
+
+        var apple = ActorModel(id: "actor-apple")
+        apple.actorType = "APPLE"
+        XCTAssertEqual(apple.displayName, "Apple")
+
+        var futureActor = ActorModel(id: "actor-future")
+        futureActor.actorType = "AUTOMATION_SERVICE"
+        XCTAssertEqual(futureActor.displayName, "Automation Service")
+
+        let unknown = ActorModel(id: "actor-unknown")
+        XCTAssertEqual(unknown.displayName, "Unknown actor")
+    }
+
     func testBundleIdsDocumentDecodes() throws {
         let json = """
         {"data":[{"type":"bundleIds","id":"bundle-1","attributes":{"name":"My App","identifier":"com.example.app","platform":"IOS","seedId":"ABCD1234"}}],"meta":{"paging":{"total":1,"limit":50}}}

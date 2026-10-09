@@ -21,7 +21,6 @@ enum ShipyardSection: String, CaseIterable, Hashable {
     case bundleIDs
     case profiles
     case users
-    case reviews
 
     var title: String {
         switch self {
@@ -34,7 +33,6 @@ enum ShipyardSection: String, CaseIterable, Hashable {
         case .bundleIDs: return "Bundle IDs"
         case .profiles: return "Profiles"
         case .users: return "Users"
-        case .reviews: return "Reviews"
         }
     }
 
@@ -49,7 +47,6 @@ enum ShipyardSection: String, CaseIterable, Hashable {
         case .bundleIDs: return "ShipyardBadge"
         case .profiles: return "ShipyardFileCog"
         case .users: return "ShipyardTeamUser"
-        case .reviews: return "ShipyardStar"
         }
     }
 }
@@ -81,9 +78,6 @@ struct ShipyardSidebar: View {
         }
         if activeCredential?.shows(.users) ?? true {
             sections.append(.users)
-        }
-        if activeCredential?.shows(.reviews) ?? true {
-            sections.append(.reviews)
         }
         return sections
     }
@@ -263,7 +257,10 @@ struct ShipyardSidebar: View {
             selection = section
         } label: {
             HStack(spacing: 8) {
-                ShipyardIcon(name: section.iconName)
+                ShipyardIcon(
+                    name: section.iconName,
+                    tint: isSelected ? ShipyardTheme.accent : nil
+                )
                 Text(section.title)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                     .foregroundColor(ShipyardTheme.title)
@@ -288,7 +285,10 @@ struct ShipyardSidebar: View {
             selection = .monitoring
         } label: {
             HStack(spacing: 8) {
-                ShipyardIcon(name: ShipyardSection.monitoring.iconName)
+                ShipyardIcon(
+                    name: ShipyardSection.monitoring.iconName,
+                    tint: isSelected ? ShipyardTheme.accent : nil
+                )
                 Text(ShipyardSection.monitoring.title)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                     .foregroundColor(ShipyardTheme.title)

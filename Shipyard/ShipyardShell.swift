@@ -216,18 +216,6 @@ struct ShipyardShell: View {
                     })
             case .users:
                 UsersTableView(viewModel: resourcesVM, apps: loadedApps)
-            case .reviews:
-                ReviewsInboxView(
-                    apps: loadedApps,
-                    onOpenReview: { app, reviewId in
-                        // Jump into the app's detail Reviews tab on that
-                        // review (114:10235 "Open Selected Review").
-                        sidebarVM.setSelectedAppAndGetVersions(app: app)
-                        detailTab = .reviews
-                        reviewsVM.pendingInboxReviewId = reviewId
-                        detailApp = app
-                    }
-                )
             }
         }
     }
@@ -245,7 +233,6 @@ struct ShipyardShell: View {
         case .devices, .certificates, .identifiers, .bundleIDs, .profiles:
             return credential.shows(.provisioningResources)
         case .users: return credential.shows(.users)
-        case .reviews: return credential.shows(.reviews)
         }
     }
 

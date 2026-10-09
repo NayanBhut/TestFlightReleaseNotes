@@ -10,6 +10,51 @@ import XCTest
 @testable import Shipyard
 
 final class ValidationTests: XCTestCase {
+#if DEBUG
+    func testReviewSubmissionUITestSafetyRequiresExplicitMarkerAndValidScenario() {
+        XCTAssertFalse(ReviewSubmissionUITestSafety.isEnabled(in: [:]))
+        XCTAssertFalse(ReviewSubmissionUITestSafety.isEnabled(in: [
+            ReviewSubmissionUITestSafety.environmentKey: "0"
+        ]))
+        XCTAssertTrue(ReviewSubmissionUITestSafety.isEnabled(in: [
+            ReviewSubmissionUITestSafety.environmentKey: ReviewSubmissionUITestSafety.enabledValue
+        ]))
+
+        XCTAssertEqual(
+            ReviewSubmissionUITestScenario.scenario(in: [
+                ReviewSubmissionUITestSafety.scenarioArgument, "draft"
+            ]),
+            .draft)
+        XCTAssertNil(ReviewSubmissionUITestScenario.scenario(in: []))
+        XCTAssertNil(ReviewSubmissionUITestScenario.scenario(in: [
+            ReviewSubmissionUITestSafety.scenarioArgument
+        ]))
+        XCTAssertNil(ReviewSubmissionUITestScenario.scenario(in: [
+            ReviewSubmissionUITestSafety.scenarioArgument, "invalid-scenario"
+        ]))
+    }
+
+    func testReviewSubmissionUITestNetworkBlockerRejectsOnlyTestHTTPRequests() throws {
+        let enabledEnvironment = [
+            ReviewSubmissionUITestSafety.environmentKey: ReviewSubmissionUITestSafety.enabledValue
+        ]
+        let httpsRequest = URLRequest(url: try XCTUnwrap(
+            URL(string: "https://api.appstoreconnect.apple.com/v1/apps")))
+        let fileRequest = URLRequest(url: try XCTUnwrap(
+            URL(string: "file:///tmp/review-fixture.json")))
+
+        XCTAssertTrue(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            httpsRequest,
+            environment: enabledEnvironment))
+        XCTAssertFalse(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            httpsRequest,
+            environment: [:]))
+        XCTAssertFalse(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            fileRequest,
+            environment: enabledEnvironment))
+    }
+#endif
+
     // MARK: - ProvisioningWriteValidation (Batch G)
 
     func testValidUDIDs() {
@@ -926,6 +971,44 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(vm.creatableAppStoreVersionPlatforms, [.iOS, .macOS])
     }
 
+    @MainActor
+    func testLatestSubmissionMatchesExactVersionAndNewestDate() {
+        var version88 = Self.version(
+            id: "version-8.8", state: "READY_FOR_SALE", created: "2026-10-01T10:00:00Z")
+        version88.versionString = "8.8"
+        var version87 = Self.version(
+            id: "version-8.7", state: "READY_FOR_SALE", created: "2026-09-01T10:00:00Z")
+        version87.versionString = "8.7"
+
+        var older88 = ReviewSubmissionModel(id: "submission-8.8-older")
+        older88.platform = "IOS"
+        older88.state = "UNRESOLVED_ISSUES"
+        older88.submittedDate = "2026-10-07T12:00:00Z"
+        older88.appStoreVersionForReview = version88
+
+        var latest88 = ReviewSubmissionModel(id: "submission-8.8-latest")
+        latest88.platform = "IOS"
+        latest88.state = "COMPLETE"
+        latest88.submittedDate = "2026-10-08T14:22:23.673Z"
+        latest88.appStoreVersionForReview = version88
+
+        var submission87 = ReviewSubmissionModel(id: "submission-8.7")
+        submission87.platform = "IOS"
+        submission87.state = "COMPLETE"
+        submission87.submittedDate = "2026-09-17T08:00:00Z"
+        submission87.appStoreVersionForReview = version87
+
+        let vm = ReviewsViewModel()
+        vm.submissionsState = .loaded([submission87, older88, latest88])
+
+        XCTAssertEqual(vm.latestSubmission(for: version88)?.id, "submission-8.8-latest")
+        XCTAssertEqual(vm.latestSubmission(for: version87)?.id, "submission-8.7")
+
+        var unrelatedIOSVersion = version88
+        unrelatedIOSVersion.id = "version-unrelated"
+        XCTAssertNil(vm.latestSubmission(for: unrelatedIOSVersion))
+    }
+
     func testStatusLabelsAndEditability() {
         let labels = [
             "PREPARE_FOR_SUBMISSION": "Draft",
@@ -933,6 +1016,7 @@ final class ValidationTests: XCTestCase {
             "WAITING_FOR_REVIEW": "Waiting for Review",
             "IN_REVIEW": "In Review",
             "PENDING_DEVELOPER_RELEASE": "Approved – Ready to Release",
+            "PENDING_APPLE_RELEASE": "Pending Apple Release",
             "REJECTED": "Rejected",
             "DEVELOPER_REJECTED": "Rejected",
             "METADATA_REJECTED": "Metadata Rejected",

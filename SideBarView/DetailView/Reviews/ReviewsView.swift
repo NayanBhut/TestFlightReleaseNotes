@@ -705,7 +705,7 @@ struct ReviewsView: View {
                                         .font(.appCaption)
                                         .foregroundColor(.secondary)
                                 }
-                                Text(submission.submittedDate ?? "")
+                                Text(submissionDateText(submission))
                                     .font(.appCaption)
                                     .foregroundColor(.secondary)
                             }
@@ -751,6 +751,15 @@ struct ReviewsView: View {
                 }
             }
         }
+    }
+
+    private func submissionDateText(_ submission: ReviewSubmissionModel) -> String {
+        if let submittedDate = submission.submittedDate, !submittedDate.isEmpty {
+            return releaseDateTimeDisplay(submittedDate)
+        }
+        return submission.state == "READY_FOR_REVIEW"
+            ? "Not submitted yet"
+            : "Submission date unavailable"
     }
 
     /// Submit-for-review action row. Submitting is a server-side state

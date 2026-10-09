@@ -216,21 +216,26 @@ final class BuildProcessingMonitor: NSObject, ObservableObject, UNUserNotificati
         self.errorPollInterval = AppConfigs.buildStatusPollErrorInterval
         self.notifier = notifier
         super.init()
-        // Login must not wait up to a whole poll interval to show data.
-        // (Logout is handled inside refresh() itself.)
-        teamsCancellable = CredentialStorage.shared.$teams
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] teams in
-                guard let self, !teams.isEmpty else { return }
-                Task { await self.pollNow() }
-            }
     }
 
-    /// Idempotent: the App scene calls this from both the main window and
-    /// the menu bar label — whichever appears first starts the loop. The
-    /// monitor lives for the app's lifetime (@StateObject), so the loop
-    /// captures self strongly on purpose.
+    /// Idempotent: production explicitly starts the monitor after the app
+    /// root appears. Credential observation belongs here—not in init—so a
+    /// deterministic UI-test launch can construct the App without reading
+    /// Keychain or polling App Store Connect. The monitor lives for the
+    /// app's lifetime (@StateObject), so the loop captures self strongly.
     func start() {
+        if teamsCancellable == nil {
+            // The loop below immediately handles the current team. Observe
+            // only subsequent membership changes so adding a team does not
+            // wait up to a whole poll interval to show processing builds.
+            teamsCancellable = CredentialStorage.shared.$teams
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] teams in
+                    guard let self, !teams.isEmpty else { return }
+                    Task { await self.pollNow() }
+                }
+        }
         notifier.requestAuthorizationIfNeeded()
         // Banner even when frontmost (e.g. watching the builds list while an
         // upload processes). The monitor lives for the app's lifetime, so the

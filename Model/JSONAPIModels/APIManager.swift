@@ -159,6 +159,18 @@ final class APIClient: @unchecked Sendable {
         }
         return task
     }
+
+    #if DEBUG
+    /// Defense in depth for the destructive review UI-test path. The test
+    /// view model normally simulates writes before they reach APIClient; this
+    /// guard blocks any future or accidentally unguarded path before network
+    /// execution, including reads and signed CDN uploads.
+    private static var reviewUITestBlockError: APIError? {
+        guard ReviewSubmissionUITestSafety.isEnabled else { return nil }
+        apiLogger.fault("[UI TEST SAFETY] Blocked an App Store Connect request")
+        return .apiError(error: ReviewSubmissionUITestSafety.blockedRequestMessage)
+    }
+    #endif
     
     /// Redacts PII from diagnostic commands used by focused unit tests.
     /// Runtime diagnostics intentionally log only methods, paths, status
@@ -212,6 +224,9 @@ final class APIClient: @unchecked Sendable {
 
     func callAPI(with request: URLRequest) async throws -> Data {
         #if DEBUG
+        if let error = Self.reviewUITestBlockError { throw error }
+        #endif
+        #if DEBUG
         apiLogger.debug("[API] \(request.httpMethod ?? "GET") \(request.url?.path ?? "")")
         if let body = request.httpBody, !body.isEmpty {
             apiLogger.debug("[API] Request body: \(body.count) bytes")
@@ -244,6 +259,9 @@ final class APIClient: @unchecked Sendable {
     /// signed URLs). Auth comes from the operation's own headers, not the
     /// JWT — no Authorization header is attached here.
     func upload(to url: URL, method: String, headers: [String: String], body: Data) async throws {
+        #if DEBUG
+        if let error = Self.reviewUITestBlockError { throw error }
+        #endif
         guard url.scheme?.lowercased() == "https" else {
             throw APIError.apiError(error: "Upload rejected because the server URL was not secure")
         }
@@ -275,6 +293,12 @@ final class APIClient: @unchecked Sendable {
 
     /// Legacy completion-handler shim. Kept until all callers migrate to async/await.
     func callAPI(with request: URLRequest, completion: @escaping (Result<Data, APIError>) -> Void) {
+        #if DEBUG
+        if let error = Self.reviewUITestBlockError {
+            completion(.failure(error))
+            return
+        }
+        #endif
         let task = self.decodingTask(with: request) { data, error in
             DispatchQueue.main.async {
                 if let error = error {
@@ -295,6 +319,9 @@ final class APIClient: @unchecked Sendable {
     /// main. All callers are @MainActor view models / the @MainActor
     /// monitor, so this is a static isolation match, not a hop.
     @MainActor func getRequest(api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
+        #if DEBUG
+        guard Self.reviewUITestBlockError == nil else { return nil }
+        #endif
         guard let team = CredentialStorage.shared.selectedTeam else { return nil }
         guard let token = try? signingToken(for: team) else {
             // Distinguish 'bad private key' from 'no team selected' in logs.
@@ -312,6 +339,9 @@ final class APIClient: @unchecked Sendable {
     }
     
     func getRequest(header: [String: String], api: APIMethod, apiVersion: APIVersion = .v1) -> URLRequest? {
+        #if DEBUG
+        guard Self.reviewUITestBlockError == nil else { return nil }
+        #endif
         if let url = getURL(api: api, apiVersion: apiVersion) {
             var request = URLRequest(url: url)
             request.allHTTPHeaderFields = header

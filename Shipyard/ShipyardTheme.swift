@@ -161,13 +161,24 @@ struct ShipyardMenuLabel: View {
 struct ShipyardIcon: View {
     let name: String
     var size: CGFloat = 14
+    var tint: Color? = nil
 
     var body: some View {
-        Image(name)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
+        Group {
+            if let tint {
+                Image(name)
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(tint)
+            } else {
+                Image(name)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 

@@ -85,6 +85,7 @@ struct SubmitReviewDialog: View {
                 }
                 .buttonStyle(.launchPrimary)
                 .disabled(submitting)
+                .accessibilityIdentifier("review.submit.confirm")
             }
         }
         .padding(24)
@@ -174,6 +175,7 @@ struct ReleaseVersionDialog: View {
                 }
                 .buttonStyle(.launchPrimary)
                 .disabled(releasing)
+                .accessibilityIdentifier("review.release.confirm")
             }
         }
         .padding(24)
@@ -262,6 +264,7 @@ struct CancelSubmissionDialog: View {
                 }
                 .buttonStyle(.launchDestructive)
                 .disabled(cancelling)
+                .accessibilityIdentifier("review.cancel.confirm")
             }
         }
         .padding(24)
