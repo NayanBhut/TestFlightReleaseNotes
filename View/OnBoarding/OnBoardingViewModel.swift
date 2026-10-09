@@ -26,17 +26,17 @@ class OnBoardingViewModel: ObservableObject {
     /// count) and cleared whenever a new request starts or fails.
     @Published var verifiedAppCount: Int?
     
-    /// Step-2 gating: Team Name, Issuer ID and Key ID are present. The .p8
-    /// key (and therefore full JWT validity) arrives in step 3.
+    /// First-step gating: team name and key ID, plus issuer ID for team keys.
+    /// The .p8 key arrives in the next step.
     var credentialsValid: Bool {
         !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (keyKind == .individual || !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
         !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
     var isFormValid: Bool {
         !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (keyKind == .individual || !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
         !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -54,11 +54,11 @@ class OnBoardingViewModel: ObservableObject {
 
     var isJWTValid: Bool {
         guard !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (keyKind == .individual || !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
               !normalizedPrivateKey.isEmpty else {
             return false
         }
-        let inputs = "\(keyId)|\(issuerID)|\(normalizedPrivateKey)"
+        let inputs = "\(keyKind.rawValue)|\(keyId)|\(issuerID)|\(normalizedPrivateKey)"
         if let cache = jwtValidationCache, cache.inputs == inputs {
             return cache.isValid
         }
@@ -67,7 +67,7 @@ class OnBoardingViewModel: ObservableObject {
         let isValid = (try? JWT(
             keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
             issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-            expireDuration: JWTLimits.expiryInterval
+            expireDuration: JWTLimits.expiryInterval, keyKind: keyKind
         ).signedToken(using: normalizedPrivateKey)) != nil
         jwtValidationCache = (inputs, isValid)
         return isValid
@@ -91,7 +91,6 @@ class OnBoardingViewModel: ObservableObject {
         
         let queryParams = [
             "include": "appStoreVersions",
-            "filter[appStoreVersions.platform]": "IOS",
             "sort": "-name"
         ]
         
@@ -114,14 +113,9 @@ class OnBoardingViewModel: ObservableObject {
                 do {
                     let model = try getDecoder().decode([AppsData].self, from: successData)
                     
-                    if model.isEmpty {
-                        self.errorMessage = "No apps found for this team"
-                        completion(false)
-                    } else {
-                        self.errorMessage = nil
-                        self.verifiedAppCount = model.count
-                        completion(true)
-                    }
+                    self.errorMessage = nil
+                    self.verifiedAppCount = model.count
+                    completion(true)
                 } catch {
                     self.errorMessage = "Invalid response from server"
                     completion(false)
@@ -140,7 +134,7 @@ class OnBoardingViewModel: ObservableObject {
         var requestHeader = ["Content-Type": "application/json"]
         if let token = try? JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
                                 issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-                                expireDuration: JWTLimits.expiryInterval).signedToken(using: normalizedPrivateKey) {
+                                expireDuration: JWTLimits.expiryInterval, keyKind: keyKind).signedToken(using: normalizedPrivateKey) {
             requestHeader["Authorization"] = "Bearer " + token
         }
         return requestHeader
@@ -165,9 +159,19 @@ class OnBoardingViewModel: ObservableObject {
     }
     
     func getPrivateKey(filePath: URL?) {
-        if let filePath = filePath, let data = try? Data(contentsOf: filePath) {
-            privateKey = JWT.normalizePrivateKey(String(decoding: data, as: UTF8.self))
+        guard let filePath else { return }
+        let didStart = filePath.startAccessingSecurityScopedResource()
+        defer { if didStart { filePath.stopAccessingSecurityScopedResource() } }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: filePath.path),
+              let size = (attributes[.size] as? NSNumber)?.int64Value,
+              size > 0, size <= 64 * 1024,
+              let data = try? Data(contentsOf: filePath),
+              let text = String(data: data, encoding: .utf8) else {
+            errorMessage = "Couldn't read that private key. Select a valid .p8 file smaller than 64 KB."
+            return
         }
+        privateKey = JWT.normalizePrivateKey(text)
+        errorMessage = nil
     }
     
     func showOpenPanel() -> URL? {

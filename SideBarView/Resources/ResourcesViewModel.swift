@@ -621,7 +621,10 @@ final class ResourcesViewModel: ObservableObject {
     /// team's resources — and Load-more would paginate with a cursor from
     /// the wrong query epoch (cursors are only valid for the query that
     /// issued them). Called from SideBarView's existing team-change hooks.
+    private var teamGeneration = 0
+
     func resetForTeamSwitch() {
+        teamGeneration += 1
         for task in fetchTasks.values { task.cancel() }
         fetchTasks = [:]
         for task in certificateRelationshipTasks.values { task.cancel() }
@@ -1841,7 +1844,7 @@ final class ResourcesViewModel: ObservableObject {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedFirst = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedLast = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
+        guard EmailValidator.isValid(trimmedEmail) else {
             return .failure("Enter a valid email address.")
         }
         guard !trimmedFirst.isEmpty else { return .failure("Enter the invitee's first name.") }
@@ -1865,14 +1868,15 @@ final class ResourcesViewModel: ObservableObject {
             return .failure("Couldn't build the invite request.")
         }
 
+        let generation = teamGeneration
         do {
             _ = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             loadInvitations()
             return .success
         } catch {
             resourcesLogger.error("Failed to invite user: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
     }
@@ -1887,7 +1891,7 @@ final class ResourcesViewModel: ObservableObject {
     /// new invite with the app picker instead.
     func resendInvitation(_ invitation: UserInvitationModel) async -> WriteResult {
         let trimmedEmail = (invitation.email ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
+        guard EmailValidator.isValid(trimmedEmail) else {
             return .failure("Enter a valid email address.")
         }
         let roles = invitation.roles ?? []
@@ -1907,6 +1911,7 @@ final class ResourcesViewModel: ObservableObject {
         writeInFlight.insert(resendKey)
         defer { writeInFlight.remove(resendKey) }
 
+        let generation = teamGeneration
         do {
             guard let deleteRequest = APIClient.shared.getRequest(
                 api: .delete(name: .userInvitations, path: invitation.id),
@@ -1914,12 +1919,12 @@ final class ResourcesViewModel: ObservableObject {
                 return .failure("Couldn't build the resend request.")
             }
             _ = try await APIClient.shared.callAPI(with: deleteRequest)
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             var inviteRevoked = true
             defer {
                 // The delete already happened — the list must reflect
                 // reality no matter how the re-create goes.
-                if inviteRevoked { loadInvitations() }
+                if inviteRevoked, generation == teamGeneration { loadInvitations() }
             }
             guard let createRequest = invitationCreateRequest(
                 email: trimmedEmail,
@@ -1934,17 +1939,17 @@ final class ResourcesViewModel: ObservableObject {
             do {
                 _ = try await APIClient.shared.callAPI(with: createRequest)
             } catch {
-                guard !Task.isCancelled else { return .ignored }
+                guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
                 resourcesLogger.error("Failed to re-create invitation: \(error.localizedDescription)")
                 return .failure("\(writeErrorMessage(for: error)) The previous invite was revoked — send a fresh invite.")
             }
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             inviteRevoked = false
             loadInvitations()
             return .success
         } catch {
             resourcesLogger.error("Failed to resend invitation: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
     }
@@ -2171,10 +2176,34 @@ final class ResourcesViewModel: ObservableObject {
     // as above. Pickers read the already-loaded devices/certificates/
     // bundleIds lists — no new fetch paths.
 
+    private func profileValidationError(type: ProfileTypeOption, certificateIds: Set<String>, deviceIds: Set<String>) -> String? {
+        if let error = ProvisioningWriteValidation.profileSelectionError(type: type, certificateIds: certificateIds, deviceIds: deviceIds) { return error }
+        let certificates = certificatesState.loadedValue ?? []
+        guard certificateIds.allSatisfy({ id in certificates.contains { $0.id == id && type.acceptsCertificate($0) } }) else {
+            return "Reload certificates and select active certificates compatible with this profile."
+        }
+        if type.allowsDevices {
+            let devices = devicesState.loadedValue ?? []
+            guard deviceIds.allSatisfy({ id in devices.contains {
+                $0.id == id && $0.status == "ENABLED" && devicePlatformMatches($0.platform, profilePlatform: type.bundlePlatformCode)
+            } }) else { return "Reload devices and select enabled devices compatible with this profile." }
+        }
+        return nil
+    }
+
     /// POST /v1/profiles — create a provisioning profile. Certificates are
     /// required server-side; devices are required server-side only for
     /// development/adhoc types (omitted from the body when empty).
-    func createProfile(name: String,
+    func createProfile(name: String, profileType: ProfileTypeOption, bundleIdId: String?,
+                       certificateIds: Set<String>, deviceIds: Set<String>) async -> WriteResult {
+        guard !isWriteInFlight(Self.createProfileKey) else { return .ignored }
+        writeInFlight.insert(Self.createProfileKey)
+        defer { writeInFlight.remove(Self.createProfileKey) }
+        return await performCreateProfile(name: name, profileType: profileType, bundleIdId: bundleIdId,
+                                          certificateIds: certificateIds, deviceIds: deviceIds)
+    }
+
+    private func performCreateProfile(name: String,
                        profileType: ProfileTypeOption,
                        bundleIdId: String?,
                        certificateIds: Set<String>,
@@ -2184,10 +2213,7 @@ final class ResourcesViewModel: ObservableObject {
         guard let bundleIdId, !bundleIdId.isEmpty else {
             return .failure("Pick the bundle ID this profile is for.")
         }
-        guard !certificateIds.isEmpty else { return .failure("Pick at least one certificate.") }
-        guard !isWriteInFlight(Self.createProfileKey) else { return .ignored }
-        writeInFlight.insert(Self.createProfileKey)
-        defer { writeInFlight.remove(Self.createProfileKey) }
+        if let error = profileValidationError(type: profileType, certificateIds: certificateIds, deviceIds: deviceIds) { return .failure(error) }
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -2217,15 +2243,16 @@ final class ResourcesViewModel: ObservableObject {
             return .failure("Couldn't build the profile request.")
         }
 
+        let generation = teamGeneration
         do {
             let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             let model = try getDecoder().decode(ProfileModel.self, from: responseData)
             prependProfile(model)
             return .success
         } catch {
             resourcesLogger.error("Failed to create profile: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
     }
@@ -2339,12 +2366,20 @@ final class ResourcesViewModel: ObservableObject {
                            deviceIds: Set<String>) async -> WriteResult {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return .failure("Enter a name for the replacement profile.") }
-        guard !certificateIds.isEmpty else { return .failure("Pick at least one certificate.") }
+        if let error = profileValidationError(type: profileType, certificateIds: certificateIds, deviceIds: deviceIds) { return .failure(error) }
+        guard !bundleIdId.isEmpty else { return .failure("Pick the bundle ID this profile is for.") }
         let key = "regenerate-profile-\(profileId)"
-        guard !isWriteInFlight(key) else { return .ignored }
+        guard !isWriteInFlight(key), !isWriteInFlight(Self.createProfileKey), !isWriteInFlight(profileId) else { return .ignored }
         writeInFlight.insert(key)
-        defer { writeInFlight.remove(key) }
+        writeInFlight.insert(Self.createProfileKey)
+        writeInFlight.insert(profileId)
+        defer {
+            writeInFlight.remove(key)
+            writeInFlight.remove(Self.createProfileKey)
+            writeInFlight.remove(profileId)
+        }
 
+        let generation = teamGeneration
         do {
             guard let deleteRequest = APIClient.shared.getRequest(
                 api: .delete(name: .getProfiles, path: profileId),
@@ -2352,16 +2387,17 @@ final class ResourcesViewModel: ObservableObject {
                 return .failure("Couldn't build the regenerate request.")
             }
             _ = try await APIClient.shared.callAPI(with: deleteRequest)
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             // Snapshot before the delete so the replacement can be identified by
             // set difference afterwards — `createProfile` returns a bare
             // WriteResult with no payload to name it from.
             let idsBefore = Set((profilesState.loadedValue ?? []).map(\.id))
             dropProfileLocally(id: profileId)
 
-            let createResult = await createProfile(
+            let createResult = await performCreateProfile(
                 name: trimmedName, profileType: profileType, bundleIdId: bundleIdId,
                 certificateIds: certificateIds, deviceIds: deviceIds)
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             switch createResult {
             case .success:
                 lastRegeneratedProfileId = (profilesState.loadedValue ?? [])
@@ -2377,7 +2413,7 @@ final class ResourcesViewModel: ObservableObject {
             }
         } catch {
             resourcesLogger.error("Failed to regenerate profile: \(error.localizedDescription)")
-            guard !Task.isCancelled else { return .ignored }
+            guard !Task.isCancelled, generation == teamGeneration else { return .ignored }
             return .failure(writeErrorMessage(for: error))
         }
     }

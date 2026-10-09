@@ -3,8 +3,8 @@
 //  App Store
 //
 //  Shipyard Launch Assistant: the stepped Add Team flow from the
-//  add-team-credentials-light (Step 2 of 5) and add-team-validate-light
-//  (Step 4 of 5) Figma frames. Steps 1 and 5 are not designed yet, so the
+//  add-team-credentials-light (Step 2 of 3) and add-team-validate-light
+//  (Step 4 of 3) Figma frames. Steps 1 and 5 are not designed yet, so the
 //  sheet opens directly at Step 2. All credential logic (JWT signing,
 //  .p8 import, app-list verification, Keychain save) is the existing
 //  OnBoardingViewModel — this file is presentation only.
@@ -27,9 +27,9 @@ struct LaunchAssistantSheet: View {
     @State private var didAttemptVerification = false
 
     enum LaunchStep: Int {
-        case credentials = 2
-        case privateKey = 3
-        case validation = 4
+        case credentials = 1
+        case privateKey = 2
+        case validation = 3
 
         var title: String {
             switch self {
@@ -74,7 +74,7 @@ struct LaunchAssistantSheet: View {
 
             Spacer()
 
-            Text("Step \(step.rawValue) of 5")
+            Text("Step \(step.rawValue) of 3")
                 .font(.appCaption2)
                 .foregroundColor(LaunchTheme.body)
         }
@@ -105,7 +105,9 @@ struct LaunchAssistantSheet: View {
                 .lineSpacing(2)
 
             LaunchField(label: "Team Name", text: $viewModel.teamName, prompt: "Acme iOS")
-            LaunchField(label: "Issuer ID", text: $viewModel.issuerID, prompt: "e.g. 572465ad-5091-4c0f-9275-xxxx", isMonospaced: true)
+            if viewModel.keyKind == .team {
+                LaunchField(label: "Issuer ID", text: $viewModel.issuerID, prompt: "e.g. 572465ad-5091-4c0f-9275-xxxx", isMonospaced: true)
+            }
             LaunchField(label: "Key ID", text: $viewModel.keyId, prompt: "e.g. 2X88A7D9XX", isMonospaced: true)
 
             HStack(spacing: 12) {
@@ -319,14 +321,14 @@ struct LaunchAssistantSheet: View {
 
     private var progressDots: some View {
         HStack(spacing: 6) {
-            ForEach(1...5, id: \.self) { index in
+            ForEach(1...3, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(index <= step.rawValue ? LaunchTheme.accent : LaunchTheme.track)
                     .frame(width: 20, height: 4)
             }
             Spacer(minLength: 0)
         }
-        .accessibilityLabel("Step \(step.rawValue) of 5")
+        .accessibilityLabel("Step \(step.rawValue) of 3")
     }
 
     // MARK: - Footer

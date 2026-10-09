@@ -855,7 +855,7 @@ struct ResendInvitationSheet: View {
                 Text("Recipient and access")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(ShipyardTheme.title)
-                Text("Send a new invitation email. Pending status remains until the user accepts.")
+                Text("The existing invitation is revoked, then a new invitation is created. If creation fails, the old invitation cannot be restored.")
                     .font(.system(size: 12))
                     .foregroundColor(ShipyardTheme.body)
                     .fixedSize(horizontal: false, vertical: true)

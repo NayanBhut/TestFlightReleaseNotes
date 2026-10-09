@@ -1049,15 +1049,7 @@ struct CreateProfileForm: View {
     /// platform, and not expired (an expired cert guarantees a 409).
     private var eligibleCertificates: [CertificateModel] {
         guard let resolved = resolvedType else { return [] }
-        let development = resolved.needsDevelopmentCertificates
-        return signingCertificates.filter { cert in
-            guard let option = cert.certificateType.flatMap(CertificateTypeOption.init(rawValue:)),
-                  option.matchesKind(development: development),
-                  option.matchesPlatform(profileBundlePlatform) else { return false }
-            if let raw = cert.expirationDate,
-               let date = ProfileModel.parseDate(raw), date < Date() { return false }
-            return true
-        }
+        return signingCertificates.filter { resolved.acceptsCertificate($0) }
     }
 
     private func certificateExclusionReason(_ cert: CertificateModel) -> String? {
@@ -1071,8 +1063,9 @@ struct CreateProfileForm: View {
         if !option.matchesPlatform(profileBundlePlatform) {
             return "Excluded · wrong platform"
         }
+        if cert.activated == false { return "Excluded · inactive" }
         if let raw = cert.expirationDate,
-           let date = ProfileModel.parseDate(raw), date < Date() {
+           let date = ProfileModel.parseDate(raw), date <= Date() {
             return "Excluded · expired"
         }
         return nil
@@ -1145,7 +1138,7 @@ struct CreateProfileForm: View {
         case .bundleID:
             return bundleIdId != nil
         case .certificates:
-            return !certificateIds.isEmpty
+            return !certificateIds.isEmpty && (resolvedType?.requiresSingleCertificate != true || certificateIds.count == 1)
         case .devices:
             // Development/ad-hoc profiles embed devices server-side —
             // an empty pick passes the old gate and 409s on create.
@@ -1501,7 +1494,7 @@ struct CreateProfileForm: View {
                         .buttonStyle(.plain)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(ShipyardTheme.accent)
-                        .disabled(isSaving || eligibleCertificates.isEmpty)
+                        .disabled(isSaving || eligibleCertificates.isEmpty || resolvedType?.requiresSingleCertificate == true)
                         .accessibilityLabel("Select all eligible certificates")
                         Button("Clear") {
                             certificateIds = []
@@ -1543,7 +1536,10 @@ struct CreateProfileForm: View {
                                 isOn: Binding(
                                     get: { certificateIds.contains(certificate.id) },
                                     set: { checked in
-                                        if checked { certificateIds.insert(certificate.id) }
+                                        if checked {
+                                            if resolvedType?.requiresSingleCertificate == true { certificateIds = [certificate.id] }
+                                            else { certificateIds.insert(certificate.id) }
+                                        }
                                         else { certificateIds.remove(certificate.id) }
                                     }
                                 )

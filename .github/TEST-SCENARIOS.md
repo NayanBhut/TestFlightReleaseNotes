@@ -93,29 +93,24 @@ Details: CREATE_FAILED: HTTP 403 - token cannot post comments. Ensure 'pull-requ
 
 ---
 
-### Test 4 — PR Diff Fetch Check
+### Test 4 — Generate PR Diff
 
-**What it does:** Makes sure the PR changes are accessible and downloadable.
+**What it does:** Generates the PR's three-dot diff locally from the event's base and head commits. The review job uses `fetch-depth: 0` so both commits and their merge base are available. This bypasses GitHub's diff API line limit (HTTP 406 on large PRs).
 
 **What a pass looks like:**
 ```
-✅ PASS: PR diff is accessible
+✅ PASS: PR diff generated locally
 ```
 
 **What a failure looks like:**
 ```
-❌ FAIL: Cannot fetch PR diff (HTTP 404)
-❌ FAIL: Cannot fetch PR diff (HTTP 403)
+❌ FAIL: Cannot generate PR diff
 ```
 
 **How to fix:**
-- **HTTP 404**: PR doesn't exist or is already merged/closed
-- **HTTP 403**: Fork PR without `contents: read` permission. Add to workflow:
-  ```yaml
-  permissions:
-    contents: read
-  ```
-- PR has only metadata changes (title edit, label change) — review will be skipped gracefully
+- Ensure the review job's checkout has `fetch-depth: 0`.
+- Verify `BASE_SHA` and `HEAD_SHA` come from the pull-request event, and that Git can resolve their merge base.
+- The review step reuses `/tmp/pr_diff.txt`; it fails if the file is missing and skips if it is empty.
 
 ---
 
@@ -190,7 +185,7 @@ This runs a minimal API call and reports success/failure without posting any rev
 | `HTTP 401 from Ollama` | Invalid API key | Regenerate key at ollama.com |
 | `Model not found` | Model unavailable | Check ollama.com/library; pick another |
 | `HTTP 403 from GitHub` | Token lacks permissions | Add `pull-requests: write` to permissions |
-| `Cannot fetch PR diff` | Fork without access | Add `contents: read`; or use PAT |
+| `Cannot generate PR diff` | Missing commits or merge base | Use `fetch-depth: 0` and verify the event SHAs |
 | `No diff found` | Binary-only PR | Review is skipped; add text changes |
 | `Review took too long` | Model too large | Use smaller model (e.g., `qwen2.5-coder:7b`) |
 | `Rate limit exceeded` | Too many API calls | Wait and re-trigger; check usage dashboard |

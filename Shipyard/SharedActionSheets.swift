@@ -874,6 +874,7 @@ enum BundleIdentifierClipboardFormat: CaseIterable, Hashable {
 /// local operation — it makes no claim about other resources and is never
 /// presented as an Apple audit receipt.
 enum LocalResultsExport {
+    @MainActor
     static func saveLedger(filename: String, lines: [String]) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = filename

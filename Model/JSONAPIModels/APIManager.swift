@@ -54,7 +54,7 @@ final class APIClient: @unchecked Sendable {
     private func cacheKey(for credential: Credential) -> String {
         let digest = SHA256.hash(data: Data(credential.privateKey.utf8))
         let keyHash = digest.map { String(format: "%02x", $0) }.joined()
-        return "\(credential.keyID)-\(credential.issuerID)-\(keyHash)"
+        return "\(credential.access?.kind.rawValue ?? "team")-\(credential.keyID)-\(credential.issuerID)-\(keyHash)"
     }
 
     private func cachedJWTToken(for credential: Credential) -> String? {
@@ -87,7 +87,7 @@ final class APIClient: @unchecked Sendable {
         if let cached = cachedJWTToken(for: credential) {
             return cached
         }
-        let token = try JWT(keyIdentifier: credential.keyID, issuerIdentifier: credential.issuerID, expireDuration: JWTLimits.expiryInterval).signedToken(using: credential.privateKey)
+        let token = try JWT(keyIdentifier: credential.keyID, issuerIdentifier: credential.issuerID, expireDuration: JWTLimits.expiryInterval, keyKind: credential.access?.kind ?? .team).signedToken(using: credential.privateKey)
         storeJWTToken(token, for: credential)
         return token
     }

@@ -181,6 +181,9 @@ extension ProfileModel {
     /// the table's expiry display).
     static func parseDate(_ raw: String) -> Date? {
         if let date = ISO8601DateFormatter().date(from: raw) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) { return date }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXXXX"
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -630,6 +633,15 @@ enum CertificateCreateRelationshipKind: Equatable {
 /// truth). UDID: 25 chars as 8 + dash + 16 (hardware from the iPhone XS /
 /// A12 generation onward) or 40 hex (classic). CSR: PEM marker.
 enum ProvisioningWriteValidation {
+    static func profileSelectionError(type: ProfileTypeOption, certificateIds: Set<String>, deviceIds: Set<String>) -> String? {
+        if certificateIds.isEmpty { return "Pick at least one certificate." }
+        if type.requiresSingleCertificate && certificateIds.count != 1 {
+            return "Pick exactly one distribution certificate."
+        }
+        if type.allowsDevices && deviceIds.isEmpty { return "Pick at least one enabled device." }
+        return nil
+    }
+
     static func isValidUDID(_ udid: String) -> Bool {
         let normalized = udid.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         // Modern UDIDs are alphanumeric (Apple derives them from chip/ECID
@@ -658,11 +670,12 @@ enum ProvisioningWriteValidation {
     /// form just displays `errorDescription` — the raw CSR text never
     /// surfaces in the UI.
     static func loadCSR(from url: URL) throws -> String {
-        // Missing/unstat-able → unreadable; only a file that really is too
-        // big gets the size message. Both strings are shown verbatim.
+        let didStart = url.startAccessingSecurityScopedResource()
+        defer { if didStart { url.stopAccessingSecurityScopedResource() } }
+        // Missing files are unreadable; readable files are checked for size
+        // before their content is validated.
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let fileSize = (attributes[.size] as? NSNumber)?.int64Value,
-              fileSize > 0 else {
+              let fileSize = (attributes[.size] as? NSNumber)?.int64Value else {
             throw CSRFileLoadError.unreadable
         }
         guard fileSize <= maxCSRFileSize else {
@@ -1240,6 +1253,18 @@ enum ProfileTypeOption: String, CaseIterable {
     /// relationship (409 ENTITY_ERROR.RELATIONSHIP.NOT_ALLOWED).
     var allowsDevices: Bool {
         rawValue.hasSuffix("_DEVELOPMENT") || rawValue.hasSuffix("_ADHOC")
+    }
+
+    var requiresSingleCertificate: Bool {
+        rawValue.hasSuffix("_STORE") || rawValue.hasSuffix("_ADHOC")
+    }
+
+    func acceptsCertificate(_ certificate: CertificateModel, now: Date = Date()) -> Bool {
+        guard let option = certificate.certificateType.flatMap(CertificateTypeOption.init(rawValue:)),
+              option.matchesKind(development: needsDevelopmentCertificates),
+              option.matchesPlatform(bundlePlatformCode), certificate.activated != false else { return false }
+        if let raw = certificate.expirationDate, let date = ProfileModel.parseDate(raw), date <= now { return false }
+        return true
     }
 
     /// Short distribution kind ("Development", "Ad Hoc", "App Store",

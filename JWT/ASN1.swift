@@ -75,12 +75,14 @@ extension ASN1 {
             return (Int(self[0]), 1)
         }
         let lenghOfLength = Int(self[0] & 0x7F)
-        guard lenghOfLength >= 0, 1 + lenghOfLength <= count else { return nil }
+        guard lenghOfLength > 0, lenghOfLength <= MemoryLayout<Int>.size, 1 + lenghOfLength <= count else { return nil }
         var result: Int = 0
         for i in 1..<(1 + lenghOfLength) {
-            result = 256 * result + Int(self[i])
+            let byte = Int(self[i])
+            guard result <= (Int.max - byte) / 256 else { return nil }
+            result = 256 * result + byte
         }
-        guard result >= 0, 1 + lenghOfLength + result <= count else { return nil }
+        guard result <= count - 1 - lenghOfLength else { return nil }
         return (result, 1 + lenghOfLength)
     }
 
