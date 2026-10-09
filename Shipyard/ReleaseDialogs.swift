@@ -175,6 +175,7 @@ struct ReleaseVersionDialog: View {
                 }
                 .buttonStyle(.launchPrimary)
                 .disabled(releasing)
+                .accessibilityIdentifier("review.release.confirm")
             }
         }
         .padding(24)

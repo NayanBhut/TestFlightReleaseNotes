@@ -72,6 +72,19 @@ enum ReviewSubmissionUITestScenario: String {
     case draft
     case ready
     case waiting
+    case inReview
+    case pendingDeveloperRelease
+    case pendingAppleRelease
+    case processingForDistribution
+    case readyForSale
+    case readyForDistribution
+    case rejected
+    case metadataRejected
+    case invalidBinary
+    case developerRejected
+    case removedFromSale
+    case developerRemovedFromSale
+    case replacedWithNewVersion
     case delayed
     case unrelatedSubmission
     case staleVersionRecovery
@@ -83,6 +96,45 @@ enum ReviewSubmissionUITestScenario: String {
 
     static func scenario(in arguments: [String]) -> Self? {
         ReviewSubmissionUITestSafety.scenarioValue(in: arguments).flatMap(Self.init(rawValue:))
+    }
+
+    var versionState: String {
+        switch self {
+        case .draft, .delayed, .staleVersionRecovery:
+            return "PREPARE_FOR_SUBMISSION"
+        case .ready: return "READY_FOR_REVIEW"
+        case .waiting, .unrelatedSubmission: return "WAITING_FOR_REVIEW"
+        case .inReview: return "IN_REVIEW"
+        case .pendingDeveloperRelease: return "PENDING_DEVELOPER_RELEASE"
+        case .pendingAppleRelease: return "PENDING_APPLE_RELEASE"
+        case .processingForDistribution: return "PROCESSING_FOR_DISTRIBUTION"
+        case .readyForSale: return "READY_FOR_SALE"
+        case .readyForDistribution: return "READY_FOR_DISTRIBUTION"
+        case .rejected: return "REJECTED"
+        case .metadataRejected: return "METADATA_REJECTED"
+        case .invalidBinary: return "INVALID_BINARY"
+        case .developerRejected: return "DEVELOPER_REJECTED"
+        case .removedFromSale: return "REMOVED_FROM_SALE"
+        case .developerRemovedFromSale: return "DEVELOPER_REMOVED_FROM_SALE"
+        case .replacedWithNewVersion: return "REPLACED_WITH_NEW_VERSION"
+        }
+    }
+
+    /// A matching submission supplies deterministic history for every
+    /// post-submit screen. Draft-only scenarios intentionally have none.
+    var submissionState: String? {
+        switch self {
+        case .draft, .delayed, .staleVersionRecovery:
+            return nil
+        case .ready:
+            return "READY_FOR_REVIEW"
+        case .waiting, .unrelatedSubmission:
+            return "WAITING_FOR_REVIEW"
+        case .inReview:
+            return "IN_REVIEW"
+        default:
+            return "COMPLETE"
+        }
     }
 }
 

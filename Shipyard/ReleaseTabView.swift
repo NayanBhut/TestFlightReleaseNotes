@@ -770,10 +770,12 @@ struct ReleaseTabView: View {
                 inReviewActionBar
             case "PENDING_DEVELOPER_RELEASE":
                 pendingReleaseActionBar
-            case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION",
-                 "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE",
-                 "REPLACED_WITH_NEW_VERSION":
+            case "PENDING_APPLE_RELEASE":
+                scheduledReleaseActionBar
+            case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION":
                 liveActionBar
+            case "REMOVED_FROM_SALE", "DEVELOPER_REMOVED_FROM_SALE":
+                removedFromSaleActionBar
             default:
                 if canEditShown {
                     prepareActionBar
@@ -889,6 +891,7 @@ struct ReleaseTabView: View {
                 openASC()
             }
             .buttonStyle(.launchPrimary)
+            .accessibilityIdentifier("review.message-app-review")
         }
         .padding(.horizontal, 24)
         .frame(height: 56)
@@ -909,7 +912,25 @@ struct ReleaseTabView: View {
                     showReleaseDialog = true
                 }
                 .buttonStyle(.launchPrimary)
+                .accessibilityIdentifier("review.release")
             }
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var scheduledReleaseActionBar: some View {
+        HStack(spacing: 8) {
+            Text("This approved version is scheduled for automatic release.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Manage Release Schedule") {
+                openASC()
+            }
+            .buttonStyle(.launchSecondary)
+            .accessibilityIdentifier("review.manage-schedule")
         }
         .padding(.horizontal, 24)
         .frame(height: 56)
@@ -927,11 +948,30 @@ struct ReleaseTabView: View {
                     showNewVersionSheet = true
                 }
                 .buttonStyle(.launchSecondary)
+                .accessibilityIdentifier("review.create-version")
             }
             Button("Remove from Sale") {
                 showRemoveConfirm = true
             }
             .buttonStyle(.launchDestructive)
+            .accessibilityIdentifier("review.remove-from-sale")
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 56)
+        .background(ShipyardTheme.tableBackground)
+    }
+
+    private var removedFromSaleActionBar: some View {
+        HStack(spacing: 8) {
+            Text("This version is not available for distribution.")
+                .font(.system(size: 11))
+                .foregroundColor(ShipyardTheme.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Manage Availability") {
+                openASC()
+            }
+            .buttonStyle(.launchSecondary)
+            .accessibilityIdentifier("review.manage-availability")
         }
         .padding(.horizontal, 24)
         .frame(height: 56)

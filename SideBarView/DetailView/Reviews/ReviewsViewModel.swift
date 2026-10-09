@@ -163,12 +163,13 @@ func getStatusLabel(appStoreState: String?) -> String {
     case "WAITING_FOR_REVIEW": return "Waiting for Review"
     case "IN_REVIEW": return "In Review"
     case "PENDING_DEVELOPER_RELEASE": return "Approved – Ready to Release"
+    case "PENDING_APPLE_RELEASE": return "Pending Apple Release"
     case "REJECTED", "DEVELOPER_REJECTED": return "Rejected"
     case "METADATA_REJECTED": return "Metadata Rejected"
     case "INVALID_BINARY": return "Invalid Binary – Needs New Build"
     case "PENDING_CONTRACT": return "Pending Contract"
     case "PROCESSING_FOR_DISTRIBUTION": return "Processing"
-    case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "PENDING_APPLE_RELEASE": return "Live"
+    case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION": return "Live"
     default: return appStoreState?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Unknown"
     }
 }
@@ -329,17 +330,12 @@ final class ReviewsViewModel: ObservableObject {
         reviewsState = .empty
         submissionsState = .empty
 
-        let initialState: String
-        switch scenario {
-        case .ready:
-            initialState = "READY_FOR_REVIEW"
-        case .waiting, .unrelatedSubmission:
-            initialState = "WAITING_FOR_REVIEW"
-        default:
-            initialState = "PREPARE_FOR_SUBMISSION"
+        let initialState = scenario.versionState
+        var version = Self.uiTestVersion(state: initialState)
+        if scenario == .pendingAppleRelease {
+            version.releaseType = AppStoreVersionReleaseType.scheduled.rawValue
+            version.earliestReleaseDate = "2030-01-01T09:00:00Z"
         }
-
-        let version = Self.uiTestVersion(state: initialState)
         appStoreVersionsState = .loaded([version])
         appStoreVersionPlatforms = ["IOS"]
         selectedAppStoreVersionPlatform = "IOS"
@@ -364,11 +360,11 @@ final class ReviewsViewModel: ObservableObject {
         phasedVersionId = version.id
         phasedRelease = nil
 
+        if let submissionState = scenario.submissionState {
+            submissionsState = .loaded([Self.uiTestSubmission(state: submissionState, version: version)])
+        }
+
         switch scenario {
-        case .ready:
-            submissionsState = .loaded([Self.uiTestSubmission(state: "READY_FOR_REVIEW", version: version)])
-        case .waiting:
-            submissionsState = .loaded([Self.uiTestSubmission(state: "WAITING_FOR_REVIEW", version: version)])
         case .delayed:
             reviewStatusInitialVersionState = initialState
             reviewStatusSyncState = .delayed(versionId: version.id)
@@ -390,7 +386,7 @@ final class ReviewsViewModel: ObservableObject {
                 self?.reviewStatusInitialVersionState = nil
                 self?.reviewStatusSyncState = .idle
             }
-        case .draft:
+        default:
             break
         }
     }
@@ -425,6 +421,13 @@ final class ReviewsViewModel: ObservableObject {
         submission.submittedDate = "2001-01-01T00:05:00Z"
         submission.appStoreVersionForReview = version
         return submission
+    }
+
+    private static func uiTestPhasedRelease(state: String = "ACTIVE") -> PhasedReleaseModel {
+        var release = PhasedReleaseModel(id: "ui-test-phased-release")
+        release.phasedReleaseState = state
+        release.currentDayNumber = 3
+        return release
     }
 
     private func simulateUISubmit(appId: String, versionId: String) async -> Bool {
@@ -1030,6 +1033,9 @@ final class ReviewsViewModel: ObservableObject {
     /// need the fresh submitted dates and cancel state.
     func refreshAfterWrite(appId: String) {
         guard currentAppId == appId else { return }
+#if DEBUG
+        if uiTestScenario != nil { return }
+#endif
         load(appId: appId, force: true)
         submissionsLoadedAppId = nil
         submissionsGeneration += 1
@@ -2058,6 +2064,12 @@ final class ReviewsViewModel: ObservableObject {
               version.id == versionId,
               version.releaseType == AppStoreVersionReleaseType.manual.rawValue,
               version.appVersionState == "PENDING_DEVELOPER_RELEASE" else { return false }
+#if DEBUG
+        if uiTestScenario != nil {
+            setUITestVersionState("PROCESSING_FOR_DISTRIBUTION", versionId: versionId)
+            return true
+        }
+#endif
         let generation = versionReleaseRequestGeneration
         releasingVersionId = versionId
         releaseSettingsError = nil
@@ -2426,9 +2438,11 @@ final class ReviewsViewModel: ObservableObject {
     /// the currently selected version's release.
     func loadPhasedRelease(versionId: String) async {
 #if DEBUG
-        if uiTestScenario != nil {
+        if let scenario = uiTestScenario {
             phasedVersionId = versionId
-            phasedRelease = nil
+            phasedRelease = scenario == .readyForDistribution
+                ? Self.uiTestPhasedRelease()
+                : nil
             phasedLoading = false
             return
         }
@@ -2521,6 +2535,14 @@ final class ReviewsViewModel: ObservableObject {
     /// PATCH state transitions: ACTIVE (start/resume), PAUSED (pause),
     /// COMPLETE (finish). Updates local state on success, no refetch needed.
     func setPhasedReleaseState(_ state: String) async -> Bool {
+#if DEBUG
+        if uiTestScenario != nil {
+            guard var release = phasedRelease else { return false }
+            release.phasedReleaseState = state
+            phasedRelease = release
+            return true
+        }
+#endif
         guard !phasedActionInFlight,
               let versionId = phasedVersionId,
               let release = phasedRelease else { return false }

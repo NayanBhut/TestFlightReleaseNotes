@@ -1016,6 +1016,7 @@ final class ValidationTests: XCTestCase {
             "WAITING_FOR_REVIEW": "Waiting for Review",
             "IN_REVIEW": "In Review",
             "PENDING_DEVELOPER_RELEASE": "Approved – Ready to Release",
+            "PENDING_APPLE_RELEASE": "Pending Apple Release",
             "REJECTED": "Rejected",
             "DEVELOPER_REJECTED": "Rejected",
             "METADATA_REJECTED": "Metadata Rejected",

@@ -642,18 +642,21 @@ struct LiveVersionView: View {
                         .buttonStyle(.launchSecondary)
                         .controlSize(.small)
                         .disabled(isPaused || reviewsVM.phasedActionInFlight)
+                        .accessibilityIdentifier("review.phased.pause")
                         Button("Resume") {
                             Task { await reviewsVM.setPhasedReleaseState("ACTIVE") }
                         }
                         .buttonStyle(.launchSecondary)
                         .controlSize(.small)
                         .disabled(!isPaused || reviewsVM.phasedActionInFlight)
+                        .accessibilityIdentifier("review.phased.resume")
                         Button("Release to All Users") {
                             showCompleteConfirm = true
                         }
                         .buttonStyle(.launchPrimary)
                         .controlSize(.small)
                         .disabled(reviewsVM.phasedActionInFlight)
+                        .accessibilityIdentifier("review.phased.complete")
                         .confirmationDialog(
                             "End the phased rollout? All remaining users receive the update immediately.",
                             isPresented: $showCompleteConfirm,
