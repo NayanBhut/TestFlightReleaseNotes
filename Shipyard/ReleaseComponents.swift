@@ -51,6 +51,7 @@ struct ReleaseStatusBadge: View {
         .padding(.vertical, 2)
         .background(ReleaseComponents.badgeFill(for: state))
         .cornerRadius(10)
+        .accessibilityIdentifier("review.status.\(state ?? "UNKNOWN")")
     }
 }
 

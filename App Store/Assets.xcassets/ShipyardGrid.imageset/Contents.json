@@ -5,12 +5,12 @@
       "scale" : "1x"
     },
     {
-      "filename" : "Navigation icon2.png",
+      "filename" : "app2.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "Navigation icon3.png",
+      "filename" : "app3.png",
       "idiom" : "universal",
       "scale" : "3x"
     }

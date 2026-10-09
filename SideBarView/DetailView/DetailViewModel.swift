@@ -89,6 +89,9 @@ class DetailViewModel: ObservableObject {
     private let sidebarViewModel: SideBarViewModel
     /// Injectable so clipboard writes can be tested or redirected.
     private let pasteboard: PasteboardWriting
+    /// UI tests render deterministic fixtures and must not read the user's
+    /// App Store Connect credentials from Keychain.
+    private let readsStoredTeam: Bool
 
     /// In-flight builds fetch so a new fetch can cancel a stale one.
     private var buildsFetchTask: Task<Void, Never>?
@@ -168,10 +171,13 @@ class DetailViewModel: ObservableObject {
         versionsState.errorMessage
     }
 
-    init(sidebarViewModel: SideBarViewModel, pasteboard: PasteboardWriting = NSPasteboard.general) {
+    init(sidebarViewModel: SideBarViewModel,
+         pasteboard: PasteboardWriting = NSPasteboard.general,
+         readsStoredTeam: Bool = true) {
         self.sidebarViewModel = sidebarViewModel
         self.pasteboard = pasteboard
-        self.currentTeam = CredentialStorage.shared.selectedTeam
+        self.readsStoredTeam = readsStoredTeam
+        self.currentTeam = readsStoredTeam ? CredentialStorage.shared.selectedTeam : nil
         sidebarViewModel.$versionsState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] versionsState in
@@ -211,7 +217,9 @@ class DetailViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] changed in
                 guard changed, let self else { return }
-                self.currentTeam = CredentialStorage.shared.selectedTeam
+                if self.readsStoredTeam {
+                    self.currentTeam = CredentialStorage.shared.selectedTeam
+                }
                 self.resetAppInfoState()
             }
             .store(in: &cancellables)

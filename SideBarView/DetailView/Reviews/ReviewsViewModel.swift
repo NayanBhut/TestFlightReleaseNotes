@@ -274,6 +274,11 @@ final class ReviewsViewModel: ObservableObject {
     private var selectedAppStoreVersionSnapshot: AppStoreVersionsModel?
     private var reviewStatusSyncTask: Task<Void, Never>?
     private var reviewStatusInitialVersionState: String?
+#if DEBUG
+    /// Non-nil only for the isolated XCUITest launch path. Production never
+    /// enters this branch and continues to use the real API workflow.
+    private var uiTestScenario: ReviewSubmissionUITestScenario?
+#endif
 
 
     /// The app whose lists are in flight / last requested (loadMore target).
@@ -312,6 +317,172 @@ final class ReviewsViewModel: ObservableObject {
     @Published private(set) var phasedRelease: PhasedReleaseModel?
     @Published private(set) var phasedLoading = false
     @Published private(set) var phasedActionInFlight = false
+
+#if DEBUG
+    // MARK: - Deterministic XCUITest fixtures
+
+    func configureForUITesting(scenario: ReviewSubmissionUITestScenario, app: AppsData) {
+        uiTestScenario = scenario
+        currentAppId = app.id
+        reviewsLoadedAppId = app.id
+        submissionsLoadedAppId = app.id
+        reviewsState = .empty
+        submissionsState = .empty
+
+        let initialState: String
+        switch scenario {
+        case .ready:
+            initialState = "READY_FOR_REVIEW"
+        case .waiting, .unrelatedSubmission:
+            initialState = "WAITING_FOR_REVIEW"
+        default:
+            initialState = "PREPARE_FOR_SUBMISSION"
+        }
+
+        let version = Self.uiTestVersion(state: initialState)
+        appStoreVersionsState = .loaded([version])
+        appStoreVersionPlatforms = ["IOS"]
+        selectedAppStoreVersionPlatform = "IOS"
+        selectedAppStoreVersionId = version.id
+        selectedAppStoreVersionSnapshot = version
+        eligibleBuildsState = .loaded(version.build.map { [$0] } ?? [])
+
+        var localization = AppStoreVersionLocalizationsModel(id: "ui-test-locale")
+        localization.locale = "en-US"
+        localization.whatsNew = "Performance and reliability improvements."
+        versionLocalizationsVersionId = version.id
+        versionLocalizationsState = .loaded([localization])
+
+        var details = AppStoreReviewDetailsModel(id: "ui-test-review-details")
+        details.contactFirstName = "Review"
+        details.contactLastName = "Owner"
+        details.contactPhone = "+1 555 0100"
+        details.contactEmail = "review@example.com"
+        details.demoAccountRequired = false
+        reviewDetailsVersionId = version.id
+        reviewDetailsState = .loaded(details)
+        phasedVersionId = version.id
+        phasedRelease = nil
+
+        switch scenario {
+        case .ready:
+            submissionsState = .loaded([Self.uiTestSubmission(state: "READY_FOR_REVIEW", version: version)])
+        case .waiting:
+            submissionsState = .loaded([Self.uiTestSubmission(state: "WAITING_FOR_REVIEW", version: version)])
+        case .delayed:
+            reviewStatusInitialVersionState = initialState
+            reviewStatusSyncState = .delayed(versionId: version.id)
+        case .unrelatedSubmission:
+            let otherVersion = Self.uiTestVersion(id: "ui-test-version-8-7", versionString: "8.7", state: "WAITING_FOR_REVIEW")
+            submissionsState = .loaded([Self.uiTestSubmission(state: "WAITING_FOR_REVIEW", version: otherVersion)])
+            appStoreVersionsState = .loaded([version, otherVersion])
+        case .staleVersionRecovery:
+            reviewStatusInitialVersionState = initialState
+            reviewStatusSyncState = .syncing(versionId: version.id)
+            reviewStatusSyncTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.reviewStatusInitialVersionState = nil
+                self?.reviewStatusSyncState = .idle
+            }
+        case .draft:
+            break
+        }
+    }
+
+    private static func uiTestVersion(
+        id: String = "ui-test-version-8-8",
+        versionString: String = "8.8",
+        state: String
+    ) -> AppStoreVersionsModel {
+        var build = BuildsModel(id: "ui-test-build-9", betaBuildLocalizations: [])
+        build.version = "9"
+        build.processingState = "VALID"
+
+        var version = AppStoreVersionsModel(id: id, appStoreVersionLocalizations: [])
+        version.versionString = versionString
+        version.platform = "IOS"
+        version.appStoreState = state
+        version.appVersionState = state
+        version.releaseType = "MANUAL"
+        version.createdDate = "2026-10-08T08:00:00Z"
+        version.build = build
+        return version
+    }
+
+    private static func uiTestSubmission(
+        state: String,
+        version: AppStoreVersionsModel
+    ) -> ReviewSubmissionModel {
+        var submission = ReviewSubmissionModel(id: "ui-test-submission-\(version.id)")
+        submission.platform = version.platform
+        submission.state = state
+        submission.submittedDate = "2026-10-08T08:05:00Z"
+        submission.appStoreVersionForReview = version
+        return submission
+    }
+
+    private func simulateUISubmit(appId: String, versionId: String) async -> Bool {
+        guard !submittingReview,
+              !reviewStatusSyncState.isActive,
+              currentAppId == appId,
+              let version = appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }),
+              version.build != nil else { return false }
+        submittingReview = true
+        defer { submittingReview = false }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        guard !Task.isCancelled else { return false }
+        submissionsState = .loaded([Self.uiTestSubmission(state: "READY_FOR_REVIEW", version: version)])
+        scheduleUITestStatusTransition(versionId: versionId, includeReadyState: true)
+        return true
+    }
+
+    private func scheduleUITestStatusTransition(versionId: String, includeReadyState: Bool) {
+        reviewStatusSyncTask?.cancel()
+        reviewStatusInitialVersionState = "PREPARE_FOR_SUBMISSION"
+        reviewStatusSyncState = .syncing(versionId: versionId)
+        reviewStatusSyncTask = Task { [weak self] in
+            if includeReadyState {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.setUITestVersionState("READY_FOR_REVIEW", versionId: versionId)
+            }
+            try? await Task.sleep(nanoseconds: includeReadyState ? 1_200_000_000 : 600_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.setUITestVersionState("WAITING_FOR_REVIEW", versionId: versionId)
+            if let version = self.appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }) {
+                self.submissionsState = .loaded([Self.uiTestSubmission(state: "WAITING_FOR_REVIEW", version: version)])
+            }
+            self.reviewStatusInitialVersionState = nil
+            self.reviewStatusSyncState = .idle
+            self.reviewStatusSyncTask = nil
+        }
+    }
+
+    private func simulateUICancellation(_ submission: ReviewSubmissionModel) async -> Bool {
+        guard cancellingSubmissionId == nil,
+              let versionId = submission.appStoreVersionForReview?.id else { return false }
+        cancellingSubmissionId = submission.id
+        defer { cancellingSubmissionId = nil }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        guard !Task.isCancelled else { return false }
+        setUITestVersionState("PREPARE_FOR_SUBMISSION", versionId: versionId)
+        submissionsState = .empty
+        clearReviewStatusSync(afterCancellingVersionId: versionId)
+        return true
+    }
+
+    private func setUITestVersionState(_ state: String, versionId: String) {
+        guard case .loaded(var versions) = appStoreVersionsState,
+              let index = versions.firstIndex(where: { $0.id == versionId }) else { return }
+        versions[index].appStoreState = state
+        versions[index].appVersionState = state
+        appStoreVersionsState = .loaded(versions)
+        if selectedAppStoreVersionSnapshot?.id == versionId {
+            selectedAppStoreVersionSnapshot = versions[index]
+        }
+    }
+#endif
 
     // MARK: - Filters
 
@@ -429,6 +600,12 @@ final class ReviewsViewModel: ObservableObject {
     /// for this app are (re)fetched, and in-flight fetches for the same app
     /// are not cancelled-and-restarted.
     func load(app: AppsData) {
+#if DEBUG
+        if uiTestScenario != nil {
+            currentAppId = app.id
+            return
+        }
+#endif
         // App switch: the phased-release card belongs to the previous app —
         // without this reset it would show stale state and its buttons
         /// would PATCH the wrong app's release.
@@ -1272,6 +1449,9 @@ final class ReviewsViewModel: ObservableObject {
     /// shown-version observer fire back-to-back per tap, and the second
     /// call would only churn a duplicate request.
     func loadVersionLocalizations(versionId: String) {
+#if DEBUG
+        if uiTestScenario != nil { return }
+#endif
         guard currentAppId != nil else { return }
         if versionLocalizationsVersionId == versionId,
            case .loading = versionLocalizationsState { return }
@@ -1506,13 +1686,25 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
-    /// Latest submitted-state submission for the platform (any state past
-    /// draft), used for the Submitted date in summaries.
-    func latestSubmission(forPlatform platform: String?) -> ReviewSubmissionModel? {
-        (submissionsState.loadedValue ?? []).first {
-            ($0.state ?? "") != "READY_FOR_REVIEW"
-                && (platform == nil || $0.platform == platform)
-        }
+    /// Latest submitted-state submission for this exact App Store version.
+    /// Platform-only matching can put the newest iOS submission date on
+    /// every historical iOS version.
+    func latestSubmission(for version: AppStoreVersionsModel) -> ReviewSubmissionModel? {
+        (submissionsState.loadedValue ?? [])
+            .filter {
+                ($0.state ?? "") != "READY_FOR_REVIEW"
+                    && $0.appStoreVersionForReview?.id == version.id
+            }
+            .max { lhs, rhs in
+                submissionDateValue(lhs.submittedDate) < submissionDateValue(rhs.submittedDate)
+            }
+    }
+
+    private func submissionDateValue(_ raw: String?) -> Date {
+        guard let raw else { return .distantPast }
+        return sharedFractionalISOFormatter.date(from: raw)
+            ?? sharedISOFormatter.date(from: raw)
+            ?? .distantPast
     }
 
     /// Fire-and-forget read for the release form. Never creates: a
@@ -1521,6 +1713,9 @@ final class ReviewsViewModel: ObservableObject {
     /// Skips when the same version is already loading (see
     /// loadVersionLocalizations).
     func loadReviewDetails(versionId: String) {
+#if DEBUG
+        if uiTestScenario != nil { return }
+#endif
         guard currentAppId != nil else { return }
         if reviewDetailsVersionId == versionId,
            case .loading = reviewDetailsState { return }
@@ -1901,6 +2096,11 @@ final class ReviewsViewModel: ObservableObject {
     /// submission {submitted: true}. A POST alone only creates a draft.
     /// `versionId` is required — the UI disables submit without one.
     func submitForReview(appId: String, versionId: String) async -> Bool {
+#if DEBUG
+        if uiTestScenario != nil {
+            return await simulateUISubmit(appId: appId, versionId: versionId)
+        }
+#endif
         guard !submittingReview,
               !reviewStatusSyncState.isActive,
               currentAppId == appId,
@@ -2005,6 +2205,14 @@ final class ReviewsViewModel: ObservableObject {
     /// longer than the automatic polling window. The submitted version stays
     /// protected from a duplicate submit while this retry is available.
     func retryReviewStatusSync(appId: String, versionId: String) {
+#if DEBUG
+        if uiTestScenario != nil {
+            guard currentAppId == appId,
+                  reviewStatusSyncState == .delayed(versionId: versionId) else { return }
+            scheduleUITestStatusTransition(versionId: versionId, includeReadyState: false)
+            return
+        }
+#endif
         guard currentAppId == appId,
               reviewStatusSyncState == .delayed(versionId: versionId) else { return }
         let currentState = appStoreVersionsState.loadedValue?
@@ -2154,6 +2362,11 @@ final class ReviewsViewModel: ObservableObject {
     /// version and submissions on success so every cancel entry point sees
     /// the version return to its editable state; true = cancelled.
     func cancelSubmission(_ submission: ReviewSubmissionModel) async -> Bool {
+#if DEBUG
+        if uiTestScenario != nil {
+            return await simulateUICancellation(submission)
+        }
+#endif
         guard cancellingSubmissionId == nil else { return false }
         guard let appId = currentAppId else { return false }
         cancelSubmissionGeneration += 1
@@ -2204,6 +2417,14 @@ final class ReviewsViewModel: ObservableObject {
     /// slow earlier request can't overwrite (or arm buttons against)
     /// the currently selected version's release.
     func loadPhasedRelease(versionId: String) async {
+#if DEBUG
+        if uiTestScenario != nil {
+            phasedVersionId = versionId
+            phasedRelease = nil
+            phasedLoading = false
+            return
+        }
+#endif
         phasedVersionId = versionId
         phasedReleaseGeneration += 1
         let generation = phasedReleaseGeneration

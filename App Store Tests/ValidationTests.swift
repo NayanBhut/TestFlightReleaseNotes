@@ -926,6 +926,44 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(vm.creatableAppStoreVersionPlatforms, [.iOS, .macOS])
     }
 
+    @MainActor
+    func testLatestSubmissionMatchesExactVersionAndNewestDate() {
+        var version88 = Self.version(
+            id: "version-8.8", state: "READY_FOR_SALE", created: "2026-10-01T10:00:00Z")
+        version88.versionString = "8.8"
+        var version87 = Self.version(
+            id: "version-8.7", state: "READY_FOR_SALE", created: "2026-09-01T10:00:00Z")
+        version87.versionString = "8.7"
+
+        var older88 = ReviewSubmissionModel(id: "submission-8.8-older")
+        older88.platform = "IOS"
+        older88.state = "UNRESOLVED_ISSUES"
+        older88.submittedDate = "2026-10-07T12:00:00Z"
+        older88.appStoreVersionForReview = version88
+
+        var latest88 = ReviewSubmissionModel(id: "submission-8.8-latest")
+        latest88.platform = "IOS"
+        latest88.state = "COMPLETE"
+        latest88.submittedDate = "2026-10-08T14:22:23.673Z"
+        latest88.appStoreVersionForReview = version88
+
+        var submission87 = ReviewSubmissionModel(id: "submission-8.7")
+        submission87.platform = "IOS"
+        submission87.state = "COMPLETE"
+        submission87.submittedDate = "2026-09-17T08:00:00Z"
+        submission87.appStoreVersionForReview = version87
+
+        let vm = ReviewsViewModel()
+        vm.submissionsState = .loaded([submission87, older88, latest88])
+
+        XCTAssertEqual(vm.latestSubmission(for: version88)?.id, "submission-8.8-latest")
+        XCTAssertEqual(vm.latestSubmission(for: version87)?.id, "submission-8.7")
+
+        var unrelatedIOSVersion = version88
+        unrelatedIOSVersion.id = "version-unrelated"
+        XCTAssertNil(vm.latestSubmission(for: unrelatedIOSVersion))
+    }
+
     func testStatusLabelsAndEditability() {
         let labels = [
             "PREPARE_FOR_SUBMISSION": "Draft",

@@ -10,33 +10,12 @@ import AppKit
 
 @main
 struct App_StoreApp: App {
-    @StateObject private var navigationManager = NavigationManager()
-    @StateObject private var viewModel = SideBarViewModel()
     @StateObject private var buildMonitor = BuildProcessingMonitor()
     @StateObject private var appCommands = AppCommandStore()
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            ContentView(viewModel: viewModel, monitor: buildMonitor)
-                .environmentObject(navigationManager)
-                .environmentObject(appCommands)
-                .sheet(isPresented: $appCommands.showPalette) {
-                    CommandPalette(commands: appCommands)
-                }
-                .task {
-                    buildMonitor.start()
-                    AppAppearance.applyStored()
-                    clampMainWindowToVisibleScreen()
-                }
-                .onReceive(appCommands.refreshRequested) { _ in
-                    viewModel.retryApps()
-                }
-                .onReceive(appCommands.clearSearchRequested) { _ in
-                    viewModel.clearSearch()
-                }
-                .onReceive(appCommands.toggleDarkModeRequested) { _ in
-                    AppAppearance.toggle()
-                }
+            rootView
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
@@ -66,6 +45,51 @@ struct App_StoreApp: App {
             }
         }
         .menuBarExtraStyle(.menu)
+    }
+
+    @ViewBuilder
+    private var rootView: some View {
+#if DEBUG
+        if let scenario = ReviewSubmissionUITestScenario.current {
+            ReviewSubmissionUITestHost(scenario: scenario)
+        } else {
+            ProductionAppRoot(buildMonitor: buildMonitor, appCommands: appCommands)
+        }
+#else
+        ProductionAppRoot(buildMonitor: buildMonitor, appCommands: appCommands)
+#endif
+    }
+}
+
+/// Keeps credential-backed production state out of the deterministic UI-test
+/// launch path. Constructing this view is what opts into Keychain access.
+private struct ProductionAppRoot: View {
+    @ObservedObject var buildMonitor: BuildProcessingMonitor
+    @ObservedObject var appCommands: AppCommandStore
+    @StateObject private var navigationManager = NavigationManager()
+    @StateObject private var viewModel = SideBarViewModel()
+
+    var body: some View {
+        ContentView(viewModel: viewModel, monitor: buildMonitor)
+            .environmentObject(navigationManager)
+            .environmentObject(appCommands)
+            .sheet(isPresented: $appCommands.showPalette) {
+                CommandPalette(commands: appCommands)
+            }
+            .task {
+                buildMonitor.start()
+                AppAppearance.applyStored()
+                clampMainWindowToVisibleScreen()
+            }
+            .onReceive(appCommands.refreshRequested) { _ in
+                viewModel.retryApps()
+            }
+            .onReceive(appCommands.clearSearchRequested) { _ in
+                viewModel.clearSearch()
+            }
+            .onReceive(appCommands.toggleDarkModeRequested) { _ in
+                AppAppearance.toggle()
+            }
     }
 }
 
