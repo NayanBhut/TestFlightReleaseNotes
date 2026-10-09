@@ -10,6 +10,51 @@ import XCTest
 @testable import Shipyard
 
 final class ValidationTests: XCTestCase {
+#if DEBUG
+    func testReviewSubmissionUITestSafetyRequiresExplicitMarkerAndValidScenario() {
+        XCTAssertFalse(ReviewSubmissionUITestSafety.isEnabled(in: [:]))
+        XCTAssertFalse(ReviewSubmissionUITestSafety.isEnabled(in: [
+            ReviewSubmissionUITestSafety.environmentKey: "0"
+        ]))
+        XCTAssertTrue(ReviewSubmissionUITestSafety.isEnabled(in: [
+            ReviewSubmissionUITestSafety.environmentKey: ReviewSubmissionUITestSafety.enabledValue
+        ]))
+
+        XCTAssertEqual(
+            ReviewSubmissionUITestScenario.scenario(in: [
+                ReviewSubmissionUITestSafety.scenarioArgument, "draft"
+            ]),
+            .draft)
+        XCTAssertNil(ReviewSubmissionUITestScenario.scenario(in: []))
+        XCTAssertNil(ReviewSubmissionUITestScenario.scenario(in: [
+            ReviewSubmissionUITestSafety.scenarioArgument
+        ]))
+        XCTAssertNil(ReviewSubmissionUITestScenario.scenario(in: [
+            ReviewSubmissionUITestSafety.scenarioArgument, "invalid-scenario"
+        ]))
+    }
+
+    func testReviewSubmissionUITestNetworkBlockerRejectsOnlyTestHTTPRequests() throws {
+        let enabledEnvironment = [
+            ReviewSubmissionUITestSafety.environmentKey: ReviewSubmissionUITestSafety.enabledValue
+        ]
+        let httpsRequest = URLRequest(url: try XCTUnwrap(
+            URL(string: "https://api.appstoreconnect.apple.com/v1/apps")))
+        let fileRequest = URLRequest(url: try XCTUnwrap(
+            URL(string: "file:///tmp/review-fixture.json")))
+
+        XCTAssertTrue(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            httpsRequest,
+            environment: enabledEnvironment))
+        XCTAssertFalse(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            httpsRequest,
+            environment: [:]))
+        XCTAssertFalse(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            fileRequest,
+            environment: enabledEnvironment))
+    }
+#endif
+
     // MARK: - ProvisioningWriteValidation (Batch G)
 
     func testValidUDIDs() {

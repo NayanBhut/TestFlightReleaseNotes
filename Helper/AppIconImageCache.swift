@@ -68,6 +68,15 @@ actor AppIconImageCache {
     private nonisolated static func load(url: URL, diskDirectory: URL) async -> NSImage? {
         let fileURL = diskDirectory.appendingPathComponent(Self.fileName(for: url))
         if let fresh = Self.freshDiskImage(at: fileURL) { return fresh }
+        #if DEBUG
+        // Review-submission UI tests must remain hermetic even if a future
+        // fixture accidentally supplies remote artwork. Returning before
+        // URLSession is the second network boundary after APIClient's guard.
+        guard !ReviewSubmissionUITestSafety.isEnabled else {
+            iconLogger.fault("[UI TEST SAFETY] Blocked a remote app-icon request")
+            return nil
+        }
+        #endif
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             guard let image = NSImage(data: data) else { return nil }

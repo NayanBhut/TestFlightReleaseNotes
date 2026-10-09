@@ -349,15 +349,15 @@ final class ReviewsViewModel: ObservableObject {
 
         var localization = AppStoreVersionLocalizationsModel(id: "ui-test-locale")
         localization.locale = "en-US"
-        localization.whatsNew = "Performance and reliability improvements."
+        localization.whatsNew = "Synthetic release notes for UI testing."
         versionLocalizationsVersionId = version.id
         versionLocalizationsState = .loaded([localization])
 
         var details = AppStoreReviewDetailsModel(id: "ui-test-review-details")
-        details.contactFirstName = "Review"
-        details.contactLastName = "Owner"
+        details.contactFirstName = "UI"
+        details.contactLastName = "Tester"
         details.contactPhone = "+1 555 0100"
-        details.contactEmail = "review@example.com"
+        details.contactEmail = "ui-tests@example.invalid"
         details.demoAccountRequired = false
         reviewDetailsVersionId = version.id
         reviewDetailsState = .loaded(details)
@@ -373,14 +373,19 @@ final class ReviewsViewModel: ObservableObject {
             reviewStatusInitialVersionState = initialState
             reviewStatusSyncState = .delayed(versionId: version.id)
         case .unrelatedSubmission:
-            let otherVersion = Self.uiTestVersion(id: "ui-test-version-8-7", versionString: "8.7", state: "WAITING_FOR_REVIEW")
+            let otherVersion = Self.uiTestVersion(
+                id: "ui-test-version-unrelated",
+                versionString: "98.0",
+                state: "WAITING_FOR_REVIEW")
             submissionsState = .loaded([Self.uiTestSubmission(state: "WAITING_FOR_REVIEW", version: otherVersion)])
             appStoreVersionsState = .loaded([version, otherVersion])
         case .staleVersionRecovery:
             reviewStatusInitialVersionState = initialState
             reviewStatusSyncState = .syncing(versionId: version.id)
             reviewStatusSyncTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                // Keep the recovery state visible after macOS finishes
+                // launching and exposing the accessibility hierarchy.
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
                 guard !Task.isCancelled else { return }
                 self?.reviewStatusInitialVersionState = nil
                 self?.reviewStatusSyncState = .idle
@@ -391,12 +396,12 @@ final class ReviewsViewModel: ObservableObject {
     }
 
     private static func uiTestVersion(
-        id: String = "ui-test-version-8-8",
-        versionString: String = "8.8",
+        id: String = "ui-test-version-primary",
+        versionString: String = "99.0",
         state: String
     ) -> AppStoreVersionsModel {
-        var build = BuildsModel(id: "ui-test-build-9", betaBuildLocalizations: [])
-        build.version = "9"
+        var build = BuildsModel(id: "ui-test-build-primary", betaBuildLocalizations: [])
+        build.version = "999"
         build.processingState = "VALID"
 
         var version = AppStoreVersionsModel(id: id, appStoreVersionLocalizations: [])
@@ -405,7 +410,7 @@ final class ReviewsViewModel: ObservableObject {
         version.appStoreState = state
         version.appVersionState = state
         version.releaseType = "MANUAL"
-        version.createdDate = "2026-10-08T08:00:00Z"
+        version.createdDate = "2001-01-01T00:00:00Z"
         version.build = build
         return version
     }
@@ -417,7 +422,7 @@ final class ReviewsViewModel: ObservableObject {
         var submission = ReviewSubmissionModel(id: "ui-test-submission-\(version.id)")
         submission.platform = version.platform
         submission.state = state
-        submission.submittedDate = "2026-10-08T08:05:00Z"
+        submission.submittedDate = "2001-01-01T00:05:00Z"
         submission.appStoreVersionForReview = version
         return submission
     }
@@ -441,13 +446,16 @@ final class ReviewsViewModel: ObservableObject {
         reviewStatusSyncTask?.cancel()
         reviewStatusInitialVersionState = "PREPARE_FOR_SUBMISSION"
         reviewStatusSyncState = .syncing(versionId: versionId)
+        // Keep these delays below ReviewSubmissionUITests.interactionTimeout.
+        // They intentionally make READY_FOR_REVIEW visible long enough for
+        // the progress-state assertion instead of trying to mimic the API.
         reviewStatusSyncTask = Task { [weak self] in
             if includeReadyState {
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 guard !Task.isCancelled, let self else { return }
                 self.setUITestVersionState("READY_FOR_REVIEW", versionId: versionId)
             }
-            try? await Task.sleep(nanoseconds: includeReadyState ? 1_200_000_000 : 600_000_000)
+            try? await Task.sleep(nanoseconds: includeReadyState ? 1_200_000_000 : 1_500_000_000)
             guard !Task.isCancelled, let self else { return }
             self.setUITestVersionState("WAITING_FOR_REVIEW", versionId: versionId)
             if let version = self.appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }) {

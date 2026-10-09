@@ -13,6 +13,14 @@ struct App_StoreApp: App {
     @StateObject private var buildMonitor = BuildProcessingMonitor()
     @StateObject private var appCommands = AppCommandStore()
 
+    init() {
+#if DEBUG
+        // Installed before SwiftUI builds either root, so every HTTP(S)
+        // URLSession path is blocked throughout review UI-test mode.
+        ReviewSubmissionUITestNetworkBlocker.installIfNeeded()
+#endif
+    }
+
     var body: some Scene {
         WindowGroup(id: "main") {
             rootView
@@ -50,8 +58,12 @@ struct App_StoreApp: App {
     @ViewBuilder
     private var rootView: some View {
 #if DEBUG
-        if let scenario = ReviewSubmissionUITestScenario.current {
-            ReviewSubmissionUITestHost(scenario: scenario)
+        if ReviewSubmissionUITestSafety.isEnabled {
+            if let scenario = ReviewSubmissionUITestScenario.current {
+                ReviewSubmissionUITestHost(scenario: scenario)
+            } else {
+                ReviewSubmissionUITestConfigurationErrorView()
+            }
         } else {
             ProductionAppRoot(buildMonitor: buildMonitor, appCommands: appCommands)
         }
