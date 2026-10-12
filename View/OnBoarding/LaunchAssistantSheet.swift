@@ -289,22 +289,18 @@ struct LaunchAssistantSheet: View {
         select: @escaping (Value) -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.appCaption)
-                .foregroundColor(LaunchTheme.title)
             Menu {
                 ForEach(values) { item in
                     Button(label(item)) { select(item) }
                 }
             } label: {
                 HStack {
+                    Text(title)
+                        .font(.appCaption)
+                        .foregroundColor(LaunchTheme.title)
                     Text(value)
                         .font(.appCaption)
                         .foregroundColor(LaunchTheme.title)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(LaunchTheme.body)
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 32)
@@ -444,9 +440,10 @@ struct LaunchField: View {
             TextField(prompt, text: $text)
                 .font(isMonospaced ? .system(size: 13, design: .monospaced) : .appCaption)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.vertical, 10)
                 .background(LaunchTheme.field)
                 .cornerRadius(6)
+                .textFieldStyle(.plain)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(LaunchTheme.border, lineWidth: 1)
