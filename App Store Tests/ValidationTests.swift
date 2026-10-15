@@ -10,19 +10,31 @@ import XCTest
 @testable import Shipyard
 
 final class ValidationTests: XCTestCase {
-    func testAppInfoLocaleSelectionMovesToPrimaryAfterDeletion() {
+    func testAppInfoLocaleSelectionChoosesValidLocaleAfterDeletion() {
         XCTAssertEqual(
             ShipyardAppInfoView.localeAfterDeleting(
                 "ca",
-                availableLocales: ["en-US"],
+                availableLocales: ["ca", "en-US"],
                 primaryLocale: "en-US"),
             "en-US")
         XCTAssertEqual(
             ShipyardAppInfoView.localeAfterDeleting(
                 "ca",
-                availableLocales: ["de-DE", "fr-FR"],
+                availableLocales: ["ca", "de-DE", "fr-FR"],
                 primaryLocale: "en-US"),
             "de-DE")
+        XCTAssertEqual(
+            ShipyardAppInfoView.localeAfterDeleting(
+                "ca",
+                availableLocales: ["ca"],
+                primaryLocale: "en-US"),
+            "en-US")
+        XCTAssertEqual(
+            ShipyardAppInfoView.localeAfterDeleting(
+                "ca",
+                availableLocales: ["ca"],
+                primaryLocale: nil),
+            BetaLocalizationLocales.defaultLocale)
     }
 
     @MainActor

@@ -895,10 +895,12 @@ struct ShipyardAppInfoView: View {
             toastCenter.show("Couldn't remove localization", detail: message, variant: .error)
             return
         }
-        switchToLocale(Self.localeAfterDeleting(
-            removedLocale,
-            availableLocales: locales,
-            primaryLocale: app.primaryLocale))
+        if locale == removedLocale {
+            switchToLocale(Self.localeAfterDeleting(
+                removedLocale,
+                availableLocales: locales,
+                primaryLocale: app.primaryLocale))
+        }
         toastCenter.show(
             "Localization removed",
             detail: BetaLocalizationLocales.displayName(for: removedLocale),
@@ -915,11 +917,10 @@ struct ShipyardAppInfoView: View {
         primaryLocale: String?
     ) -> String {
         let remaining = availableLocales.filter { $0 != removedLocale }
-        return primaryLocale.flatMap { primary in
-            remaining.first(where: { $0 == primary })
-        } ?? remaining.first
-            ?? primaryLocale
-            ?? BetaLocalizationLocales.defaultLocale
+        if let primaryLocale, remaining.contains(primaryLocale) {
+            return primaryLocale
+        }
+        return remaining.first ?? primaryLocale ?? BetaLocalizationLocales.defaultLocale
     }
 
     private func save() async {
