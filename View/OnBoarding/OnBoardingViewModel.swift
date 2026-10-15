@@ -17,8 +17,6 @@ class OnBoardingViewModel: ObservableObject {
     @Published var issuerID: String = ""
     @Published var keyId: String = ""
     @Published var privateKey: String = ""
-    @Published var keyKind: AppStoreConnectKeyKind = .team
-    @Published var keyRole: AppStoreConnectKeyRole = .developer
     @Published var isShowSpinner = false
     @Published var errorMessage: String?
     /// Apps returned by the last verification request. Set by getAllApps on
@@ -26,17 +24,17 @@ class OnBoardingViewModel: ObservableObject {
     /// count) and cleared whenever a new request starts or fails.
     @Published var verifiedAppCount: Int?
     
-    /// First-step gating: team name and key ID, plus issuer ID for team keys.
-    /// The .p8 key arrives in the next step.
+    /// First-step gating: team name, issuer ID and key ID. The .p8 key
+    /// arrives in the next step.
     var credentialsValid: Bool {
         !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        (keyKind == .individual || !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
+        !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
     var isFormValid: Bool {
         !teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        (keyKind == .individual || !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
+        !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -54,11 +52,11 @@ class OnBoardingViewModel: ObservableObject {
 
     var isJWTValid: Bool {
         guard !keyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              (keyKind == .individual || !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+              !issuerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !normalizedPrivateKey.isEmpty else {
             return false
         }
-        let inputs = "\(keyKind.rawValue)|\(keyId)|\(issuerID)|\(normalizedPrivateKey)"
+        let inputs = "\(keyId)|\(issuerID)|\(normalizedPrivateKey)"
         if let cache = jwtValidationCache, cache.inputs == inputs {
             return cache.isValid
         }
@@ -67,7 +65,7 @@ class OnBoardingViewModel: ObservableObject {
         let isValid = (try? JWT(
             keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
             issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-            expireDuration: JWTLimits.expiryInterval, keyKind: keyKind
+            expireDuration: JWTLimits.expiryInterval
         ).signedToken(using: normalizedPrivateKey)) != nil
         jwtValidationCache = (inputs, isValid)
         return isValid
@@ -134,7 +132,7 @@ class OnBoardingViewModel: ObservableObject {
         var requestHeader = ["Content-Type": "application/json"]
         if let token = try? JWT(keyIdentifier: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
                                 issuerIdentifier: issuerID.trimmingCharacters(in: .whitespacesAndNewlines),
-                                expireDuration: JWTLimits.expiryInterval, keyKind: keyKind).signedToken(using: normalizedPrivateKey) {
+                                expireDuration: JWTLimits.expiryInterval).signedToken(using: normalizedPrivateKey) {
             requestHeader["Authorization"] = "Bearer " + token
         }
         return requestHeader
@@ -147,8 +145,7 @@ class OnBoardingViewModel: ObservableObject {
     @discardableResult
     func saveLoginState() -> Bool {
         let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let access = AppStoreConnectKeyAccess(kind: keyKind, role: keyRole)
-        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: normalizedPrivateKey, keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines), access: access), teamName: cleanTeamName) else {
+        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: normalizedPrivateKey, keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName) else {
             errorMessage = "Couldn't save the team to the Keychain. Please try again."
             return false
         }

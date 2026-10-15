@@ -58,7 +58,13 @@ struct App_StoreApp: App {
     @ViewBuilder
     private var rootView: some View {
 #if DEBUG
-        if ReviewSubmissionUITestSafety.isEnabled {
+        if AppStoreScreenshotSafety.isEnabled {
+            if let screen = AppStoreScreenshotScreen.current {
+                AppStoreScreenshotHost(screen: screen)
+            } else {
+                AppStoreScreenshotConfigurationErrorView()
+            }
+        } else if ReviewSubmissionUITestSafety.isEnabled {
             if let scenario = ReviewSubmissionUITestScenario.current {
                 ReviewSubmissionUITestHost(scenario: scenario)
             } else {

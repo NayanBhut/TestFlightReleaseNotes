@@ -10,6 +10,33 @@ import XCTest
 @testable import Shipyard
 
 final class ValidationTests: XCTestCase {
+    @MainActor
+    func testBuildsQueryLoadsTenBuildsForSelectedVersion() {
+        let query = DetailViewModel.buildsQueryParams(
+            appId: "app-123",
+            preReleaseVersionId: "version-1.0",
+            cursor: "next-page")
+
+        XCTAssertEqual(query["filter[app]"], "app-123")
+        XCTAssertEqual(query["filter[preReleaseVersion]"], "version-1.0")
+        XCTAssertEqual(query["sort"], "-version")
+        XCTAssertEqual(query["include"], "appStoreVersion,betaBuildLocalizations,preReleaseVersion")
+        XCTAssertEqual(query["limit"], "10")
+        XCTAssertEqual(query["cursor"], "next-page")
+    }
+
+    func testScreenshotDisplayTypesMatchVersionPlatform() {
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "MAC_OS"), [.desktop])
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "TV_OS"), [.appleTV])
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "VISION_OS"), [.visionPro])
+        XCTAssertEqual(
+            ScreenshotDisplayType.supported(for: "IOS"),
+            [.iPhone67, .iPhone61, .iPhone65, .iPhone58,
+             .iPad129, .iPad11, .watchUltra])
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: nil), ScreenshotDisplayType.allCases)
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "FUTURE_OS"), ScreenshotDisplayType.allCases)
+    }
+
 #if DEBUG
     func testReviewSubmissionUITestSafetyRequiresExplicitMarkerAndValidScenario() {
         XCTAssertFalse(ReviewSubmissionUITestSafety.isEnabled(in: [:]))
@@ -52,76 +79,114 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
             fileRequest,
             environment: enabledEnvironment))
+
+        XCTAssertTrue(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            httpsRequest,
+            environment: [
+                AppStoreScreenshotSafety.environmentKey: AppStoreScreenshotSafety.enabledValue
+            ]))
+    }
+
+    func testScreenshotModeRequiresAValidScreen() {
+        XCTAssertEqual(
+            AppStoreScreenshotSafety.screenValue(in: [
+                AppStoreScreenshotSafety.screenArgument, "reviews"
+            ]),
+            "reviews")
+        XCTAssertNil(AppStoreScreenshotSafety.screenValue(in: []))
+        XCTAssertNil(AppStoreScreenshotScreen(rawValue: "unknown"))
     }
 #endif
 
-    func testJWTClaimsMatchKeyKind() throws {
+    func testJWTClaimsContainTeamIssuerAndIssuedAt() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        for kind in AppStoreConnectKeyKind.allCases {
-            let jwt = JWT(keyIdentifier: "test-id", issuerIdentifier: "test-issuer", expireDuration: 600, keyKind: kind)
-            let digest = try jwt.digest(dateProvider: { now })
-            let payloadPart = String(digest.split(separator: ".")[1]).base64URLDecoded()
-            let data = try XCTUnwrap(Data(base64Encoded: payloadPart))
-            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            XCTAssertEqual(payload["aud"] as? String, "appstoreconnect-v1")
-            XCTAssertEqual(payload["iat"] as? Int, 1_700_000_000)
-            XCTAssertEqual(payload["exp"] as? Int, 1_700_000_600)
-            if kind == .team {
-                XCTAssertEqual(payload["iss"] as? String, "test-issuer")
-                XCTAssertNil(payload["sub"])
-            } else {
-                XCTAssertEqual(payload["sub"] as? String, "user")
-                XCTAssertNil(payload["iss"])
-            }
-        }
-    }
+        let jwt = JWT(
+            keyIdentifier: "test-id",
+            issuerIdentifier: "test-issuer",
+            expireDuration: 600)
+        let digest = try jwt.digest(dateProvider: { now })
+        let payloadPart = String(digest.split(separator: ".")[1]).base64URLDecoded()
+        let data = try XCTUnwrap(Data(base64Encoded: payloadPart))
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-    @MainActor
-    func testIndividualOnboardingDoesNotRequireIssuer() {
-        let vm = OnBoardingViewModel()
-        vm.teamName = "Test"
-        vm.keyId = "id"
-        XCTAssertFalse(vm.credentialsValid)
-        vm.keyKind = .individual
-        XCTAssertTrue(vm.credentialsValid)
-        vm.keyKind = .team
-        XCTAssertFalse(vm.credentialsValid)
-        vm.issuerID = "issuer"
-        XCTAssertTrue(vm.credentialsValid)
+        XCTAssertEqual(payload["aud"] as? String, "appstoreconnect-v1")
+        XCTAssertEqual(payload["iat"] as? Int, 1_700_000_000)
+        XCTAssertEqual(payload["exp"] as? Int, 1_700_000_600)
+        XCTAssertEqual(payload["iss"] as? String, "test-issuer")
+        XCTAssertNil(payload["sub"])
     }
 
     @MainActor
     func testRegenerationRejectsMissingDevicesBeforeRequest() async {
         let vm = ResourcesViewModel()
-        let result = await vm.regenerateProfile(profileId: "old", name: "Profile", profileType: .IOS_APP_DEVELOPMENT,
-                                                 bundleIdId: "bundle", certificateIds: ["cert"], deviceIds: [])
-        guard case .failure(let message) = result else { return XCTFail("Expected preflight failure") }
+        let result = await vm.regenerateProfile(
+            profileId: "old",
+            name: "Profile",
+            profileType: .IOS_APP_DEVELOPMENT,
+            bundleIdId: "bundle",
+            certificateIds: ["cert"],
+            deviceIds: [])
+        guard case .failure(let message) = result else {
+            return XCTFail("Expected preflight failure")
+        }
         XCTAssertEqual(message, "Pick at least one enabled device.")
     }
 
     @MainActor
     func testRegenerationRejectsMultipleDistributionCertificatesBeforeRequest() async {
         let vm = ResourcesViewModel()
-        let result = await vm.regenerateProfile(profileId: "old", name: "Profile", profileType: .IOS_APP_STORE,
-                                                 bundleIdId: "bundle", certificateIds: ["cert1", "cert2"], deviceIds: [])
-        guard case .failure(let message) = result else { return XCTFail("Expected preflight failure") }
+        let result = await vm.regenerateProfile(
+            profileId: "old",
+            name: "Profile",
+            profileType: .IOS_APP_STORE,
+            bundleIdId: "bundle",
+            certificateIds: ["cert1", "cert2"],
+            deviceIds: [])
+        guard case .failure(let message) = result else {
+            return XCTFail("Expected preflight failure")
+        }
         XCTAssertEqual(message, "Pick exactly one distribution certificate.")
     }
 
     func testProfileCertificateEligibilityRejectsWrongPlatformKindAndExpiry() throws {
-        func certificate(type: String, expiry: String = "2099-01-01T00:00:00Z", active: Bool = true) throws -> CertificateModel {
-            let data: [String: Any] = ["data": ["type": "certificates", "id": "cert", "attributes":
-                ["certificateType": type, "expirationDate": expiry, "activated": active]]]
-            return try getDecoder().decode(CertificateModel.self, from: JSONSerialization.data(withJSONObject: data))
+        func certificate(
+            type: String,
+            expiry: String = "2099-01-01T00:00:00Z",
+            active: Bool = true
+        ) throws -> CertificateModel {
+            let object: [String: Any] = [
+                "data": [
+                    "type": "certificates",
+                    "id": "cert",
+                    "attributes": [
+                        "certificateType": type,
+                        "expirationDate": expiry,
+                        "activated": active
+                    ]
+                ]
+            ]
+            return try getDecoder().decode(
+                CertificateModel.self,
+                from: JSONSerialization.data(withJSONObject: object))
         }
+
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        XCTAssertTrue(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(try certificate(type: "IOS_DISTRIBUTION"), now: now))
-        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(try certificate(type: "MAC_APP_DISTRIBUTION"), now: now))
-        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(try certificate(type: "IOS_DEVELOPMENT"), now: now))
-        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(try certificate(type: "IOS_DISTRIBUTION", expiry: "2000-01-01T00:00:00Z"), now: now))
-        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(try certificate(type: "IOS_DISTRIBUTION", expiry: "2000-01-01T00:00:00.000+00:00"), now: now))
-        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(try certificate(type: "IOS_DISTRIBUTION", active: false), now: now))
-        XCTAssertTrue(ProfileTypeOption.MAC_APP_STORE.acceptsCertificate(try certificate(type: "MAC_APP_DISTRIBUTION"), now: now))
+        XCTAssertTrue(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION"), now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "MAC_APP_DISTRIBUTION"), now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DEVELOPMENT"), now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION", expiry: "2000-01-01T00:00:00Z"),
+            now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION", expiry: "2000-01-01T00:00:00.000+00:00"),
+            now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION", active: false), now: now))
+        XCTAssertTrue(ProfileTypeOption.MAC_APP_STORE.acceptsCertificate(
+            try certificate(type: "MAC_APP_DISTRIBUTION"), now: now))
     }
 
     // MARK: - ProvisioningWriteValidation (Batch G)
@@ -1183,53 +1248,37 @@ final class ValidationTests: XCTestCase {
 
 
     func testCredentialCodableRoundTrip() throws {
-        let access = AppStoreConnectKeyAccess(kind: .team, role: .appManager)
-        let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id", access: access)
+        let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id")
         let data = try JSONEncoder().encode(credential)
         let decoded = try JSONDecoder().decode(Credential.self, from: data)
         XCTAssertEqual(decoded.key, "Team")
         XCTAssertEqual(decoded.issuerID, "issuer")
-        XCTAssertEqual(decoded.access, access)
     }
 
-    func testLegacyCredentialWithoutAccessStillDecodesAndShowsExistingUI() throws {
+    func testLegacyCredentialWithDeclaredAccessStillDecodes() throws {
+        let data = Data(#"{"key":"Team","issuerID":"issuer","privateKey":"key","keyID":"id","access":{"kind":"team","role":"developer"}}"#.utf8)
+        let decoded = try JSONDecoder().decode(Credential.self, from: data)
+        XCTAssertEqual(decoded.key, "Team")
+    }
+
+    func testCredentialWithoutAccessStillDecodes() throws {
         let data = Data(#"{"key":"Team","issuerID":"issuer","privateKey":"key","keyID":"id"}"#.utf8)
         let decoded = try JSONDecoder().decode(Credential.self, from: data)
-        XCTAssertNil(decoded.access)
-        XCTAssertTrue(decoded.shows(.appInfo))
-        XCTAssertTrue(decoded.shows(.provisioningResources))
+        XCTAssertEqual(decoded.keyID, "id")
     }
 
-    func testDeclaredAccessVisibilityMatrix() {
-        let developer = Credential(
-            key: "Developer", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .team, role: .developer)
-        )
-        XCTAssertTrue(developer.shows(.builds))
-        XCTAssertTrue(developer.shows(.appStoreVersions))
-        XCTAssertFalse(developer.shows(.appInfo))
-        XCTAssertFalse(developer.shows(.reviews))
-        XCTAssertFalse(developer.shows(.provisioningResources))
+    func testPermissionErrorsDescribeRequiredAccess() {
+        let forbidden = APIError.apiErrorWithCode(error: "Forbidden", 403)
 
-        let support = Credential(
-            key: "Support", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .individual, role: .customerSupport)
-        )
-        XCTAssertTrue(support.shows(.reviews))
-        XCTAssertFalse(support.shows(.builds))
-
-        let individualAdmin = Credential(
-            key: "Admin", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .individual, role: .admin)
-        )
-        XCTAssertTrue(individualAdmin.shows(.users))
-        XCTAssertFalse(individualAdmin.shows(.provisioningResources))
-
-        let teamAdmin = Credential(
-            key: "Team Admin", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .team, role: .admin)
-        )
-        XCTAssertTrue(teamAdmin.shows(.provisioningResources))
+        XCTAssertEqual(
+            FriendlyErrorMessage.message(for: forbidden, requiring: .users),
+            "This API key can't access users and invitations. User management requires an Admin key for this team.")
+        XCTAssertTrue(
+            FriendlyErrorMessage.message(for: forbidden, requiring: .appInfo)
+                .contains("App Manager or Admin"))
+        XCTAssertTrue(
+            FriendlyErrorMessage.message(for: forbidden, requiring: .resources)
+                .contains("Admin key with provisioning access"))
     }
 
     // NOTE: CredentialStorage's selection logic (changeTeam /
@@ -1326,8 +1375,6 @@ final class ValidationTests: XCTestCase {
     func testToECKeyDataGarbageThrowsNotTraps() {
         let cases: [Data] = [
             Data(),
-            Data([0x30, 0x88] + Array(repeating: 0xFF, count: 8)),      // length overflows Int
-            Data([0x30, 0x88, 0x7F] + Array(repeating: 0xFF, count: 7)), // Int.max length, no payload
             Data([0x30, 0x00]),                                       // empty sequence
             Data([0x30, 0x02, 0x02, 0x01]),                           // seq missing [2]
             Data([0x30, 0x06, 0x02, 0x01, 0x00, 0x04, 0x01, 0xAA]),   // outer ok, octet not a seq

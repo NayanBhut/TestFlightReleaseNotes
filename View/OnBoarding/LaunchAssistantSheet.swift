@@ -3,8 +3,8 @@
 //  App Store
 //
 //  Shipyard Launch Assistant: the stepped Add Team flow from the
-//  add-team-credentials-light (Step 2 of 3) and add-team-validate-light
-//  (Step 4 of 3) Figma frames. Steps 1 and 5 are not designed yet, so the
+//  add-team-credentials-light (Step 2 of 5) and add-team-validate-light
+//  (Step 4 of 5) Figma frames. Steps 1 and 5 are not designed yet, so the
 //  sheet opens directly at Step 2. All credential logic (JWT signing,
 //  .p8 import, app-list verification, Keychain save) is the existing
 //  OnBoardingViewModel — this file is presentation only.
@@ -27,9 +27,9 @@ struct LaunchAssistantSheet: View {
     @State private var didAttemptVerification = false
 
     enum LaunchStep: Int {
-        case credentials = 1
-        case privateKey = 2
-        case validation = 3
+        case credentials = 2
+        case privateKey = 3
+        case validation = 4
 
         var title: String {
             switch self {
@@ -74,7 +74,7 @@ struct LaunchAssistantSheet: View {
 
             Spacer()
 
-            Text("Step \(step.rawValue) of 3")
+            Text("Step \(step.rawValue) of 5")
                 .font(.appCaption2)
                 .foregroundColor(LaunchTheme.body)
         }
@@ -105,29 +105,10 @@ struct LaunchAssistantSheet: View {
                 .lineSpacing(2)
 
             LaunchField(label: "Team Name", text: $viewModel.teamName, prompt: "Acme iOS")
-            if viewModel.keyKind == .team {
-                LaunchField(label: "Issuer ID", text: $viewModel.issuerID, prompt: "e.g. 572465ad-5091-4c0f-9275-xxxx", isMonospaced: true)
-            }
+            LaunchField(label: "Issuer ID", text: $viewModel.issuerID, prompt: "e.g. 572465ad-5091-4c0f-9275-xxxx", isMonospaced: true)
             LaunchField(label: "Key ID", text: $viewModel.keyId, prompt: "e.g. 2X88A7D9XX", isMonospaced: true)
 
-            HStack(spacing: 12) {
-                accessMenu(
-                    title: "Key Type",
-                    value: viewModel.keyKind.displayName,
-                    values: AppStoreConnectKeyKind.allCases,
-                    label: { $0.displayName },
-                    select: { viewModel.keyKind = $0 }
-                )
-                accessMenu(
-                    title: "Access Role",
-                    value: viewModel.keyRole.displayName,
-                    values: AppStoreConnectKeyRole.allCases,
-                    label: { $0.displayName },
-                    select: { viewModel.keyRole = $0 }
-                )
-            }
-
-            Text("Choose the access shown in App Store Connect. The .p8 file does not reveal its role; this only hides unrelated navigation. Apple still authorizes every request.")
+            Text("All sections are available after setup. App Store Connect checks the API key's permissions for each request and shows a specific access message when a role or app scope is insufficient.")
                 .font(.appCaption2)
                 .foregroundColor(LaunchTheme.body)
                 .fixedSize(horizontal: false, vertical: true)
@@ -227,7 +208,7 @@ struct LaunchAssistantSheet: View {
                         Text("Apps found: \(appCount)")
                             .font(.appCaption2)
                             .foregroundColor(LaunchTheme.body)
-                        Text("Configured access: \(viewModel.keyKind.displayName) · \(viewModel.keyRole.displayName)")
+                        Text("All Shipyard sections are now available")
                             .font(.appCaption2)
                             .foregroundColor(LaunchTheme.body)
                     }
@@ -281,50 +262,18 @@ struct LaunchAssistantSheet: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func accessMenu<Value: Identifiable>(
-        title: String,
-        value: String,
-        values: [Value],
-        label: @escaping (Value) -> String,
-        select: @escaping (Value) -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Menu {
-                ForEach(values) { item in
-                    Button(label(item)) { select(item) }
-                }
-            } label: {
-                HStack {
-                    Text(title)
-                        .font(.appCaption)
-                        .foregroundColor(LaunchTheme.title)
-                    Text(value)
-                        .font(.appCaption)
-                        .foregroundColor(LaunchTheme.title)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(LaunchTheme.field)
-                .cornerRadius(6)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(LaunchTheme.border, lineWidth: 1))
-            }
-            .menuStyle(.borderlessButton)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     // MARK: - Progress
 
     private var progressDots: some View {
         HStack(spacing: 6) {
-            ForEach(1...3, id: \.self) { index in
+            ForEach(1...5, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(index <= step.rawValue ? LaunchTheme.accent : LaunchTheme.track)
                     .frame(width: 20, height: 4)
             }
             Spacer(minLength: 0)
         }
-        .accessibilityLabel("Step \(step.rawValue) of 3")
+        .accessibilityLabel("Step \(step.rawValue) of 5")
     }
 
     // MARK: - Footer
@@ -440,10 +389,9 @@ struct LaunchField: View {
             TextField(prompt, text: $text)
                 .font(isMonospaced ? .system(size: 13, design: .monospaced) : .appCaption)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 10)
+                .padding(.vertical, 6)
                 .background(LaunchTheme.field)
                 .cornerRadius(6)
-                .textFieldStyle(.plain)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(LaunchTheme.border, lineWidth: 1)

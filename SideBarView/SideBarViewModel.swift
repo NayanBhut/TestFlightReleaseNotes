@@ -188,7 +188,7 @@ class SideBarViewModel: ObservableObject {
             }
             // Silent refreshes keep the current list on failure.
             if !isPaginating, !isSearchRefresh {
-                appsState = .error(friendlyMessage(for: error))
+                appsState = .error(FriendlyErrorMessage.message(for: error, requiring: .apps))
             }
         }
     }
@@ -368,6 +368,27 @@ class SideBarViewModel: ObservableObject {
         getTestFlightVersions(app: app, cursor: cursor)
     }
 
+#if DEBUG
+    /// Deterministic, offline state used only by the App Store screenshot
+    /// launch path. It never reads a credential or starts an API request.
+    func configureForScreenshotSample(
+        apps: [AppsData],
+        selectedApp: AppsData,
+        versions: [PreReleaseVersionsModel]
+    ) {
+        appsFetchTask?.cancel()
+        versionsFetchTask?.cancel()
+        searchDebounceTask?.cancel()
+        allLoadedApps = apps
+        appsState = .loaded(apps)
+        appMeta = Meta(paging: .init(total: apps.count, limit: apps.count, nextCursor: nil))
+        self.selectedApp = selectedApp
+        versionsState = .loaded(versions)
+        versionsMeta = Meta(paging: .init(total: versions.count, limit: versions.count, nextCursor: nil))
+        versionsNextCursor = nil
+    }
+#endif
+
     func fetchVersions(app: AppsData, cursor: String? = nil) async {
         let isPaginating = cursor != nil
         if isPaginating {
@@ -434,12 +455,9 @@ class SideBarViewModel: ObservableObject {
                 // the loaded list stays intact.
                 versionsPaginationFailed = true
             } else {
-                versionsState = .error(friendlyMessage(for: error))
+                versionsState = .error(FriendlyErrorMessage.message(for: error, requiring: .testFlight))
             }
         }
     }
 
-    private func friendlyMessage(for error: Error) -> String {
-        FriendlyErrorMessage.message(for: error)
-    }
 }

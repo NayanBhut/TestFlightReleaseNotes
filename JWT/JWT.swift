@@ -31,15 +31,13 @@ private struct Payload: Codable {
 
     enum CodingKeys: String, CodingKey {
         case issuerIdentifier = "iss"
-        case subject = "sub"
         case issuedAt = "iat"
         case expirationTime = "exp"
         case audience = "aud"
     }
 
     /// Your issuer identifier from the API Keys page in App Store Connect (Ex: 57246542-96fe-1a63-e053-0824d011072a)
-    let issuerIdentifier: String?
-    let subject: String?
+    let issuerIdentifier: String
     let issuedAt: Int
 
     /// The token's expiration time, in Unix epoch time; tokens that expire more than 20 minutes in the future are not valid (Ex: 1528408800)
@@ -97,7 +95,6 @@ struct JWT: Codable, JWTCreatable {
 
     /// Your issuer identifier from the API Keys page in App Store Connect (Ex: 57246542-96fe-1a63-e053-0824d011072a)
     private let issuerIdentifier: String
-    private let keyKind: AppStoreConnectKeyKind
 
     /// The token's expiration duration. Tokens that expire more than 20 minutes in the future are not valid, so set it to a max of 20 minutes.
     private let expireDuration: TimeInterval
@@ -108,18 +105,16 @@ struct JWT: Codable, JWTCreatable {
     ///   - keyIdentifier: Your private key ID from App Store Connect (Ex: 2X9R4HXF34)
     ///   - issuerIdentifier: Your issuer identifier from the API Keys page in App Store Connect (Ex: 57246542-96fe-1a63-e053-0824d011072a)
     ///   - expireDuration: The token's expiration duration. Tokens that expire more than 20 minutes in the future are not valid, so set it to a max of 20 minutes.
-    public init(keyIdentifier: String, issuerIdentifier: String, expireDuration: TimeInterval, keyKind: AppStoreConnectKeyKind = .team) {
+    public init(keyIdentifier: String, issuerIdentifier: String, expireDuration: TimeInterval) {
         header = Header(keyIdentifier: keyIdentifier)
         self.issuerIdentifier = issuerIdentifier
-        self.keyKind = keyKind
         self.expireDuration = expireDuration
     }
 
     /// Combine the header and the payload as a digest for signing.
     func digest(dateProvider: DateProvider) throws -> String {
         let now = dateProvider()
-        let payload = Payload(issuerIdentifier: keyKind == .team ? issuerIdentifier : nil,
-                              subject: keyKind == .individual ? "user" : nil,
+        let payload = Payload(issuerIdentifier: issuerIdentifier,
                               issuedAt: Int(now.timeIntervalSince1970),
                               expirationTime: Int(now.addingTimeInterval(expireDuration).timeIntervalSince1970))
         let headerString = try JSONEncoder().encode(header.self).base64URLEncoded()

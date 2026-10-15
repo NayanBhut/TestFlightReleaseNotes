@@ -391,6 +391,46 @@ final class ReviewsViewModel: ObservableObject {
         }
     }
 
+    func configureForScreenshotSample(
+        app: AppsData,
+        reviews: [CustomerReviewModel],
+        version: AppStoreVersionsModel
+    ) {
+        // Reuse the hermetic UI-test branch so every normal onAppear load is
+        // suppressed while the screenshot host displays the real views.
+        uiTestScenario = .draft
+        currentAppId = app.id
+        reviewsLoadedAppId = app.id
+        submissionsLoadedAppId = app.id
+        reviewsState = .loaded(reviews)
+        reviewsMeta = Meta(paging: .init(total: reviews.count, limit: reviews.count, nextCursor: nil))
+        reviewsNextCursor = nil
+        reviewsLastSync = Date(timeIntervalSince1970: 1_791_979_200)
+        submissionsState = .empty
+        appStoreVersionsState = .loaded([version])
+        appStoreVersionPlatforms = [version.platform ?? "IOS"]
+        selectedAppStoreVersionPlatform = version.platform ?? "IOS"
+        selectedAppStoreVersionId = version.id
+        selectedAppStoreVersionSnapshot = version
+        eligibleBuildsState = .loaded(version.build.map { [$0] } ?? [])
+
+        var localization = AppStoreVersionLocalizationsModel(id: "sample-release-localization")
+        localization.locale = "en-US"
+        localization.whatsNew = "A faster release workflow, clearer build status, and a refreshed review inbox."
+        versionLocalizationsVersionId = version.id
+        versionLocalizationsState = .loaded([localization])
+
+        var details = AppStoreReviewDetailsModel(id: "sample-review-details")
+        details.contactFirstName = "Jordan"
+        details.contactLastName = "Lee"
+        details.contactPhone = "+1 415 555 0142"
+        details.contactEmail = "review@northstar.example"
+        details.demoAccountRequired = false
+        details.notes = "Sign in is not required. Explore the sample workspace from the sidebar."
+        reviewDetailsVersionId = version.id
+        reviewDetailsState = .loaded(details)
+    }
+
     private static func uiTestVersion(
         id: String = "ui-test-version-primary",
         versionString: String = "99.0",
@@ -2777,16 +2817,8 @@ final class ReviewsViewModel: ObservableObject {
 
     // MARK: - Errors
 
-    /// Reviews need broader roles than a TestFlight-only key provides
-    /// (Customer Support / App Manager) — 403s get an actionable hint.
     private func friendlyMessage(for error: Error) -> String {
-        if let apiError = error as? APIError {
-            if apiError.statusCode == 403 {
-                return "\(apiError.details) — this section may need an API key with broader permissions (e.g. App Manager or Customer Support)."
-            }
-            return FriendlyErrorMessage.message(for: error)
-        }
-        return FriendlyErrorMessage.message(for: error)
+        FriendlyErrorMessage.message(for: error, requiring: .reviews)
     }
 }
 

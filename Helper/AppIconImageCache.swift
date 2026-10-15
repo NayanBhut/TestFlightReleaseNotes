@@ -72,8 +72,8 @@ actor AppIconImageCache {
         // Review-submission UI tests must remain hermetic even if a future
         // fixture accidentally supplies remote artwork. Returning before
         // URLSession is the second network boundary after APIClient's guard.
-        guard !ReviewSubmissionUITestSafety.isEnabled else {
-            iconLogger.fault("[UI TEST SAFETY] Blocked a remote app-icon request")
+        guard !ReviewSubmissionUITestSafety.isEnabled, !AppStoreScreenshotSafety.isEnabled else {
+            iconLogger.fault("[FIXTURE SAFETY] Blocked a remote app-icon request")
             return nil
         }
         #endif

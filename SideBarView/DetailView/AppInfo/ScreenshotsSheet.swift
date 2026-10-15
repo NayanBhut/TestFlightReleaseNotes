@@ -36,6 +36,7 @@ struct ScreenshotsGroupView: View {
     let state: ViewState<[AppStoreVersionLocalizationsModel]>
     let isEditable: Bool
     var primaryLocale: String?
+    var platform: String?
     let retry: () -> Void
 
     var body: some View {
@@ -116,7 +117,8 @@ struct ScreenshotsGroupView: View {
                 locale: target.locale,
                 viewModel: viewModel,
                 isEditable: isEditable,
-                primaryLocale: primaryLocale
+                primaryLocale: primaryLocale,
+                platform: platform
             )
         }
     }
@@ -221,6 +223,7 @@ struct ScreenshotsSheet: View {
     @ObservedObject var viewModel: DetailViewModel
     var isEditable: Bool = true
     var primaryLocale: String?
+    var platform: String?
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var newSetType: ScreenshotDisplayType = .iPhone67
@@ -248,6 +251,7 @@ struct ScreenshotsSheet: View {
         .background(LaunchTheme.page)
         .frame(minWidth: 640, minHeight: 480)
         .onAppear {
+            reconcileNewSetType()
             Task {
                 await viewModel.loadScreenshotSets(localizationId: localizationId)
                 if let setId = viewModel.selectedScreenshotSetId {
@@ -255,6 +259,7 @@ struct ScreenshotsSheet: View {
                 }
             }
         }
+        .onChange(of: platform) { _, _ in reconcileNewSetType() }
     }
 
     private var header: some View {
@@ -333,7 +338,7 @@ struct ScreenshotsSheet: View {
                 if isEditable {
                     HStack {
                         Picker("Display type", selection: $newSetType) {
-                            ForEach(ScreenshotDisplayType.allCases, id: \.self) { type in
+                            ForEach(availableDisplayTypes, id: \.self) { type in
                                 Text(type.displayName).tag(type)
                             }
                         }
@@ -384,6 +389,16 @@ struct ScreenshotsSheet: View {
             return type.displayName
         }
         return set.screenshotDisplayType ?? "Set"
+    }
+
+    private var availableDisplayTypes: [ScreenshotDisplayType] {
+        ScreenshotDisplayType.supported(for: platform)
+    }
+
+    private func reconcileNewSetType() {
+        guard !availableDisplayTypes.contains(newSetType),
+              let first = availableDisplayTypes.first else { return }
+        newSetType = first
     }
 
     // MARK: - Screenshots
@@ -546,21 +561,42 @@ struct ScreenshotsSheet: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [.png, .jpeg]
         panel.prompt = "Upload"
-        guard panel.runModal() == .OK, let fileURL = panel.url,
+        guard panel.runModal() == .OK, !panel.urls.isEmpty,
               let setId = viewModel.selectedScreenshotSetId else { return }
+        upload(panel.urls, to: setId)
+    }
+
+    private func upload(_ fileURLs: [URL], to setId: String) {
         Task {
-            switch await viewModel.uploadScreenshot(setId: setId, fileURL: fileURL) {
-            case .success:
-                refreshPreviewStrip()
-                toastCenter.show("Screenshot uploaded", detail: fileURL.lastPathComponent, variant: .success)
-            case .failure(let message):
-                viewModel.screenshotError = message
-                toastCenter.show("Couldn't upload screenshot", detail: message, variant: .error)
-            case .ignored:
-                break
+            var uploadedCount = 0
+            for fileURL in fileURLs {
+                switch await viewModel.uploadScreenshot(setId: setId, fileURL: fileURL) {
+                case .success:
+                    uploadedCount += 1
+                    refreshPreviewStrip()
+                case .failure(let message):
+                    viewModel.screenshotError = message
+                    toastCenter.show(
+                        "Couldn't upload \(fileURL.lastPathComponent)",
+                        detail: message,
+                        variant: .error
+                    )
+                    return
+                case .ignored:
+                    return
+                }
+            }
+            if uploadedCount > 0 {
+                toastCenter.show(
+                    uploadedCount == 1 ? "Screenshot uploaded" : "Screenshots uploaded",
+                    detail: uploadedCount == 1
+                        ? fileURLs[0].lastPathComponent
+                        : "\(uploadedCount) images",
+                    variant: .success
+                )
             }
         }
     }

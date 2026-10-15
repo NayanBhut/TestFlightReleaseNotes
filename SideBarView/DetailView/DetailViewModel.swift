@@ -92,6 +92,10 @@ class DetailViewModel: ObservableObject {
     /// UI tests render deterministic fixtures and must not read the user's
     /// App Store Connect credentials from Keychain.
     private let readsStoredTeam: Bool
+    /// Debug screenshot fixtures are seeded after subscriptions are wired.
+    /// Ignore their queued initial sidebar values so they cannot clear the
+    /// deterministic state before XCUITest captures the window.
+    private var usesScreenshotFixtures = false
 
     /// In-flight builds fetch so a new fetch can cancel a stale one.
     private var buildsFetchTask: Task<Void, Never>?
@@ -228,13 +232,14 @@ class DetailViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] selectedApp in
                 guard let self = self else { return }
+                guard !self.usesScreenshotFixtures else { return }
                 self.selectedApp = selectedApp
                 // Team / app switch clears versions + builds cleanly.
                 self.selectedVersion = nil
                 // Cancel the in-flight builds fetch AND bump its generation:
                 // without both, a late response from the previous app could
-                // still write selectedVersion / buildsState for the wrong
-                // app after the switch (the cancel propagates through the
+                // still write buildsState for the wrong app after the switch
+                // (the cancel propagates through the
                 // async URLSession call, but the generation guard makes it
                 // impossible even if a cancellation lands late).
                 self.buildsFetchTask?.cancel()
@@ -327,10 +332,11 @@ extension DetailViewModel {
         sidebarViewModel.loadMoreVersions(cursor: cursor)
     }
 
-    func setSelectedVersionAndGetBuilds(selectedVersion: PreReleaseVersionsModel, cursor: String? = nil) {
+    func setSelectedVersionAndGetBuilds(selectedVersion: PreReleaseVersionsModel) {
         markVersionSelected(selectedVersion)
+        self.selectedVersion = selectedVersion
         guard let app = selectedApp else { return }
-        getBuilds(app: app, version: selectedVersion, cursor: cursor)
+        getBuilds(app: app, version: selectedVersion)
     }
 
     func retryBuilds() {
@@ -338,14 +344,86 @@ extension DetailViewModel {
         getBuilds(app: app, version: version)
     }
 
+    func loadMoreBuilds(cursor: String) {
+        guard let app = selectedApp, let version = selectedVersion else { return }
+        getBuilds(app: app, version: version, cursor: cursor)
+    }
+
     private func markVersionSelected(_ version: PreReleaseVersionsModel) {
         guard case .loaded(let versions) = versionsState else { return }
         let updated = versions.map { item -> PreReleaseVersionsModel in
-            var temp = item
-            temp.isSelected = temp.id == version.id
-            return temp
+            var value = item
+            value.isSelected = value.id == version.id
+            return value
         }
         versionsState = .loaded(updated)
+    }
+
+#if DEBUG
+    /// Seeds the real Builds and App Info views for App Store screenshots.
+    /// The matching loaded ids keep their normal onAppear hooks offline.
+    func configureForScreenshotSample(
+        app: AppsData,
+        versions: [PreReleaseVersionsModel],
+        selectedVersion: PreReleaseVersionsModel,
+        builds: [BuildsModel],
+        appInfo: [AppInfoModel],
+        versionLocalizations: [AppStoreVersionLocalizationsModel]
+    ) {
+        usesScreenshotFixtures = true
+        buildsFetchTask?.cancel()
+        appInfoFetchTask?.cancel()
+        versionLocalizationsFetchTask?.cancel()
+        liveVersionLocalizationsFetchTask?.cancel()
+        exportComplianceFetchTask?.cancel()
+        appEventsFetchTask?.cancel()
+        webhooksFetchTask?.cancel()
+        selectedApp = app
+        self.selectedVersion = selectedVersion
+        versionsState = .loaded(versions)
+        buildsState = .loaded(builds)
+        meta = Meta(paging: .init(total: builds.count, limit: builds.count, nextCursor: nil))
+        nextPageCursor = nil
+        appInfoState = .loaded(appInfo)
+        versionLocalizationsState = .loaded(versionLocalizations)
+        liveVersionLocalizationsState = .loaded(versionLocalizations)
+        exportComplianceState = .empty
+        appEventsState = .empty
+        webhooksState = .empty
+        appInfoLoadedAppId = app.id
+        versionLocalizationsLoadedVersionId = "sample-version"
+        liveVersionLocalizationsLoadedVersionId = app.currentLiveVersion.0
+        exportComplianceLoadedAppId = app.id
+        appEventsLoadedAppId = app.id
+        webhooksLoadedAppId = app.id
+        localizationScreenshotPreviews = [:]
+        for localization in versionLocalizations {
+            localizationScreenshotPreviews[localization.id] = .loaded([])
+        }
+        for build in builds {
+            for localization in build.betaBuildLocalizations {
+                if let locale = localization.locale {
+                    savedNotes["\(build.id)|\(locale)"] = localization.whatsNew ?? ""
+                }
+            }
+        }
+    }
+#endif
+
+    static func buildsQueryParams(appId: String,
+                                  preReleaseVersionId: String,
+                                  cursor: String? = nil) -> [String: String] {
+        var queryParams = [
+            "filter[app]": appId,
+            "filter[preReleaseVersion]": preReleaseVersionId,
+            "sort": "-version",
+            "include": "appStoreVersion,betaBuildLocalizations,preReleaseVersion",
+            "limit": String(AppConfigs.buildLimit)
+        ]
+        if let cursor {
+            queryParams["cursor"] = cursor
+        }
+        return queryParams
     }
 
     func getBuilds(app: AppsData, version: PreReleaseVersionsModel, cursor: String? = nil) {
@@ -353,28 +431,30 @@ extension DetailViewModel {
         // Ignore duplicate "Load more" taps while a page request is in flight
         // (double-tapping would otherwise append the same rows twice).
         if isPaginating, isPaginatingBuilds { return }
-        // Cancel any in-flight fetch so a stale response (older version's
-        // builds) can never overwrite the state for the newer selection.
+        // Cancel any in-flight fetch so an older version cannot overwrite
+        // the newly selected version's build list.
         buildsFetchTask?.cancel()
         // A new fetch invalidates any predecessor still in flight: only the
         // newest generation may apply results.
         buildsFetchGeneration += 1
         let generation = buildsFetchGeneration
-        buildsFetchTask = Task { await fetchBuilds(app: app, version: version, cursor: cursor, generation: generation) }
+        buildsFetchTask = Task {
+            await fetchBuilds(app: app, version: version, cursor: cursor, generation: generation)
+        }
     }
 
-    func fetchBuilds(app: AppsData, version: PreReleaseVersionsModel, cursor: String? = nil, generation: Int? = nil) async {
+    func fetchBuilds(app: AppsData,
+                     version: PreReleaseVersionsModel,
+                     cursor: String? = nil,
+                     generation: Int? = nil) async {
         let isPaginating = cursor != nil
         buildsPaginationFailed = false
         if isPaginating {
             isPaginatingBuilds = true
         } else {
-            // A fresh fetch (version switch, retry) must not inherit the
-            // previous page's cursor/meta (BUG_SWEEP #16): the footer
-            // would otherwise keep paging the old version's builds while
-            // the new one is .loading. Only the app-switch sink did this
-            // before, so a version switch within one app kept the stale
-            // cursor.
+            // A fresh fetch must not inherit the previous page's cursor or
+            // metadata. Pagination cursors only belong to the query that
+            // created them.
             buildsState = .loading
             nextPageCursor = nil
             meta = nil
@@ -383,15 +463,10 @@ extension DetailViewModel {
             if isPaginating { isPaginatingBuilds = false }
         }
 
-        var queryParams = ["filter[app]": app.id,
-                           "filter[preReleaseVersion]": version.id,
-                           "sort": "-version",
-                           "include": "appStoreVersion,betaBuildLocalizations,preReleaseVersion",
-                           "limit": String(AppConfigs.buildLimit)]
-
-        if let cursor = cursor {
-            queryParams["cursor"] = cursor
-        }
+        let queryParams = Self.buildsQueryParams(
+            appId: app.id,
+            preReleaseVersionId: version.id,
+            cursor: cursor)
 
         guard let request = APIClient.shared.getRequest(api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else {
             if !isPaginating {
@@ -407,8 +482,10 @@ extension DetailViewModel {
             // selection reset: the generation is bumped on both, so a
             // predecessor that slipped past Task.isCancelled (e.g. cancellation
             // landing between the guard and the state writes) still can't
-            // apply results for the wrong app/version.
-            guard !Task.isCancelled, generation == nil || generation == buildsFetchGeneration else { return }
+            // apply results for the wrong app.
+            guard !Task.isCancelled,
+                  selectedApp?.id == app.id,
+                  generation == nil || generation == buildsFetchGeneration else { return }
             selectedVersion = version
 
             // Snapshot last-saved notes for the diff baseline. Temp drafts
@@ -442,7 +519,9 @@ extension DetailViewModel {
         } catch {
             // A cancelled fetch means a newer one took over - don't surface
             // its failure or overwrite the newer state.
-            guard !Task.isCancelled, generation == nil || generation == buildsFetchGeneration else { return }
+            guard !Task.isCancelled,
+                  selectedApp?.id == app.id,
+                  generation == nil || generation == buildsFetchGeneration else { return }
             detailLogger.error("Failed to load builds: \(error.localizedDescription)")
             if isPaginating {
                 // Keep the loaded list intact; flag the failure so the
@@ -452,7 +531,7 @@ extension DetailViewModel {
                 selectedVersion = version
                 meta = nil
                 nextPageCursor = nil
-                buildsState = .error(FriendlyErrorMessage.message(for: error))
+                buildsState = .error(FriendlyErrorMessage.message(for: error, requiring: .testFlight))
             }
         }
     }
@@ -754,16 +833,10 @@ extension DetailViewModel {
         }
     }
 
-    /// Read-only App Info endpoints can 403 with a narrow (TestFlight-only)
-    /// API key — surface a hint instead of a bare server message.
+    /// Read-only App Info endpoints can 403 with a narrow API key. Keep the
+    /// screen visible and explain the exact role/app-scope requirement.
     private func appInfoErrorMessage(for error: Error) -> String {
-        if let apiError = error as? APIError {
-            if apiError.statusCode == 403 {
-                return "\(apiError.details) — this section may need an API key with broader permissions (e.g. App Manager)."
-            }
-            return apiError.details
-        }
-        return error.localizedDescription
+        FriendlyErrorMessage.message(for: error, requiring: .appInfo)
     }
 
     // MARK: - Screenshots (Batch J F4)
@@ -1461,13 +1534,12 @@ extension DetailViewModel {
         createOrUpdate(buildId: buildId, buildLocalization: localization, localization: localization.whatsNew ?? "", locale: locale)
     }
 
-    /// Per-locale completeness matrix for the selected version.
+    /// Per-locale completeness matrix for the loaded app builds.
     /// Returns (locale, [buildId: hasNotes]) for every supported locale.
     /// Only saved, non-empty-after-trim text counts as done — temp drafts
     /// and whitespace would otherwise show complete (BUG_SWEEP #9).
     func localeCompleteness() -> [(locale: String, builds: [(buildId: String, hasNotes: Bool)])] {
         guard case .loaded(let builds) = buildsState else { return [] }
-        guard selectedVersion != nil else { return [] }
         let buildIds = builds.map { $0.id }
         var result: [(String, [(String, Bool)])] = []
         for locale in BetaLocalizationLocales.supported {
@@ -1856,10 +1928,9 @@ extension DetailViewModel {
     }
 
     func copyVersionAndBuildId(buildId: String) {
-        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }),
-              let version = selectedVersion?.version else { return }
+        guard let build = buildsState.loadedValue?.first(where: { $0.id == buildId }) else { return }
 
-        let versionBuildString = "\(version) (\(build.version ?? "")) - Build ID: \(buildId)"
+        let versionBuildString = "\(build.preReleaseVersion?.version ?? "—") (\(build.version ?? "")) - Build ID: \(buildId)"
         pasteboard.clear()
         pasteboard.setString(versionBuildString)
         showToast("Copied: \(versionBuildString)", variant: .success)

@@ -39,33 +39,16 @@ Typical permission levels:
 
 When Shipyard shows a permission error, use an API key with the required role rather than repeatedly retrying the same operation.
 
-### API Key Type, Role, and Visibility
+### API Key Permissions and Visibility
 
-The `.p8` private key does not contain a readable App Store Connect role. A signed JWT also identifies the key but does not include a trustworthy role claim that Shipyard can use for navigation. When adding a team, select the key type and access role exactly as configured in App Store Connect.
+The `.p8` private key does not contain a readable App Store Connect role. A signed JWT identifies the key but does not include a trustworthy role claim that Shipyard can use for navigation. Shipyard therefore keeps every section visible and lets App Store Connect evaluate each request.
 
 Apple's [API key documentation](https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api) supports two key types, while the detailed [role permissions matrix](https://developer.apple.com/help/account/access/roles) remains the source of truth for permitted operations:
 
 - **Team Key:** assigned one role when generated and available across all apps on the account. Its role cannot be edited after creation; revoke and replace the key to change it.
 - **Individual Key:** inherits the associated user's roles and app access. Apple does not allow individual keys to use provisioning endpoints.
 
-Shipyard uses the declared key type and role only to hide unrelated navigation. It is not a security boundary and does not grant access. Apple evaluates every API request, and a 403 response overrides the configured visibility.
-
-Current visibility presets:
-
-| Declared access | Shipyard areas shown |
-| --- | --- |
-| Admin Team Key | Builds, App Info, Reviews, App Store Versions, Monitoring, Devices, Certificates, Identifiers, Bundle IDs, Profiles, Users |
-| Admin Individual Key | Builds, App Info, Reviews, App Store Versions, Monitoring, Users; provisioning-resource screens remain hidden |
-| App Manager | Builds, App Info, Reviews, App Store Versions, Monitoring |
-| Developer | Builds, App Store Versions, Monitoring |
-| Marketing | App Info |
-| Customer Support | Reviews |
-| Finance or Sales | Apps list only; Shipyard does not currently provide finance or sales-reporting features |
-| Access not configured | All navigation remains visible for backward compatibility |
-
-Apps always remains visible so the connection can be validated and app-scoped access can be understood. Individual keys may still see only the apps assigned to their user.
-
-To change the declared visibility for an existing connection, open **Settings → Teams**, switch to the team, and choose **Key Type** and **Access Role**. Select **Clear** to return to the backward-compatible mode that shows all navigation.
+Apple evaluates every API request. When a request returns 403, Shipyard explains which App Store Connect role normally provides the required access. Individual keys may still see only the apps assigned to their user, and Apple does not allow individual keys to use provisioning endpoints.
 
 ## Connect Your First Team
 
@@ -76,10 +59,9 @@ In Shipyard:
 1. Open the app and select **Add App Store Connect API Key**.
 2. Enter a unique local **Team Name**. This is the label Shipyard displays in the team selector.
 3. Enter the **Issuer ID** and **Key ID** exactly as shown by Apple.
-4. Select whether this is a Team Key or Individual Key and choose its configured role.
-5. Choose the `.p8` file or paste its key contents.
-6. Continue to verification. Shipyard contacts App Store Connect and checks whether apps can be read.
-7. Select **Add Team** after verification succeeds.
+4. Choose the `.p8` file or paste its key contents.
+5. Continue to verification. Shipyard contacts App Store Connect and checks whether apps can be read.
+6. Select **Add Team** after verification succeeds.
 
 Credentials and private keys are stored in macOS Keychain and should never be pasted into logs, screenshots, bug reports, or documentation.
 
@@ -176,7 +158,8 @@ Open **Apps → select an app → Builds**.
 
 ### Browse Builds
 
-- Use the version picker beside the app name to choose a pre-release version.
+- Use the version picker to choose a pre-release version. The table shows its first 10 builds, newest build number first.
+- Select **Load More** to retrieve each additional page for that version.
 - Use **Filter Status** to show a processing state such as Processing or Valid.
 - Use the refresh button to request current build data.
 - Review build number, marketing version, upload date, processing state, and expiration.

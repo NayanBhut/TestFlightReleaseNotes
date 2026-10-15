@@ -12,6 +12,31 @@ final class ReviewSubmissionUITests: XCTestCase {
         super.tearDown()
     }
 
+    func testCaptureAppStoreScreenshots() throws {
+        let screens = ["apps", "builds", "appInfo", "reviews", "release"]
+        for (index, screen) in screens.enumerated() {
+            app?.terminate()
+            app = XCUIApplication()
+            app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+            app.launchArguments = [
+                "--sample-data-screen", screen,
+                "-ApplePersistenceIgnoreState", "YES"
+            ]
+            app.launch()
+
+            XCTAssertTrue(
+                element("screenshot.ready.\(screen)").waitForExistence(timeout: launchTimeout),
+                "Sample-data screen \(screen) did not become ready.")
+            let window = app.windows.firstMatch
+            XCTAssertTrue(window.waitForExistence(timeout: launchTimeout))
+            let number = String(format: "%02d", index + 1)
+            let attachment = XCTAttachment(screenshot: window.screenshot())
+            attachment.name = "\(number)-\(screen).png"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
     func testSubmitKeepsProgressVisibleThroughReadyUntilWaiting() {
         launch("draft")
 

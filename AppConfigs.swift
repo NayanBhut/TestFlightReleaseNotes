@@ -12,7 +12,9 @@ enum AppConfigs {
     /// (Apple docs), so 50 is safe; the sidebar paginates on demand.
     static let appListLimit: Int = 50
     static let versionLimit: Int = 10
-    static let buildLimit: Int = 5
+    /// Show the first 10 builds for the selected version, then let the user
+    /// request each additional cursor page explicitly from the Builds table.
+    static let buildLimit: Int = 10
     /// Batch C: page size for customer reviews and review submissions.
     static let reviewLimit: Int = 50
     /// Batch C: page size for team-scoped resources (devices, certificates,

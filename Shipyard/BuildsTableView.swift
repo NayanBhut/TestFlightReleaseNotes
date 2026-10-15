@@ -76,15 +76,10 @@ struct BuildsTableView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text("v\(detailVM.selectedVersion?.version ?? "")")
-                            .font(.system(size: 11))
-                            .foregroundColor(ShipyardTheme.body)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.gray.opacity(0.15))
-                    .cornerRadius(6)
+                    ShipyardMenuLabel(
+                        text: detailVM.selectedVersion.map { "Version: \($0.version ?? "")" }
+                            ?? "Select Version"
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .accessibilityLabel("Select version")
@@ -142,8 +137,6 @@ struct BuildsTableView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if detailVM.arrVersions.isEmpty {
-            // Versions haven't produced rows: mirror the versions state
-            // instead of spinning on an idle builds list.
             switch detailVM.versionsState {
             case .idle, .loading:
                 VStack(spacing: 12) {
@@ -175,16 +168,20 @@ struct BuildsTableView: View {
                     onRetry: { detailVM.retryVersions() }
                 )
             default:
-                VStack(spacing: 12) {
-                    Spacer()
-                    ProgressView()
-                    Text("Loading builds…")
-                        .font(.system(size: 13))
-                        .foregroundColor(ShipyardTheme.body)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyView()
             }
+        } else if detailVM.selectedVersion == nil {
+            VStack(spacing: 12) {
+                Spacer()
+                Text("Select a Version")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.title)
+                Text("Choose a version above to see its uploaded builds")
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             switch detailVM.buildsState {
             case .idle, .loading:
@@ -421,15 +418,16 @@ struct BuildsTableView: View {
 
     @ViewBuilder
     private var paginationFooter: some View {
-        if detailVM.buildsPaginationFailed, let version = detailVM.selectedVersion {
+        if detailVM.buildsPaginationFailed {
             HStack(spacing: 8) {
                 Text("Couldn't load more builds.")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.body)
                 Button("Retry") {
                     detailVM.buildsPaginationFailed = false
-                    detailVM.setSelectedVersionAndGetBuilds(
-                        selectedVersion: version, cursor: detailVM.nextPageCursor)
+                    if let cursor = detailVM.nextPageCursor {
+                        detailVM.loadMoreBuilds(cursor: cursor)
+                    }
                 }
                 .font(.system(size: 11, weight: .semibold))
                 .buttonStyle(.plain)
@@ -437,16 +435,17 @@ struct BuildsTableView: View {
             }
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
-        } else if let nextCursor = detailVM.nextPageCursor,
-                  let version = detailVM.selectedVersion {
+        } else if let nextCursor = detailVM.nextPageCursor {
             HStack {
                 Spacer()
-                ProgressView()
-                    .scaleEffect(0.8)
-                    .padding(.vertical, 8)
-                    .onAppear {
-                        detailVM.setSelectedVersionAndGetBuilds(selectedVersion: version, cursor: nextCursor)
-                    }
+                Button("Load More") {
+                    detailVM.loadMoreBuilds(cursor: nextCursor)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .buttonStyle(.plain)
+                .foregroundColor(ShipyardTheme.accent)
+                .padding(.vertical, 10)
+                .accessibilityHint("Loads the next 10 builds for the selected version")
                 Spacer()
             }
         }

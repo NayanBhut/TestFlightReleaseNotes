@@ -69,17 +69,8 @@ struct ShipyardSidebar: View {
     @State private var showHelp = false
     @State private var pendingDeleteTeam: String?
 
-    private var activeCredential: Credential? { credentialStorage.selectedTeam }
-
     private var resourceSections: [ShipyardSection] {
-        var sections: [ShipyardSection] = []
-        if activeCredential?.shows(.provisioningResources) ?? true {
-            sections += [.devices, .certificates, .identifiers, .bundleIDs, .profiles]
-        }
-        if activeCredential?.shows(.users) ?? true {
-            sections.append(.users)
-        }
-        return sections
+        [.devices, .certificates, .identifiers, .bundleIDs, .profiles, .users]
     }
 
     var body: some View {
@@ -90,11 +81,9 @@ struct ShipyardSidebar: View {
                 VStack(alignment: .leading, spacing: 18) {
                     navRow(.apps)
 
-                    if activeCredential?.shows(.monitoring) ?? true {
-                        VStack(alignment: .leading, spacing: 4) {
-                            sectionHeader("MONITORING")
-                            monitoringRow
-                        }
+                    VStack(alignment: .leading, spacing: 4) {
+                        sectionHeader("MONITORING")
+                        monitoringRow
                     }
 
                     if !resourceSections.isEmpty {

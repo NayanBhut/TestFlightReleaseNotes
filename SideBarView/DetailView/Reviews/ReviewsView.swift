@@ -271,13 +271,13 @@ struct ReviewsView: View {
 
     private var provenanceBanner: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Scope: loaded written reviews only — not official App Store rating totals. API: rating/territory filters and createdDate sorting.")
+            Text("Statistics and filters below use the written reviews currently loaded from App Store Connect.")
                 .font(.appCaption2)
                 .foregroundColor(.secondary)
-            Text("Text, date-window and reply-state filters are local over paginated results; partial coverage remains visible.")
+            Text("Search, date, and reply filters apply to loaded reviews. Use Load more when available to include older reviews.")
                 .font(.appCaption2)
                 .foregroundColor(.secondary)
-            Text("No response → Unanswered. PENDING_PUBLISH and PUBLISHED are separate; no published response can still have a pending reply.")
+            Text("Replies are shown as Unanswered, Waiting to publish, or Reply published.")
                 .font(.appCaption2)
                 .foregroundColor(.secondary)
         }
@@ -399,11 +399,11 @@ struct ReviewsView: View {
     private func responseCellText(_ review: CustomerReviewModel) -> String {
         switch review.response?.state {
         case "PUBLISHED":
-            return "PUBLISHED · edit reply →"
+            return "Reply published · Edit reply →"
         case "PENDING_PUBLISH":
-            return "PENDING_PUBLISH · open detail →"
+            return "Waiting to publish · View details →"
         default:
-            return "No response · open detail →"
+            return "Unanswered · Write reply →"
         }
     }
 
@@ -464,9 +464,17 @@ struct ReviewsView: View {
         } else {
             parts.append("Not yet synced")
         }
+        #if DEBUG
+        if AppStoreScreenshotSafety.isEnabled {
+            parts.append("Northstar Studio")
+        } else {
+            parts.append(CredentialStorage.shared.selectedTeam?.key ?? "Team")
+        }
+        #else
         parts.append(CredentialStorage.shared.selectedTeam?.key ?? "Team")
+        #endif
         if reviewsViewModel.reviewsNextCursor != nil || (reviewsViewModel.reviewsMeta?.paging.total ?? 0) > reviewsViewModel.reviewRows.count {
-            parts.append("paginated sample · partial coverage")
+            parts.append("more reviews available")
         }
         return parts.joined(separator: " · ")
     }
@@ -485,7 +493,7 @@ struct ReviewsView: View {
                         .font(.appBody)
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
-                    Text("First load · controls that require loaded resources are unavailable. A refresh with existing data keeps cached rows visible instead of replacing them with skeletons.")
+                    Text("Review controls will be available as soon as the first page finishes loading.")
                         .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
@@ -574,7 +582,7 @@ struct ReviewsView: View {
                         .fontWeight(.medium)
                         .foregroundColor(.red)
                     if reviewsViewModel.staleReviewsCache != nil {
-                        Text("Network connection failed. Cached data is retained below and marked stale. If no cache exists, show this error with Retry and no resource rows.")
+                        Text("The latest refresh failed. Saved review data is shown below, and editing stays unavailable until a refresh succeeds.")
                             .font(.appCaption)
                             .foregroundColor(.secondary)
                     } else {
@@ -623,7 +631,7 @@ struct ReviewsView: View {
                         .font(.appBody)
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
-                    Text("No rows match “\(reviewsViewModel.searchText)”. Your reviews still exist; clear the search and filters to see them. This is not an empty team.")
+                    Text("No reviews match the current search and filters. Clear them to see all loaded reviews.")
                         .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
@@ -650,7 +658,7 @@ struct ReviewsView: View {
                 Text("Last sync: \(reviewsViewModel.reviewsLastSync.map(reviewDateTime) ?? "never")")
                 Text("Loaded rows: \(reviewsViewModel.reviewRows.count)")
                 if let total = reviewsViewModel.reviewsMeta?.paging.total {
-                    Text("Server total: \(total) (paginated sample · partial coverage)")
+                    Text("Available written reviews: \(total)")
                 }
                 Text("Filters: rating \(reviewsViewModel.ratingFilter == 0 ? "all" : "\(reviewsViewModel.ratingFilter)"), territory \(reviewsViewModel.territoryFilter ?? "all"), reply \(reviewsViewModel.replyFilter.rawValue)")
             }

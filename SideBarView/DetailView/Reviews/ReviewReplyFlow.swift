@@ -192,30 +192,30 @@ struct ReviewReplyEditorView: View {
         switch mode {
         case .sending:
             reviewHeading(
-                title: "Sending developer response · \(app.name ?? "App")",
-                subtitle: "The edited reply is being sent to Apple. Sending is a local operation, not an Apple response state."
+                title: "Sending reply · \(app.name ?? "App")",
+                subtitle: "The edited reply is being sent to Apple."
             )
         case .pending:
             reviewHeading(
-                title: "Customer response · pending publication",
+                title: "Developer reply · waiting to publish",
                 subtitle: nil
             )
         case .published:
             reviewHeading(
-                title: "Customer response · published",
+                title: "Developer reply · published",
                 subtitle: nil
             )
         case .unconfirmed:
             reviewHeading(title: "Reply outcome unconfirmed", subtitle: nil)
         case .validationError:
             reviewHeading(
-                title: "Developer response · validation rejected",
-                subtitle: "Illustrative validation-error scenario: Apple explicitly rejected an empty responseBody. This is not a timeout or an unknown network outcome."
+                title: "Reply needs changes",
+                subtitle: "Apple rejected the reply. Correct the issue shown below before resubmitting."
             )
         case .readOnly:
             reviewHeading(
-                title: "Customer reviews · read-only access",
-                subtitle: "Illustrative current request: 403 / insufficient write access. Reviews and developer responses can still be read with this connection."
+                title: "Customer reviews · view only",
+                subtitle: "You can read reviews and replies, but this API key cannot manage replies."
             )
         case .deleteAccepted:
             reviewHeading(title: "Delete request accepted · refresh pending", subtitle: nil)
@@ -276,11 +276,11 @@ struct ReviewReplyEditorView: View {
     private var lastFetchedSnapshotCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Last fetched PUBLISHED reply")
+                Text("Latest published reply")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.body)
                 Spacer()
-                Text("cached snapshot")
+                Text("previously loaded")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.tertiary)
             }
@@ -289,14 +289,14 @@ struct ReviewReplyEditorView: View {
                     Text(body)
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("PUBLISHED · \(lastModifiedText) · fetched \(lastCheckedText). Not a fresh confirmation of current server state.")
+                    Text("Published · Updated \(lastModifiedText) · Last checked \(lastCheckedText)")
                         .font(.system(size: 11))
                         .foregroundColor(ShipyardTheme.body)
                 } else {
-                    Text("No published reply in the last fetched snapshot.")
+                    Text("No published reply was found when this review was last checked.")
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("Verified absence only counts on a successful fetch — a missing relationship or generic 404 never proves it alone.")
+                    Text("Refresh to check whether a reply is available now.")
                         .font(.system(size: 11))
                         .foregroundColor(ShipyardTheme.body)
                 }
@@ -319,16 +319,16 @@ struct ReviewReplyEditorView: View {
 
     private var lastModifiedText: String {
         if let raw = liveResponse?.lastModifiedDate {
-            return "lastModifiedDate \(reviewDisplayDate(raw))"
+            return reviewDisplayDate(raw)
         }
-        return "lastModifiedDate unknown"
+        return "Unknown"
     }
 
     private var lastCheckedText: String {
         if let date = reviewsVM.responseLastChecked[reviewId] {
-            return "checked \(reviewDateTime(date))"
+            return reviewDateTime(date)
         }
-        return "not yet checked"
+        return "Not checked yet"
     }
 
     private func draftField(editable: Bool, errorBorder: Bool = false) -> some View {
@@ -357,7 +357,7 @@ struct ReviewReplyEditorView: View {
                 )
                 .disabled(!editable)
             if errorBorder {
-                Text("Enter a response before resubmitting. Field: attributes.responseBody.")
+                Text("Enter a reply before resubmitting.")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.danger)
             }
@@ -383,10 +383,10 @@ struct ReviewReplyEditorView: View {
             HStack(alignment: .top, spacing: 24) {
                 reviewContextColumn.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Developer response · edited draft")
+                    Text("Reply draft")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("Save Draft is local. Submit overwrites this review’s response through POST; visibility of the previous storefront reply is not guaranteed.")
+                    Text("Save Draft keeps your changes on this Mac. Submit replaces the current public reply after Apple accepts it.")
                         .font(.system(size: 12))
                         .foregroundColor(ShipyardTheme.body)
                     draftField(editable: !isWriteDisabled)
@@ -404,15 +404,15 @@ struct ReviewReplyEditorView: View {
 
     private var staleEditingBanner: some View {
         warningBanner(
-            title: "Cached snapshot · stale",
-            body: "Editing is disabled until a refresh succeeds. The rows below are the last fetched snapshot, not current server state."
+            title: "Reply status is out of date",
+            body: "Refresh the review before editing. The information below may no longer match App Store Connect."
         )
     }
 
     private var lastFetchedSnapshotTable: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("Last fetched PUBLISHED snapshot").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Previously loaded reply").frame(maxWidth: .infinity, alignment: .leading)
                 Text("Status").frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.system(size: 11))
@@ -423,7 +423,7 @@ struct ReviewReplyEditorView: View {
             HStack(spacing: 12) {
                 Text(liveResponse?.responseBody.map { "“\($0)”" } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(liveResponse.map { "\($0.state ?? "—") · lastModifiedDate \($0.lastModifiedDate.map(reviewDisplayDate) ?? "unknown")" } ?? "No response")
+                Text(liveResponse.map { "\(reviewResponseStateDisplayName($0.state)) · Updated \($0.lastModifiedDate.map(reviewDisplayDate) ?? "unknown")" } ?? "No reply")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.system(size: 12))
@@ -438,8 +438,8 @@ struct ReviewReplyEditorView: View {
     private var sendingBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             infoBanner(
-                title: "Sending… · awaiting the POST result",
-                body: "Keep the draft and review available. Closing this window does not cancel a write Apple has already accepted. Do not submit or delete again while this operation is unresolved."
+                title: "Sending reply…",
+                body: "Keep this review open until the request finishes. Reply actions are temporarily disabled."
             )
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 24) {
@@ -448,7 +448,7 @@ struct ReviewReplyEditorView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Developer response · sending edited draft")
+                    Text("Reply being sent")
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
                     Text("Draft editing is temporarily locked for this attempt. Your saved local draft is separate from the response Apple may return.")
@@ -474,9 +474,9 @@ struct ReviewReplyEditorView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(ShipyardTheme.tableHeader)
-            outcomeRow("201 · response resource returned", "Use returned PENDING_PUBLISH or PUBLISHED; not automatic storefront success.")
-            outcomeRow("Timeout / connection lost", "Outcome unconfirmed · reconcile before retrying.")
-            outcomeRow("Explicit Apple error received", "Show the actual returned cause; correct it before another write.")
+            outcomeRow("Apple accepted the reply", "Show whether it is waiting to publish or already published.")
+            outcomeRow("Connection interrupted", "Refresh the status before trying again.")
+            outcomeRow("Apple returned an error", "Show the reason so the reply can be corrected.")
         }
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(LaunchTheme.border, lineWidth: 1))
         .cornerRadius(6)
@@ -496,13 +496,13 @@ struct ReviewReplyEditorView: View {
     private var pendingBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             infoBanner(
-                title: "Apple response state: PENDING_PUBLISH",
-                body: "Apple returned a response awaiting publication. Do not resend the same draft. Refresh for PUBLISHED; previous storefront reply visibility is not guaranteed."
+                title: "Reply is waiting to publish",
+                body: "Apple accepted the reply. You do not need to send it again. Refresh to check when it has been published."
             )
             HStack(alignment: .top, spacing: 24) {
                 reviewContextColumn.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Submitted response")
+                    Text("Submitted reply")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(ShipyardTheme.title)
                     Text(liveResponse?.responseBody ?? "—")
@@ -512,31 +512,9 @@ struct ReviewReplyEditorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Text("Reply state").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Time").frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.body)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(ShipyardTheme.tableHeader)
-                HStack(spacing: 12) {
-                    Text("Response lastModifiedDate").frame(maxWidth: .infinity, alignment: .leading)
-                    Text(lastModifiedText).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.title)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                HStack(spacing: 12) {
-                    Text("Publication").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("PENDING_PUBLISH").frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .font(.system(size: 12))
-                .foregroundColor(ShipyardTheme.title)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                publishedPropertyRow("Status", "Waiting to publish")
+                publishedPropertyRow("Last updated", lastModifiedText)
+                publishedPropertyRow("Last checked", lastCheckedText)
             }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(LaunchTheme.border, lineWidth: 1))
             .cornerRadius(6)
@@ -546,32 +524,32 @@ struct ReviewReplyEditorView: View {
     private var publishedBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             successBanner(
-                title: "Current Apple response state: PUBLISHED",
-                body: "A fresh GET returned PUBLISHED for the response matching this review. Storefront caches may still take time to update; this is not confirmation of every storefront."
+                title: "Reply published",
+                body: "Apple has published the reply for this review. It may take time to appear in every storefront."
             )
             HStack(alignment: .top, spacing: 24) {
                 reviewContextColumn.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Developer response · returned edited reply")
+                    Text("Published reply")
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
                     Text(liveResponse?.responseBody ?? "—")
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("Source: fresh response GET · linked to the selected customer review. This is the returned response, not the local draft.")
+                    Text("This is the latest reply returned by App Store Connect.")
                         .font(.system(size: 11))
                         .foregroundColor(ShipyardTheme.body)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             VStack(spacing: 0) {
-                publishedPropertyRow("state", "PUBLISHED")
-                publishedPropertyRow("lastModifiedDate · modification time", "\(liveResponse?.lastModifiedDate.map(reviewDisplayDate) ?? "unknown") — not a publication timestamp")
-                publishedPropertyRow("Checked locally · fresh GET", lastCheckedText)
+                publishedPropertyRow("Status", "Published")
+                publishedPropertyRow("Last updated", liveResponse?.lastModifiedDate.map(reviewDisplayDate) ?? "Unknown")
+                publishedPropertyRow("Last checked", lastCheckedText)
             }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(LaunchTheme.border, lineWidth: 1))
             .cornerRadius(6)
-            Text("Apple Help says responses may take up to 24 hours to appear. This is guidance, not a deadline guarantee. Refresh to check the actual response state.")
+            Text("Replies may take up to 24 hours to appear. Refresh to check the latest status.")
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
         }
@@ -597,12 +575,12 @@ struct ReviewReplyEditorView: View {
             HStack(alignment: .top, spacing: 24) {
                 reviewContextColumn.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Reply outcome reconciliation")
+                    Text("Check what happened")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(ShipyardTheme.title)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Last confirmed response snapshot")
+                            Text("Last confirmed reply")
                                 .font(.system(size: 11))
                                 .foregroundColor(ShipyardTheme.body)
                             Spacer()
@@ -611,10 +589,10 @@ struct ReviewReplyEditorView: View {
                                 .foregroundColor(ShipyardTheme.tertiary)
                         }
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(lastPublishedBody ?? "No confirmed reply snapshot.")
+                            Text(lastPublishedBody ?? "No previously confirmed reply.")
                                 .font(.system(size: 13))
                                 .foregroundColor(ShipyardTheme.title)
-                            Text("Last fetched PUBLISHED reply from before this attempt — not confirmation of the current response.")
+                            Text("This was loaded before the interrupted attempt and may be out of date.")
                                 .font(.system(size: 11))
                                 .foregroundColor(ShipyardTheme.body)
                         }
@@ -633,8 +611,8 @@ struct ReviewReplyEditorView: View {
     private var validationErrorBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             dangerBanner(
-                title: "Apple validation error received · correct the public reply",
-                body: explicitError ?? "An explicit error response was received for this POST. Correct the actual returned cause before resubmitting. Network failures are different: an ambiguous write must be reconciled before retrying."
+                title: "Reply could not be submitted",
+                body: explicitError ?? "Apple rejected the reply. Correct the reason shown below before resubmitting. If the connection was interrupted, refresh the status first."
             )
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 24) {
@@ -646,15 +624,15 @@ struct ReviewReplyEditorView: View {
                     Text("Correct developer response")
                         .font(.system(size: 13))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("The draft below is empty. The previously fetched published reply remains visible as a snapshot, not a guarantee of current storefront visibility.")
+                    Text("Correct the draft below before resubmitting. The previously published reply may have changed since it was loaded.")
                         .font(.system(size: 12))
                         .foregroundColor(ShipyardTheme.body)
                     draftField(editable: !isWriteDisabled, errorBorder: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Returned Apple error · generic display slot")
+                        Text("Apple error")
                             .font(.system(size: 11))
                             .foregroundColor(ShipyardTheme.title)
-                        Text("Display the received title/detail here. Exact code and resource ID are intentionally not fabricated for this illustrative scenario.")
+                        Text("The error details returned by App Store Connect appear here.")
                             .font(.system(size: 11))
                             .foregroundColor(ShipyardTheme.body)
                     }
@@ -667,16 +645,16 @@ struct ReviewReplyEditorView: View {
             }
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
-                    Text("Correction guardrail").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Required behavior").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Before resubmitting").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("What to do").frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(ShipyardTheme.tableHeader)
-                outcomeRow("Before retry", "Non-empty corrected response + authenticated write access.")
-                outcomeRow("Edit / resubmit", "POST creates or overwrites the existing response. No PATCH; no delete-first.")
+                outcomeRow("Correct the reply", "Enter a reply and use an API key with permission to manage replies.")
+                outcomeRow("Edit and resubmit", "Submitting replaces the existing public reply after Apple accepts it.")
             }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(LaunchTheme.border, lineWidth: 1))
             .cornerRadius(6)
@@ -687,8 +665,8 @@ struct ReviewReplyEditorView: View {
     private var readOnlyBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             infoBanner(
-                title: "Replies are not permitted by the current request",
-                body: "The write request returned 403 / insufficient access. The configured credential is \(CredentialStorage.shared.selectedTeam?.key ?? "this team"); that label is configuration, not introspection of the effective role or a promise of future authorization."
+                title: "You don't have access to manage replies",
+                body: "The current API key cannot post, edit, or delete replies for this app. Use a key with Account Holder, Admin, or Customer Support access."
             )
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 24) {
@@ -711,14 +689,14 @@ struct ReviewReplyEditorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             VStack(spacing: 0) {
-                accessRow("Configured credential", "\(CredentialStorage.shared.selectedTeam?.key ?? "Team") · App Manager (configured, not an effective-role lookup)")
+                accessRow("Current API key", CredentialStorage.shared.selectedTeam?.key ?? "Team")
                 accessRow("Read review and response", "Permitted for the current accessible resources.")
-                accessRow("Post / edit / delete response", "Disabled · authenticate account and resource write access before enabling.")
+                accessRow("Manage replies", "Unavailable. Use an API key with Account Holder, Admin, or Customer Support access.")
             }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(LaunchTheme.border, lineWidth: 1))
             .cornerRadius(6)
             HStack(spacing: 12) {
-                Text("Switch connection without discarding drafts. Manage account access outside Shipyard; a key role string alone cannot authorize a future write.")
+                Text("Switch connections without discarding drafts. Manage API key access in App Store Connect.")
                     .font(.system(size: 11))
                     .foregroundColor(ShipyardTheme.body)
                 Spacer()
@@ -766,16 +744,16 @@ struct ReviewReplyEditorView: View {
     private var deleteAcceptedBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             successBanner(
-                title: "Apple accepted DELETE · storefront update not yet verified",
-                body: "A successful DELETE returns 204 with no response body. The customer review remains. Refresh the review/response before showing verified absence; storefront changes may lag."
+                title: "Reply deletion accepted",
+                body: "The customer review remains. Refresh to confirm that the reply has been removed; storefront changes may take time."
             )
             HStack(alignment: .top, spacing: 24) {
                 reviewContextColumn.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Response state")
+                    Text("Reply status")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("Local operation status, not an Apple response enum. No DELETION_PENDING state exists. Keep only explicitly saved drafts; do not infer absence from an omitted relationship or any 404.")
+                    Text("Apple accepted the deletion request. Refresh before treating the reply as removed.")
                         .font(.system(size: 12))
                         .foregroundColor(ShipyardTheme.body)
                 }
@@ -793,7 +771,7 @@ struct ReviewReplyEditorView: View {
             HStack(spacing: 12) {
                 actionBarStatus("Requires Account Holder, Admin, or Customer Support role to post, edit, or delete.")
                 Spacer()
-                Button("Revert to Latest Fetched") { revertToFetched() }
+                Button("Restore Latest Reply") { revertToFetched() }
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(isWriteDisabled)
                 Button("Save Draft") { saveDraft() }
@@ -807,7 +785,7 @@ struct ReviewReplyEditorView: View {
             .background(ShipyardTheme.sidebarBackground)
         case .sending:
             HStack(spacing: 12) {
-                actionBarStatus("Local draft persisted separately · Duplicate POST and Delete are disabled while this request is in flight.")
+                actionBarStatus("Your draft is saved. Reply actions are disabled while it is being sent.")
                 Spacer()
                 Button("Save Local Draft") { saveDraft() }
                     .buttonStyle(.bordered).controlSize(.small)
@@ -823,9 +801,7 @@ struct ReviewReplyEditorView: View {
             .background(ShipyardTheme.sidebarBackground)
         case .pending, .published:
             HStack(spacing: 12) {
-                actionBarStatus(mode == .pending
-                    ? "Response checked \(lastCheckedText) · not a publication timestamp"
-                    : "Response checked \(lastCheckedText) · local check time")
+                actionBarStatus("Last checked \(lastCheckedText)")
                 Spacer()
                 if mode == .pending {
                     Button("Open Existing Review") { onBack() }
@@ -838,7 +814,7 @@ struct ReviewReplyEditorView: View {
                         .buttonStyle(.bordered).controlSize(.small)
                         .disabled(isWriteDisabled)
                 }
-                Button("Refresh Reply Status") { Task { await refreshStatus() } }
+                Button("Refresh Status") { Task { await refreshStatus() } }
                     .buttonStyle(.borderedProminent).controlSize(.small)
             }
             .padding(.horizontal, 24)
@@ -846,15 +822,15 @@ struct ReviewReplyEditorView: View {
             .background(ShipyardTheme.sidebarBackground)
         case .unconfirmed:
             HStack(spacing: 12) {
-                actionBarStatus("Last confirmed response snapshot stale · current draft retained locally")
+                actionBarStatus("The last confirmed reply is out of date. Your draft is saved locally.")
                 Spacer()
                 Button("Keep Draft") { mode = .editing }
                     .buttonStyle(.bordered).controlSize(.small)
                 Button("Retry Send · locked") { Task { await send() } }
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(!reconciled)
-                    .help(reconciled ? "Retry the send" : "Refresh Reply Status first — retry unlocks after reconciliation")
-                Button("Refresh Reply Status") { Task { await refreshStatus() } }
+                    .help(reconciled ? "Retry the send" : "Refresh the status before retrying")
+                Button("Refresh Status") { Task { await refreshStatus() } }
                     .buttonStyle(.bordered).controlSize(.small)
             }
             .padding(.horizontal, 24)
@@ -862,15 +838,15 @@ struct ReviewReplyEditorView: View {
             .background(ShipyardTheme.sidebarBackground)
         case .validationError:
             HStack(spacing: 12) {
-                actionBarStatus("Empty draft retained locally · last confirmed snapshot preserved · Resubmit stays disabled until the response is corrected and write access is confirmed.")
+                actionBarStatus("Correct the saved draft and confirm access before resubmitting.")
                 Spacer()
                 Button("Save Local Draft") { saveDraft() }
                     .buttonStyle(.bordered).controlSize(.small)
-                Button("Refresh Reply Status") { Task { await refreshStatus() } }
+                Button("Refresh Status") { Task { await refreshStatus() } }
                     .buttonStyle(.bordered).controlSize(.small)
                 Button("Resubmit Response…") {
                     if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        explicitError = "Enter a response before resubmitting. Field: attributes.responseBody."
+                        explicitError = "Enter a reply before resubmitting."
                     } else {
                         showSubmitConfirm = true
                     }
@@ -902,7 +878,7 @@ struct ReviewReplyEditorView: View {
             .background(ShipyardTheme.sidebarBackground)
         case .deleteAccepted:
             HStack(spacing: 12) {
-                actionBarStatus("Delete acknowledgement received · latest response state awaiting reconciliation")
+                actionBarStatus("Deletion accepted. Refresh to confirm the latest reply status.")
                 Spacer()
                 Button("Return to Inbox") {
                     if let onReturnToInbox {
@@ -912,7 +888,7 @@ struct ReviewReplyEditorView: View {
                     }
                 }
                 .buttonStyle(.bordered).controlSize(.small)
-                Button("Refresh Reply Status") { Task { await refreshStatus() } }
+                Button("Refresh Status") { Task { await refreshStatus() } }
                     .buttonStyle(.borderedProminent).controlSize(.small)
             }
             .padding(.horizontal, 24)
@@ -1026,7 +1002,7 @@ struct SubmitResponseSheet: View {
             Text("Submit edited customer response?")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
-            infoBanner(title: "This reply will be public", body: "POST creates or overwrites the developer response. Publication is not immediate. Avoid private information; no delete-first step is needed.")
+            infoBanner(title: "This reply will be public", body: "Submitting replaces the current developer reply after Apple accepts it. Publication may take time. Avoid private information.")
             if let review {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Selected customer review")
@@ -1112,6 +1088,15 @@ struct DeleteResponseSheet: View {
 }
 
 // MARK: - Shared review pieces
+
+private func reviewResponseStateDisplayName(_ state: String?) -> String {
+    switch state {
+    case "PENDING_PUBLISH": return "Waiting to publish"
+    case "PUBLISHED": return "Published"
+    case nil, "": return "Unknown"
+    default: return "Unknown"
+    }
+}
 
 /// "Orbit · 2 stars · United States · Oct 3, 2026" one-liner.
 func reviewIdentityLine(_ review: CustomerReviewModel, appName: String?) -> String {

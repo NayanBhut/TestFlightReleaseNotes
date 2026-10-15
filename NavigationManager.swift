@@ -78,10 +78,6 @@ extension ViewState: Equatable where T: Equatable {
 }
 
 struct UserDefaultsKeys {
-    /// Batch C flag: one switch that shows/hides the App Info tab, the
-    /// Reviews tab and the Resources sidebar section. Read via @AppStorage
-    /// so every view observes UserDefaults and stays in sync.
-    static let showExtendedInfo = "showExtendedInfo"
     /// Module 12 (Figma 3-4361 General Configuration): the section shown
     /// on launch ("apps", "builds" or "monitoring").
     static let defaultStartupView = "shipyard.defaultStartupView"
