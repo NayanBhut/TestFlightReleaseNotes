@@ -1,4 +1,5 @@
 #if DEBUG
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -28,12 +29,56 @@ enum ReviewSubmissionUITestSafety {
     }
 }
 
+/// Debug-only launch boundary for App Store marketing screenshots. A valid
+/// screen plus the explicit environment marker are both required, so a typo
+/// cannot fall through to the credential-backed production root.
+enum AppStoreScreenshotSafety {
+    static let environmentKey = "SHIPYARD_SCREENSHOT_MODE"
+    static let enabledValue = "1"
+    static let screenArgument = "--sample-data-screen"
+    static let blockedRequestMessage = "App Store Connect requests are disabled while capturing sample-data screenshots."
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment[environmentKey] == enabledValue
+    }
+
+    static func screenValue(in arguments: [String]) -> String? {
+        guard let flagIndex = arguments.firstIndex(of: screenArgument),
+              arguments.indices.contains(flagIndex + 1) else { return nil }
+        let value = arguments[flagIndex + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+}
+
+enum AppStoreScreenshotScreen: String, CaseIterable {
+    case apps
+    case builds
+    case appInfo
+    case reviews
+    case release
+
+    static var current: Self? {
+        guard AppStoreScreenshotSafety.isEnabled else { return nil }
+        return AppStoreScreenshotSafety.screenValue(in: ProcessInfo.processInfo.arguments)
+            .flatMap(Self.init(rawValue:))
+    }
+
+    var appTab: AppDetailView.AppTab {
+        switch self {
+        case .apps, .builds: return .builds
+        case .appInfo: return .appInfo
+        case .reviews: return .reviews
+        case .release: return .release
+        }
+    }
+}
+
 /// Last-resort process boundary for hermetic review UI tests. Registering a
 /// URLProtocol keeps every HTTP(S) URLSession request inside the app process;
 /// APIClient still rejects its requests earlier with a domain-specific error.
 final class ReviewSubmissionUITestNetworkBlocker: URLProtocol {
     static func installIfNeeded() {
-        guard ReviewSubmissionUITestSafety.isEnabled else { return }
+        guard ReviewSubmissionUITestSafety.isEnabled || AppStoreScreenshotSafety.isEnabled else { return }
         _ = URLProtocol.registerClass(Self.self)
     }
 
@@ -41,7 +86,9 @@ final class ReviewSubmissionUITestNetworkBlocker: URLProtocol {
         _ request: URLRequest,
         environment: [String: String]
     ) -> Bool {
-        guard ReviewSubmissionUITestSafety.isEnabled(in: environment),
+        let fixtureMode = ReviewSubmissionUITestSafety.isEnabled(in: environment)
+            || environment[AppStoreScreenshotSafety.environmentKey] == AppStoreScreenshotSafety.enabledValue
+        guard fixtureMode,
               let scheme = request.url?.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
     }
@@ -159,6 +206,26 @@ struct ReviewSubmissionUITestConfigurationErrorView: View {
     }
 }
 
+struct AppStoreScreenshotConfigurationErrorView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "camera.metering.unknown")
+                .font(.system(size: 32))
+                .foregroundStyle(ShipyardTheme.danger)
+            Text("Screenshot Configuration Error")
+                .font(.headline)
+            Text("Choose a valid sample-data screen. Production credentials and App Store Connect access remain disabled.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(ShipyardTheme.body)
+                .frame(maxWidth: 460)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ShipyardTheme.tableBackground)
+        .accessibilityIdentifier("screenshot.configuration-error")
+    }
+}
+
 @MainActor
 struct ReviewSubmissionUITestHost: View {
     let app: AppsData
@@ -206,6 +273,353 @@ struct ReviewSubmissionUITestHost: View {
         app.bundleId = "com.shipyard.uitests.reviewsubmission"
         app.primaryLocale = "en-US"
         return app
+    }
+}
+
+@MainActor
+struct AppStoreScreenshotHost: View {
+    let screen: AppStoreScreenshotScreen
+    let app: AppsData
+
+    @StateObject private var sidebarVM: SideBarViewModel
+    @StateObject private var detailVM: DetailViewModel
+    @StateObject private var reviewsVM: ReviewsViewModel
+    @StateObject private var betaVM = BetaViewModel()
+    @StateObject private var toastCenter = ShipyardToastCenter()
+    @State private var tab: AppDetailView.AppTab
+    @State private var isReady = false
+
+    init(screen: AppStoreScreenshotScreen) {
+        let fixtures = ScreenshotFixtures()
+        let sidebarVM = SideBarViewModel()
+        let detailVM = DetailViewModel(sidebarViewModel: sidebarVM, readsStoredTeam: false)
+        let reviewsVM = ReviewsViewModel()
+
+        sidebarVM.configureForScreenshotSample(
+            apps: fixtures.apps,
+            selectedApp: fixtures.primaryApp,
+            versions: fixtures.preReleaseVersions)
+        detailVM.configureForScreenshotSample(
+            app: fixtures.primaryApp,
+            versions: fixtures.preReleaseVersions,
+            selectedVersion: fixtures.preReleaseVersions[0],
+            builds: fixtures.builds,
+            appInfo: fixtures.appInfo,
+            versionLocalizations: fixtures.versionLocalizations)
+        reviewsVM.configureForScreenshotSample(
+            app: fixtures.primaryApp,
+            reviews: fixtures.reviews,
+            version: fixtures.appStoreVersion)
+
+        self.screen = screen
+        self.app = fixtures.primaryApp
+        _sidebarVM = StateObject(wrappedValue: sidebarVM)
+        _detailVM = StateObject(wrappedValue: detailVM)
+        _reviewsVM = StateObject(wrappedValue: reviewsVM)
+        _tab = State(initialValue: screen.appTab)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            screenshotSidebar
+                .frame(width: 238)
+            ShipyardTheme.rowDivider.frame(width: 1)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 1_280, minHeight: 800)
+        .background(ShipyardTheme.tableBackground)
+        .environmentObject(toastCenter)
+        .environment(\.openURL, OpenURLAction { _ in .discarded })
+        .accessibilityIdentifier(isReady
+            ? "screenshot.ready.\(screen.rawValue)"
+            : "screenshot.preparing")
+        .onAppear {
+            DispatchQueue.main.async {
+                prepareScreenshotWindow()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if screen == .apps {
+            AppsTableView(sidebarVM: sidebarVM, onOpenApp: { _ in })
+        } else {
+            AppDetailView(
+                app: app,
+                sidebarVM: sidebarVM,
+                detailVM: detailVM,
+                reviewsVM: reviewsVM,
+                betaVM: betaVM,
+                onBack: {},
+                onManage: { _ in },
+                tab: $tab)
+        }
+    }
+
+    private var screenshotSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(ShipyardTheme.accent)
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Image(systemName: "shippingbox.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Northstar Studio")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ShipyardTheme.title)
+                    Text("Sample workspace")
+                        .font(.system(size: 10))
+                        .foregroundStyle(ShipyardTheme.body)
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(ShipyardTheme.body)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    sidebarRow(.apps, selected: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        sidebarHeader("MONITORING")
+                        sidebarRow(.monitoring, selected: false)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        sidebarHeader("TEAM RESOURCES")
+                        sidebarRow(.devices, selected: false)
+                        sidebarRow(.certificates, selected: false)
+                        sidebarRow(.identifiers, selected: false)
+                        sidebarRow(.bundleIDs, selected: false)
+                        sidebarRow(.profiles, selected: false)
+                        sidebarRow(.users, selected: false)
+                    }
+                }
+                .padding(8)
+            }
+            Spacer(minLength: 0)
+            Divider()
+            HStack {
+                Label("Settings", systemImage: "gearshape")
+                Spacer()
+                Label("Help", systemImage: "questionmark.circle")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(ShipyardTheme.body)
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+        }
+        .background(ShipyardTheme.sidebarBackground)
+    }
+
+    private func sidebarHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(ShipyardTheme.tertiary)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 2)
+    }
+
+    private func sidebarRow(_ section: ShipyardSection, selected: Bool) -> some View {
+        sampleRow(section.title, icon: section.iconName, selected: selected, isAsset: true)
+    }
+
+    private func sampleRow(_ title: String, icon: String, selected: Bool, isAsset: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if isAsset {
+                    ShipyardIcon(name: icon, size: 14)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 13))
+                }
+            }
+            .frame(width: 18)
+            Text(title)
+                .font(.system(size: 12, weight: selected ? .semibold : .regular))
+            Spacer()
+        }
+        .foregroundStyle(selected ? ShipyardTheme.accent : ShipyardTheme.title)
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(selected ? ShipyardTheme.accent.opacity(0.12) : .clear)
+        .cornerRadius(7)
+    }
+
+    private func prepareScreenshotWindow() {
+        guard let window = NSApp.keyWindow
+            ?? NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }) else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                prepareScreenshotWindow()
+            }
+            return
+        }
+
+        var frame = window.frame
+        frame.size = NSSize(width: 1_440, height: 900)
+        if let visibleFrame = window.screen?.visibleFrame {
+            frame.origin.x = visibleFrame.midX - (frame.width / 2)
+            frame.origin.y = visibleFrame.midY - (frame.height / 2)
+        }
+        window.setFrame(frame, display: true)
+        // Let the resized window and asset-backed sidebar icons finish one
+        // render pass before XCTest captures it. Without this delay, a fresh
+        // launch can occasionally produce an empty sidebar in one image.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            isReady = true
+        }
+    }
+}
+
+@MainActor
+private struct ScreenshotFixtures {
+    let apps: [AppsData]
+    let primaryApp: AppsData
+    let preReleaseVersions: [PreReleaseVersionsModel]
+    let builds: [BuildsModel]
+    let appInfo: [AppInfoModel]
+    let versionLocalizations: [AppStoreVersionLocalizationsModel]
+    let reviews: [CustomerReviewModel]
+    let appStoreVersion: AppStoreVersionsModel
+
+    init() {
+        func makeApp(_ id: String, _ name: String, _ bundleId: String, _ version: String, _ state: String) -> AppsData {
+            var platformVersion = AppStoreVersionsModel(
+                id: "platform-\(id)",
+                appStoreVersionLocalizations: []
+            )
+            platformVersion.versionString = version
+            platformVersion.platform = "MAC_OS"
+            platformVersion.appStoreState = state
+            var value = AppsData(
+                id: id,
+                name: name,
+                appStoreVersions: [platformVersion],
+                appStoreIcon: nil
+            )
+            value.bundleId = bundleId
+            value.primaryLocale = "en-US"
+            value.currentLiveVersion = ("live-\(id)", version)
+            value.currentState = state
+            return value
+        }
+
+        var primary = makeApp("northstar", "Northstar", "com.example.northstar", "3.8.1", "READY_FOR_SALE")
+        primary.currentLiveVersion = ("northstar-live", "3.8.1")
+        primaryApp = primary
+        apps = [
+            primary,
+            makeApp("atlas", "Atlas Journal", "com.example.atlas", "2.6.0", "READY_FOR_SALE"),
+            makeApp("harbor", "Harbor Weather", "com.example.harbor", "5.1.2", "PREPARE_FOR_SUBMISSION"),
+            makeApp("lumen", "Lumen Tasks", "com.example.lumen", "4.4.0", "WAITING_FOR_REVIEW"),
+            makeApp("orbit", "Orbit Finance", "com.example.orbit", "1.9.3", "READY_FOR_SALE"),
+            makeApp("trail", "Trail Notes", "com.example.trail", "7.0.1", "PROCESSING_FOR_DISTRIBUTION")
+        ]
+
+        var version38 = PreReleaseVersionsModel(id: "sample-pre-38")
+        version38.version = "3.9.0"
+        version38.platform = "MAC_OS"
+        version38.appStoreState = "PREPARE_FOR_SUBMISSION"
+        version38.createdDate = "2026-10-06T09:20:00Z"
+        version38.isSelected = true
+        var version37 = PreReleaseVersionsModel(id: "sample-pre-37")
+        version37.version = "3.8.1"
+        version37.platform = "MAC_OS"
+        version37.appStoreState = "READY_FOR_SALE"
+        version37.createdDate = "2026-09-18T13:10:00Z"
+        preReleaseVersions = [version38, version37]
+
+        func makeBuild(
+            _ id: String,
+            _ number: String,
+            _ state: String,
+            _ date: String,
+            version: PreReleaseVersionsModel,
+            expired: Bool = false,
+            note: String
+        ) -> BuildsModel {
+            var localization = BuildLocalizationsModel(id: "loc-\(id)")
+            localization.locale = "en-US"
+            localization.whatsNew = note
+            var value = BuildsModel(id: id, betaBuildLocalizations: [localization])
+            value.version = number
+            value.uploadedDate = date
+            value.processingState = state
+            value.expired = expired
+            value.preReleaseVersion = version
+            return value
+        }
+        builds = [
+            makeBuild("build-482", "482", "VALID", "2026-10-13T12:42:00Z", version: version38, note: "Improved launch speed and refined the release dashboard."),
+            makeBuild("build-481", "481", "PROCESSING", "2026-10-13T09:15:00Z", version: version38, note: "Updated onboarding guidance and accessibility labels."),
+            makeBuild("build-476", "476", "VALID", "2026-10-10T16:08:00Z", version: version38, note: "Fixed a sync issue when switching between teams."),
+            makeBuild("build-469", "469", "FAILED", "2026-10-08T11:30:00Z", version: version38, note: "Internal QA build."),
+            makeBuild("build-452", "452", "VALID", "2026-09-28T08:05:00Z", version: version38, expired: true, note: "Previous beta milestone.")
+        ]
+
+        var infoLocalization = AppInfoLocalizationModel(id: "sample-info-en")
+        infoLocalization.locale = "en-US"
+        infoLocalization.name = "Northstar"
+        infoLocalization.subtitle = "Plan releases with confidence"
+        infoLocalization.privacyPolicyUrl = "https://example.com/privacy"
+        var info = AppInfoModel(id: "sample-info", appInfoLocalizations: [infoLocalization])
+        info.state = "READY_FOR_SALE"
+        info.appStoreAgeRating = "FOUR_PLUS"
+        info.primaryCategory = AppCategoryModel(id: "PRODUCTIVITY")
+        appInfo = [info]
+
+        var versionLocalization = AppStoreVersionLocalizationsModel(id: "sample-version-en")
+        versionLocalization.locale = "en-US"
+        versionLocalization.descriptionData = "Northstar brings builds, TestFlight notes, App Store metadata, reviews, and release status into one focused workspace."
+        versionLocalization.keywords = "release,testflight,builds,metadata,reviews"
+        versionLocalization.promotionalText = "Ship confidently from one clear release workspace."
+        versionLocalization.supportUrl = "https://example.com/support"
+        versionLocalization.marketingUrl = "https://example.com/northstar"
+        versionLocalization.whatsNew = "Faster sync, clearer permissions, and a refreshed review inbox."
+        versionLocalizations = [versionLocalization]
+
+        func makeReview(_ id: String, rating: Int, title: String, body: String, name: String, date: String, territory: String, reply: String? = nil) -> CustomerReviewModel {
+            var value = CustomerReviewModel(id: id)
+            value.rating = rating
+            value.title = title
+            value.body = body
+            value.reviewerNickname = name
+            value.createdDate = date
+            value.territory = territory
+            if let reply {
+                var response = CustomerReviewResponseModel(id: "response-\(id)")
+                response.responseBody = reply
+                response.state = "PUBLISHED"
+                response.lastModifiedDate = date
+                value.response = response
+            }
+            return value
+        }
+        reviews = [
+            makeReview("review-1", rating: 5, title: "Finally, a calm release day", body: "The build and metadata workflow is clear and fast.", name: "Maya R.", date: "2026-10-12T14:25:00Z", territory: "USA", reply: "Thank you — we are glad Northstar helps your team ship calmly."),
+            makeReview("review-2", rating: 5, title: "Everything in one place", body: "I can check TestFlight notes and review status without switching tabs.", name: "Theo", date: "2026-10-10T08:40:00Z", territory: "GBR"),
+            makeReview("review-3", rating: 4, title: "Great for small teams", body: "Permissions are much easier to understand now.", name: "Sofia P.", date: "2026-10-08T18:05:00Z", territory: "ESP", reply: "Thanks for the thoughtful feedback!"),
+            makeReview("review-4", rating: 5, title: "Excellent release companion", body: "The new review inbox saves us time every week.", name: "Kenji", date: "2026-10-05T06:15:00Z", territory: "JPN"),
+            makeReview("review-5", rating: 4, title: "Clean and focused", body: "Useful status details without extra clutter.", name: "Amelia", date: "2026-10-02T11:45:00Z", territory: "AUS")
+        ]
+
+        var storeVersion = AppStoreVersionsModel(id: "sample-version", appStoreVersionLocalizations: [])
+        storeVersion.versionString = "3.9.0"
+        storeVersion.platform = "MAC_OS"
+        storeVersion.appStoreState = "PREPARE_FOR_SUBMISSION"
+        storeVersion.appVersionState = "PREPARE_FOR_SUBMISSION"
+        storeVersion.releaseType = "MANUAL"
+        storeVersion.createdDate = "2026-10-06T09:20:00Z"
+        storeVersion.copyright = "2026 Northstar Studio"
+        storeVersion.build = builds[0]
+        appStoreVersion = storeVersion
     }
 }
 #endif

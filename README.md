@@ -67,7 +67,7 @@ To manage another team/vendor, repeat steps 3–7 with a new Team Name — the s
 
 | Area | Read | Write | Notes |
 |---|---|---|---|
-| Apps / versions / builds | ✅ list, search, filter, sort, paginate | — (expire build only) | 10 apps / 10 versions / 5 builds per page, Load More |
+| Apps / versions / builds | ✅ list, search, filter, sort, paginate | — (expire build only) | 50 apps / 10 versions / 10 builds per page, Load More |
 | Release notes (`whatsNew`, 50 locales) | ✅ per-build, completeness matrix | ✅ create / update / delete, Save All, snippets | Exact Apple locale codes (`de-DE`, `nl-NL`); default `en-US` |
 | Beta groups & testers | ✅ groups, testers, review status | ✅ invite/add/remove, assign build, auto-notify, submit review, CRUD groups | External review submit supported; status check included |
 | App Info & version localizations | ✅ general, age rating, categories, export compliance | ✅ inline edit name/subtitle/keywords/description/URLs | Apple length caps validated client-side; needs App Manager+ |
@@ -86,7 +86,7 @@ Not supported (Apple has no public API or it's web-only): sales/finance reports,
 ### Apps, Versions & Builds
 - App list sidebar with search (local + debounced server-side `filter[name]`), app-state filter, name/state sorting, cursor pagination, and cached app icons.
 - Pre-release versions per app (`filter[app]`, newest first) with pagination.
-- Builds per version with processing state (`PROCESSING` / `VALID` / `FAILED` / `INVALID` / `EXPIRED`), upload dates, version/build IDs, and deep links to App Store Connect.
+- Builds for the selected pre-release version with processing state (`PROCESSING` / `VALID` / `FAILED` / `INVALID` / `EXPIRED`), upload dates, version/build IDs, and deep links to App Store Connect.
 
 ### Release Notes (TestFlight `whatsNew`)
 - Per-build editor covering 50 Apple locales (`en-US` default; exact codes such as `de-DE` / `nl-NL` required).
@@ -191,7 +191,7 @@ Xcode unit tests live in `App Store Tests/` (API method construction, JSON:API d
 
 ## Limitations
 
-- Page sizes: 10 apps, 10 versions, 5 builds per page (cursor-paginated with Load More); 50 reviews and 50 resources per page; build-status poll capped at 50 `PROCESSING` builds.
+- Page sizes: 50 apps, 10 versions, and 10 builds per page (cursor-paginated with Load More); 50 reviews and 50 resources per page; build-status poll capped at 50 `PROCESSING` builds.
 - Apple metadata caps are enforced client-side (see App Info above); locale codes must match Apple's exact shortcodes.
 - Key-role gated writes return permission hints (see Setup).
 - Out of scope: sales/finance reports, screenshot/asset upload, review-submission create/cancel, phased releases, in-app events (deep-linked only), webhooks, and web-only App Store Connect actions.

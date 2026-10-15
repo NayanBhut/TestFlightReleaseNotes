@@ -10,6 +10,33 @@ import XCTest
 @testable import Shipyard
 
 final class ValidationTests: XCTestCase {
+    @MainActor
+    func testBuildsQueryLoadsTenBuildsForSelectedVersion() {
+        let query = DetailViewModel.buildsQueryParams(
+            appId: "app-123",
+            preReleaseVersionId: "version-1.0",
+            cursor: "next-page")
+
+        XCTAssertEqual(query["filter[app]"], "app-123")
+        XCTAssertEqual(query["filter[preReleaseVersion]"], "version-1.0")
+        XCTAssertEqual(query["sort"], "-version")
+        XCTAssertEqual(query["include"], "appStoreVersion,betaBuildLocalizations,preReleaseVersion")
+        XCTAssertEqual(query["limit"], "10")
+        XCTAssertEqual(query["cursor"], "next-page")
+    }
+
+    func testScreenshotDisplayTypesMatchVersionPlatform() {
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "MAC_OS"), [.desktop])
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "TV_OS"), [.appleTV])
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "VISION_OS"), [.visionPro])
+        XCTAssertEqual(
+            ScreenshotDisplayType.supported(for: "IOS"),
+            [.iPhone67, .iPhone61, .iPhone65, .iPhone58,
+             .iPad129, .iPad11, .watchUltra])
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: nil), ScreenshotDisplayType.allCases)
+        XCTAssertEqual(ScreenshotDisplayType.supported(for: "FUTURE_OS"), ScreenshotDisplayType.allCases)
+    }
+
 #if DEBUG
     func testReviewSubmissionUITestSafetyRequiresExplicitMarkerAndValidScenario() {
         XCTAssertFalse(ReviewSubmissionUITestSafety.isEnabled(in: [:]))
@@ -52,6 +79,22 @@ final class ValidationTests: XCTestCase {
         XCTAssertFalse(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
             fileRequest,
             environment: enabledEnvironment))
+
+        XCTAssertTrue(ReviewSubmissionUITestNetworkBlocker.shouldBlock(
+            httpsRequest,
+            environment: [
+                AppStoreScreenshotSafety.environmentKey: AppStoreScreenshotSafety.enabledValue
+            ]))
+    }
+
+    func testScreenshotModeRequiresAValidScreen() {
+        XCTAssertEqual(
+            AppStoreScreenshotSafety.screenValue(in: [
+                AppStoreScreenshotSafety.screenArgument, "reviews"
+            ]),
+            "reviews")
+        XCTAssertNil(AppStoreScreenshotSafety.screenValue(in: []))
+        XCTAssertNil(AppStoreScreenshotScreen(rawValue: "unknown"))
     }
 #endif
 
@@ -1114,53 +1157,37 @@ final class ValidationTests: XCTestCase {
 
 
     func testCredentialCodableRoundTrip() throws {
-        let access = AppStoreConnectKeyAccess(kind: .team, role: .appManager)
-        let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id", access: access)
+        let credential = Credential(key: "Team", issuerID: "issuer", privateKey: "key", keyID: "id")
         let data = try JSONEncoder().encode(credential)
         let decoded = try JSONDecoder().decode(Credential.self, from: data)
         XCTAssertEqual(decoded.key, "Team")
         XCTAssertEqual(decoded.issuerID, "issuer")
-        XCTAssertEqual(decoded.access, access)
     }
 
-    func testLegacyCredentialWithoutAccessStillDecodesAndShowsExistingUI() throws {
+    func testLegacyCredentialWithDeclaredAccessStillDecodes() throws {
+        let data = Data(#"{"key":"Team","issuerID":"issuer","privateKey":"key","keyID":"id","access":{"kind":"team","role":"developer"}}"#.utf8)
+        let decoded = try JSONDecoder().decode(Credential.self, from: data)
+        XCTAssertEqual(decoded.key, "Team")
+    }
+
+    func testCredentialWithoutAccessStillDecodes() throws {
         let data = Data(#"{"key":"Team","issuerID":"issuer","privateKey":"key","keyID":"id"}"#.utf8)
         let decoded = try JSONDecoder().decode(Credential.self, from: data)
-        XCTAssertNil(decoded.access)
-        XCTAssertTrue(decoded.shows(.appInfo))
-        XCTAssertTrue(decoded.shows(.provisioningResources))
+        XCTAssertEqual(decoded.keyID, "id")
     }
 
-    func testDeclaredAccessVisibilityMatrix() {
-        let developer = Credential(
-            key: "Developer", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .team, role: .developer)
-        )
-        XCTAssertTrue(developer.shows(.builds))
-        XCTAssertTrue(developer.shows(.appStoreVersions))
-        XCTAssertFalse(developer.shows(.appInfo))
-        XCTAssertFalse(developer.shows(.reviews))
-        XCTAssertFalse(developer.shows(.provisioningResources))
+    func testPermissionErrorsDescribeRequiredAccess() {
+        let forbidden = APIError.apiErrorWithCode(error: "Forbidden", 403)
 
-        let support = Credential(
-            key: "Support", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .individual, role: .customerSupport)
-        )
-        XCTAssertTrue(support.shows(.reviews))
-        XCTAssertFalse(support.shows(.builds))
-
-        let individualAdmin = Credential(
-            key: "Admin", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .individual, role: .admin)
-        )
-        XCTAssertTrue(individualAdmin.shows(.users))
-        XCTAssertFalse(individualAdmin.shows(.provisioningResources))
-
-        let teamAdmin = Credential(
-            key: "Team Admin", issuerID: "issuer", privateKey: "key", keyID: "id",
-            access: AppStoreConnectKeyAccess(kind: .team, role: .admin)
-        )
-        XCTAssertTrue(teamAdmin.shows(.provisioningResources))
+        XCTAssertEqual(
+            FriendlyErrorMessage.message(for: forbidden, requiring: .users),
+            "This API key can't access users and invitations. User management requires an Admin key for this team.")
+        XCTAssertTrue(
+            FriendlyErrorMessage.message(for: forbidden, requiring: .appInfo)
+                .contains("App Manager or Admin"))
+        XCTAssertTrue(
+            FriendlyErrorMessage.message(for: forbidden, requiring: .resources)
+                .contains("Admin key with provisioning access"))
     }
 
     // NOTE: CredentialStorage's selection logic (changeTeam /

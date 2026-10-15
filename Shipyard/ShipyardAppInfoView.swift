@@ -709,6 +709,7 @@ struct ShipyardAppInfoView: View {
                     state: detailVM.versionLocalizationsState,
                     isEditable: isEditable,
                     primaryLocale: app.primaryLocale,
+                    platform: selectedVersionPlatform,
                     retry: { detailVM.retryVersionLocalizations() })
             }
         }
@@ -719,6 +720,13 @@ struct ShipyardAppInfoView: View {
               let version = reviewsVM.appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId })
         else { return "—" }
         return version.versionString ?? version.id
+    }
+
+    private var selectedVersionPlatform: String? {
+        guard let versionId else { return reviewsVM.selectedAppStoreVersionPlatform }
+        return reviewsVM.appStoreVersionsState.loadedValue?
+            .first(where: { $0.id == versionId })?.platform
+            ?? reviewsVM.selectedAppStoreVersionPlatform
     }
 
     // MARK: - Fields
@@ -762,7 +770,10 @@ struct ShipyardAppInfoView: View {
     @ViewBuilder
     private func metadataField(label: String, field: Field, limit: Int?, multiline: Bool = false, url: Bool = false, hint: String, disabled: Bool = false) -> some View {
         let text = draft(field)
-        let error = fieldError(field, limit: limit, url: url)
+        // A disabled field can still be waiting for its server value. Do not
+        // validate that temporary empty value and flash an error while App
+        // Info is loading.
+        let error = disabled ? nil : fieldError(field, limit: limit, url: url)
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)

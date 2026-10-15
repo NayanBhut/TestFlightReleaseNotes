@@ -82,7 +82,7 @@ final class BetaViewModel: ObservableObject {
 
     private func presentError(_ error: APIError) {
         betaLogger.error("Beta request failed: \(error.details, privacy: .public)")
-        errorMessage = error.details
+        errorMessage = FriendlyErrorMessage.message(for: error, requiring: .testFlight)
         hasError = true
     }
 

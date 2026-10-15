@@ -17,8 +17,6 @@ class OnBoardingViewModel: ObservableObject {
     @Published var issuerID: String = ""
     @Published var keyId: String = ""
     @Published var privateKey: String = ""
-    @Published var keyKind: AppStoreConnectKeyKind = .team
-    @Published var keyRole: AppStoreConnectKeyRole = .developer
     @Published var isShowSpinner = false
     @Published var errorMessage: String?
     /// Apps returned by the last verification request. Set by getAllApps on
@@ -153,8 +151,7 @@ class OnBoardingViewModel: ObservableObject {
     @discardableResult
     func saveLoginState() -> Bool {
         let cleanTeamName = teamName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let access = AppStoreConnectKeyAccess(kind: keyKind, role: keyRole)
-        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: normalizedPrivateKey, keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines), access: access), teamName: cleanTeamName) else {
+        guard CredentialStorage.shared.saveData(credential: Credential(key: cleanTeamName, issuerID: issuerID.trimmingCharacters(in: .whitespacesAndNewlines), privateKey: normalizedPrivateKey, keyID: keyId.trimmingCharacters(in: .whitespacesAndNewlines)), teamName: cleanTeamName) else {
             errorMessage = "Couldn't save the team to the Keychain. Please try again."
             return false
         }

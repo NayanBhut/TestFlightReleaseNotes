@@ -761,6 +761,25 @@ enum ScreenshotDisplayType: String, CaseIterable {
         case .visionPro: return "Vision Pro"
         }
     }
+
+    /// Screenshot families accepted for an App Store version platform.
+    /// Unknown platform values keep the complete list so a newly added
+    /// App Store Connect platform does not leave the picker empty.
+    static func supported(for platform: String?) -> [ScreenshotDisplayType] {
+        switch platform {
+        case AppStoreVersionPlatform.macOS.rawValue:
+            return [.desktop]
+        case AppStoreVersionPlatform.tvOS.rawValue:
+            return [.appleTV]
+        case AppStoreVersionPlatform.visionOS.rawValue:
+            return [.visionPro]
+        case AppStoreVersionPlatform.iOS.rawValue:
+            return [.iPhone67, .iPhone61, .iPhone65, .iPhone58,
+                    .iPad129, .iPad11, .watchUltra]
+        default:
+            return allCases
+        }
+    }
 }
 
 @ResourceWrapper(type: "appScreenshotSets")

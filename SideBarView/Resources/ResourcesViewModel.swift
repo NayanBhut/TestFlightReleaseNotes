@@ -540,7 +540,11 @@ final class ResourcesViewModel: ObservableObject {
                 // A failed first page invalidates any cursor from an older
                 // query epoch — the drain loop must not chase it.
                 nextCursors[kind] = nil
-                setError(friendlyMessage(for: error), for: kind)
+                setError(
+                    FriendlyErrorMessage.message(
+                        for: error,
+                        requiring: kind == .users ? .users : .resources),
+                    for: kind)
             }
         }
     }
@@ -686,18 +690,8 @@ final class ResourcesViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Errors
-
-    /// Team-scoped resource endpoints 403 with a TestFlight-only key —
-    /// surface an actionable hint instead of a bare server message.
     private func friendlyMessage(for error: Error) -> String {
-        if let apiError = error as? APIError {
-            if apiError.statusCode == 403 {
-                return "\(apiError.details) — resources need an API key with broader permissions than TestFlight-only."
-            }
-            return FriendlyErrorMessage.message(for: error)
-        }
-        return FriendlyErrorMessage.message(for: error)
+        FriendlyErrorMessage.message(for: error, requiring: .resources)
     }
 
     func loadCertificateRelationshipOptions(_ kind: CertificateCreateRelationshipKind, force: Bool = false) {
@@ -1980,7 +1974,7 @@ final class ResourcesViewModel: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return }
             resourcesLogger.error("Failed to load invitations: \(error.localizedDescription)")
-            invitationsState = .error(friendlyMessage(for: error))
+            invitationsState = .error(FriendlyErrorMessage.message(for: error, requiring: .users))
         }
     }
 

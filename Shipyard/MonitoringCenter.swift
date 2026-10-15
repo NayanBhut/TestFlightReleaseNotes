@@ -913,7 +913,6 @@ struct ShipyardSettingsSheet: View {
     @AppStorage(UserDefaultsKeys.defaultStartupView) private var startupView = "apps"
     @AppStorage(UserDefaultsKeys.defaultMetadataLocale) private var defaultLocale = "en-US"
     @AppStorage(UserDefaultsKeys.openLinksInExternalBrowser) private var openLinksExternal = true
-    @AppStorage(UserDefaultsKeys.showExtendedInfo) private var showExtendedInfo = true
     @ObservedObject private var prefs = MonitoringPreferences.shared
     @ObservedObject private var credentialStorage = CredentialStorage.shared
     @Environment(\.colorScheme) private var colorScheme
@@ -1075,7 +1074,7 @@ struct ShipyardSettingsSheet: View {
                 Text("Teams")
                     .font(.system(size: 16))
                     .foregroundColor(ShipyardTheme.title)
-                Text("API credentials live in your Keychain and are never logged. Declared access controls navigation only; Apple's response still decides whether an operation is authorized.")
+                Text("API credentials live in your Keychain and are never logged. All sections stay visible; App Store Connect reports when the active key needs a broader role or app scope.")
                     .font(.system(size: 12))
                     .foregroundColor(ShipyardTheme.body)
                 ForEach(credentialStorage.teams, id: \.self) { team in
@@ -1085,11 +1084,9 @@ struct ShipyardSettingsSheet: View {
                                 Text(team)
                                     .font(.system(size: 13))
                                     .foregroundColor(ShipyardTheme.title)
-                                if credentialStorage.selectedTeam?.key == team {
-                                    Text(credentialStorage.selectedTeam?.access?.displayName ?? "Access not configured · all navigation shown")
-                                        .font(.system(size: 10))
-                                        .foregroundColor(ShipyardTheme.body)
-                                }
+                                Text("Permissions are checked by App Store Connect")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(ShipyardTheme.body)
                             }
                             Spacer()
                             if credentialStorage.selectedTeam?.key == team {
@@ -1105,39 +1102,6 @@ struct ShipyardSettingsSheet: View {
                             }
                         }
 
-                        if credentialStorage.selectedTeam?.key == team {
-                            HStack(spacing: 8) {
-                                Menu {
-                                    ForEach(AppStoreConnectKeyKind.allCases) { kind in
-                                        Button(kind.displayName) {
-                                            updateActiveAccess(kind: kind)
-                                        }
-                                    }
-                                } label: {
-                                    ShipyardMenuLabel(text: credentialStorage.selectedTeam?.access?.kind.displayName ?? "Key Type")
-                                }
-                                .menuStyle(.borderlessButton)
-
-                                Menu {
-                                    ForEach(AppStoreConnectKeyRole.allCases) { role in
-                                        Button(role.displayName) {
-                                            updateActiveAccess(role: role)
-                                        }
-                                    }
-                                } label: {
-                                    ShipyardMenuLabel(text: credentialStorage.selectedTeam?.access?.role.displayName ?? "Access Role")
-                                }
-                                .menuStyle(.borderlessButton)
-
-                                if credentialStorage.selectedTeam?.access != nil {
-                                    Button("Clear") {
-                                        _ = credentialStorage.updateAccess(nil, for: team)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
                     }
                     .padding(10)
                     .background(LaunchTheme.card)
@@ -1148,17 +1112,6 @@ struct ShipyardSettingsSheet: View {
             .padding(24)
         }
         .background(ShipyardTheme.tableBackground)
-    }
-
-    private func updateActiveAccess(kind: AppStoreConnectKeyKind? = nil,
-                                    role: AppStoreConnectKeyRole? = nil) {
-        guard let credential = credentialStorage.selectedTeam else { return }
-        let current = credential.access ?? AppStoreConnectKeyAccess(kind: .team, role: .developer)
-        let updated = AppStoreConnectKeyAccess(
-            kind: kind ?? current.kind,
-            role: role ?? current.role
-        )
-        _ = credentialStorage.updateAccess(updated, for: credential.key)
     }
 
     private var notificationsPane: some View {
@@ -1223,17 +1176,56 @@ struct ShipyardSettingsSheet: View {
                 Text("Advanced")
                     .font(.system(size: 16))
                     .foregroundColor(ShipyardTheme.title)
-                Toggle("Dark Mode", isOn: Binding(
-                    get: { colorScheme == .dark },
-                    set: { _ in AppAppearance.toggle() }
-                ))
-                .font(.system(size: 12))
-                Toggle("Show App Info, Reviews & Resources", isOn: $showExtendedInfo)
-                    .font(.system(size: 12))
+
+                VStack(spacing: 0) {
+                    advancedToggleRow(
+                        title: "Dark Mode",
+                        subtitle: "Use Shipyard's dark appearance.",
+                        isOn: Binding(
+                            get: { colorScheme == .dark },
+                            set: { enabled in
+                                guard enabled != (colorScheme == .dark) else { return }
+                                AppAppearance.toggle()
+                            }
+                        )
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LaunchTheme.card)
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(LaunchTheme.border, lineWidth: 1)
+                )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
         .background(ShipyardTheme.tableBackground)
+    }
+
+    private func advancedToggleRow(
+        title: String,
+        subtitle: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundColor(ShipyardTheme.title)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(ShipyardTheme.body)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

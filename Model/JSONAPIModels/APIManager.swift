@@ -166,6 +166,10 @@ final class APIClient: @unchecked Sendable {
     /// guard blocks any future or accidentally unguarded path before network
     /// execution, including reads and signed CDN uploads.
     private static var reviewUITestBlockError: APIError? {
+        if AppStoreScreenshotSafety.isEnabled {
+            apiLogger.fault("[SCREENSHOT SAFETY] Blocked an App Store Connect request")
+            return .apiError(error: AppStoreScreenshotSafety.blockedRequestMessage)
+        }
         guard ReviewSubmissionUITestSafety.isEnabled else { return nil }
         apiLogger.fault("[UI TEST SAFETY] Blocked an App Store Connect request")
         return .apiError(error: ReviewSubmissionUITestSafety.blockedRequestMessage)

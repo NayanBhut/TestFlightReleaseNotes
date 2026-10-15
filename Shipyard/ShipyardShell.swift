@@ -88,21 +88,6 @@ struct ShipyardShell: View {
             activeTeamKey = newKey
             refreshForActiveTeam(resetNavigation: true)
         }
-        .onChange(of: credentialStorage.selectedTeam?.access) { _, _ in
-            guard isSectionVisible(section) else {
-                clearDetail()
-                section = .apps
-                return
-            }
-        }
-        // App tap lands on the builds list (Figma builds-list): auto-select
-        // the newest version once versions arrive. Guarded by nil so user
-        // picks and pagination appends never retrigger it.
-        .onChange(of: detailVM.arrVersions) { _, versions in
-            if detailVM.selectedVersion == nil, let first = versions.first {
-                detailVM.setSelectedVersionAndGetBuilds(selectedVersion: first)
-            }
-        }
     }
 
     @ViewBuilder
@@ -222,18 +207,6 @@ struct ShipyardShell: View {
 
     private var loadedApps: [AppsData] {
         sidebarVM.appsState.loadedValue ?? []
-    }
-
-    private func isSectionVisible(_ section: ShipyardSection) -> Bool {
-        guard let credential = credentialStorage.selectedTeam else { return true }
-        switch section {
-        case .apps: return true
-        case .builds: return credential.shows(.builds)
-        case .monitoring: return credential.shows(.monitoring)
-        case .devices, .certificates, .identifiers, .bundleIDs, .profiles:
-            return credential.shows(.provisioningResources)
-        case .users: return credential.shows(.users)
-        }
     }
 
     /// Switches the active team: the keychain write alone refreshes
