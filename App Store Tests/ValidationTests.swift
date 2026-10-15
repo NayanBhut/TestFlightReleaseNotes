@@ -10,6 +10,21 @@ import XCTest
 @testable import Shipyard
 
 final class ValidationTests: XCTestCase {
+    func testAppInfoLocaleSelectionMovesToPrimaryAfterDeletion() {
+        XCTAssertEqual(
+            ShipyardAppInfoView.localeAfterDeleting(
+                "ca",
+                availableLocales: ["en-US"],
+                primaryLocale: "en-US"),
+            "en-US")
+        XCTAssertEqual(
+            ShipyardAppInfoView.localeAfterDeleting(
+                "ca",
+                availableLocales: ["de-DE", "fr-FR"],
+                primaryLocale: "en-US"),
+            "de-DE")
+    }
+
     @MainActor
     func testBuildsQueryLoadsTenBuildsForSelectedVersion() {
         let query = DetailViewModel.buildsQueryParams(

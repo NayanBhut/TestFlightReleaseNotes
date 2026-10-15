@@ -889,15 +889,37 @@ struct ShipyardAppInfoView: View {
 
     private func removeLocale() async {
         guard let record = versionLocalization else { return }
-        if let message = await detailVM.deleteVersionLocalization(id: record.id, locale: locale) {
+        let removedLocale = locale
+        if let message = await detailVM.deleteVersionLocalization(id: record.id, locale: removedLocale) {
             saveError = message
             toastCenter.show("Couldn't remove localization", detail: message, variant: .error)
             return
         }
-        toastCenter.show("Localization removed", detail: BetaLocalizationLocales.displayName(for: locale), variant: .success)
-        for field in Field.allCases { drafts.removeValue(forKey: field.rawValue) }
-        draftSignature = ""
-        syncDrafts()
+        switchToLocale(Self.localeAfterDeleting(
+            removedLocale,
+            availableLocales: locales,
+            primaryLocale: app.primaryLocale))
+        toastCenter.show(
+            "Localization removed",
+            detail: BetaLocalizationLocales.displayName(for: removedLocale),
+            variant: .success)
+    }
+
+    /// Keeps the picker on a real record after deleting its current locale.
+    /// Prefer Apple's primary locale, then the first remaining locale. When
+    /// the version has no localizations left, keep the primary/default code
+    /// selected so the empty editor still has a useful locale context.
+    static func localeAfterDeleting(
+        _ removedLocale: String,
+        availableLocales: [String],
+        primaryLocale: String?
+    ) -> String {
+        let remaining = availableLocales.filter { $0 != removedLocale }
+        return primaryLocale.flatMap { primary in
+            remaining.first(where: { $0 == primary })
+        } ?? remaining.first
+            ?? primaryLocale
+            ?? BetaLocalizationLocales.defaultLocale
     }
 
     private func save() async {
