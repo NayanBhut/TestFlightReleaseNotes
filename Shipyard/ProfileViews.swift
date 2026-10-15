@@ -216,9 +216,8 @@ struct ProfileDetailView: View {
             }
         }
         .sheet(item: $deleteProfile) { p in
-            DeleteProfileSheet(viewModel: viewModel, profile: p) {
+            DeleteProfileSheet(viewModel: viewModel, profile: p, onDeleted: onBack) {
                 deleteProfile = nil
-                onBack()
             }
         }
         .sheet(item: $regenerateProfile) { p in
@@ -489,6 +488,7 @@ struct DeleteProfileSheet: View {
     @ObservedObject var viewModel: ResourcesViewModel
     @EnvironmentObject private var toastCenter: ShipyardToastCenter
     var profile: ProfileModel
+    var onDeleted: (() -> Void)? = nil
     var onDone: () -> Void
     @State private var confirmation = ""
     @State private var isSaving = false
@@ -574,6 +574,7 @@ struct DeleteProfileSheet: View {
                             case .success:
                                 toastCenter.show("Profile deleted", variant: .success)
                                 onDone()
+                                onDeleted?()
                             case .failure(let message):
                                 toastCenter.show("Couldn't delete profile", detail: message, variant: .error)
                                 errorMessage = message
@@ -652,13 +653,15 @@ struct RegenerateProfileSheet: View {
     /// Only active certs of the matching kind (Figma: "Only active
     /// distribution certificates appear as selectable replacements").
     private var eligibleCertificates: [CertificateModel] {
-        certificates.filter { cert in
-            guard let option = cert.certificateType.flatMap(CertificateTypeOption.init(rawValue:)) else { return false }
-            guard option.matchesKind(development: developmentKind) else { return false }
-            if let raw = cert.expirationDate,
-               let date = ProfileModel.parseDate(raw), date < Date() { return false }
-            return true
-        }
+        guard let profileType else { return [] }
+        return certificates.filter { profileType.acceptsCertificate($0) }
+    }
+
+    private var selectionValid: Bool {
+        guard let profileType else { return false }
+        let eligibleIds = Set(eligibleCertificates.map(\.id))
+        return certificateIds.isSubset(of: eligibleIds)
+            && ProvisioningWriteValidation.profileSelectionError(type: profileType, certificateIds: certificateIds, deviceIds: deviceIds) == nil
     }
 
     private var eligibleDevices: [DeviceModel] {
@@ -702,7 +705,7 @@ struct RegenerateProfileSheet: View {
                             .disabled(isSaving)
                         Button("Review Replacement") { withAnimation { stage = .review } }
                             .buttonStyle(.launchPrimary)
-                            .disabled(isSaving || certificateIds.isEmpty)
+                            .disabled(isSaving || !selectionValid)
                     } else {
                         Button("Back") { withAnimation { stage = .dependencies } }
                             .buttonStyle(.launchSecondary)
@@ -721,6 +724,7 @@ struct RegenerateProfileSheet: View {
                             .background(ShipyardTheme.danger)
                             .cornerRadius(6)
                             .accessibilityLabel("Delete and recreate profile")
+                            .disabled(!selectionValid)
                         }
                     }
                 }
@@ -795,7 +799,7 @@ struct RegenerateProfileSheet: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(ShipyardTheme.accent)
-                    .disabled(isSaving || eligibleCertificates.isEmpty)
+                    .disabled(isSaving || eligibleCertificates.isEmpty || profileType?.requiresSingleCertificate == true)
                     .accessibilityLabel("Select all eligible certificates")
                     Button("Clear") {
                         certificateIds = []
@@ -809,7 +813,10 @@ struct RegenerateProfileSheet: View {
                     Toggle(isOn: Binding(
                         get: { certificateIds.contains(cert.id) },
                         set: { checked in
-                            if checked { certificateIds.insert(cert.id) }
+                            if checked {
+                                if profileType?.requiresSingleCertificate == true { certificateIds = [cert.id] }
+                                else { certificateIds.insert(cert.id) }
+                            }
                             else { certificateIds.remove(cert.id) }
                         })) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -1026,10 +1033,14 @@ struct RegenerateProfileSheet: View {
             errorMessage = "Couldn't determine the profile's bundle ID — reload and try again."
             return
         }
+        guard let profileType, selectionValid else {
+            errorMessage = "Select compatible certificates and any required devices before regenerating."
+            return
+        }
         let result = await viewModel.regenerateProfile(
             profileId: profile.id,
             name: profile.name ?? "Regenerated profile",
-            profileType: profileType ?? .IOS_APP_DEVELOPMENT,
+            profileType: profileType,
             bundleIdId: bundleId,
             certificateIds: certificateIds,
             deviceIds: deviceIds)

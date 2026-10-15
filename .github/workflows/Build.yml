@@ -67,6 +67,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Run the ollama-review.py regression tests before the review itself:
       # the review pipeline now aborts runs on VerifyError, so parsing/
@@ -180,31 +182,22 @@ jobs:
             exit 1
           fi
 
-      # ── TEST SCENARIO 4: PR Diff Fetch ──
-      # Purpose: Verify we can fetch the PR diff from GitHub
-      # Failure fix: Check PR is not from fork without permission
-      - name: Test 4 — PR Diff Fetch Check
+      # Generate the same three-dot comparison used by PRs locally.
+      # GitHub's diff API rejects large PRs with HTTP 406.
+      - name: Test 4 — Generate PR Diff
         id: diff-check
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          echo "📋 Checking PR diff accessibility..."
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          OWNER="${{ github.repository_owner }}"
-          REPO="${{ github.event.repository.name }}"
-
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3.diff" \
-            "https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER")
-
-          if [ "$STATUS" -eq 200 ]; then
-            echo "✅ PASS: PR diff is accessible"
+          echo "📋 Generating PR diff from the event's base and head commits..."
+          if git diff --no-ext-diff --no-textconv "$BASE_SHA...$HEAD_SHA" > /tmp/pr_diff.txt; then
+            echo "✅ PASS: PR diff generated locally"
+            wc -lc /tmp/pr_diff.txt
             echo "diff=ok" >> $GITHUB_OUTPUT
           else
-            echo "❌ FAIL: Cannot fetch PR diff (HTTP $STATUS)"
-            echo "Fix: If PR is from a fork, ensure 'contents: read' permission is set"
-            echo "Fix: Check that the PR is not closed or missing"
+            echo "❌ FAIL: Cannot generate PR diff"
+            echo "Fix: Ensure checkout fetched both event commits and their merge base"
             echo "diff=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -224,15 +217,15 @@ jobs:
           MODEL="${REVIEW_MODEL:-$OLLAMA_MODEL}"
           echo "🤖 Starting PR Review with model: $MODEL"
 
-          # Fetch PR diff
-          echo "📥 Fetching PR diff..."
-          DIFF=$(curl -s \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3.diff" \
-            "https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER")
-
-          if [ -z "$DIFF" ]; then
-            echo "⚠️ No diff found (possibly binary-only changes). Skipping review."
+          # Reuse the checked local diff; never pass an API error body to the reviewer.
+          if [ ! -f /tmp/pr_diff.txt ]; then
+            echo "❌ FAIL: Generated PR diff is missing"
+            echo "review=failed" >> $GITHUB_OUTPUT
+            echo "success=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          if [ ! -s /tmp/pr_diff.txt ]; then
+            echo "⚠️ No changes found. Skipping review."
             echo "review=skipped" >> $GITHUB_OUTPUT
             echo "success=no-diff" >> $GITHUB_OUTPUT
             exit 0
@@ -249,7 +242,6 @@ jobs:
           # debugging) and prints the extracted review text to stdout.
           # Exit codes drive success/failure - no fragile text matching.
           echo "🔄 Sending to Ollama Cloud for review..."
-          echo "$DIFF" > /tmp/pr_diff.txt
           if REVIEW_TEXT=$(REVIEW_MODEL="$MODEL" \
             OLLAMA_API_KEY="$OLLAMA_API_KEY" \
             PR_DIFF_FILE="/tmp/pr_diff.txt" \
@@ -366,7 +358,7 @@ jobs:
           echo "1. Ollama Cloud Auth                 | $(status "$CONNECTIVITY")"
           echo "2. Model Availability                | $( [ -n "$MODEL" ] && echo '✅ PASS' || echo '❌ FAIL')"
           echo "3. GitHub Token Write                | $(status "$GH_AUTH")"
-          echo "4. PR Diff Accessibility             | $(status "$DIFF")"
+          echo "4. Local PR Diff Generation          | $(status "$DIFF")"
           echo "5. Review Comment Validation         | $(status "$VALIDATION")"
           echo ""
           echo "Review Result: $(status "$REVIEW_RESULT")"
@@ -391,8 +383,8 @@ jobs:
           echo "  → Add 'pull-requests: write' to permissions in workflow"
           echo ""
           echo "If Test 4 (PR Diff) failed:"
-          echo "  → Ensure PR is not from a fork without permission"
-          echo "  → Add 'contents: read' to permissions"
+          echo "  → Ensure checkout uses fetch-depth: 0"
+          echo "  → Verify both event commits and their merge base are available locally"
           echo ""
           echo "If review itself failed:"
           echo "  → Check rate limits on Ollama Cloud dashboard"

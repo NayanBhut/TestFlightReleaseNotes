@@ -31,12 +31,14 @@ private struct Payload: Codable {
 
     enum CodingKeys: String, CodingKey {
         case issuerIdentifier = "iss"
+        case issuedAt = "iat"
         case expirationTime = "exp"
         case audience = "aud"
     }
 
     /// Your issuer identifier from the API Keys page in App Store Connect (Ex: 57246542-96fe-1a63-e053-0824d011072a)
     let issuerIdentifier: String
+    let issuedAt: Int
 
     /// The token's expiration time, in Unix epoch time; tokens that expire more than 20 minutes in the future are not valid (Ex: 1528408800)
     /// Integer seconds: Apple expects a JSON number without fractions.
@@ -110,8 +112,11 @@ struct JWT: Codable, JWTCreatable {
     }
 
     /// Combine the header and the payload as a digest for signing.
-    private func digest(dateProvider: DateProvider) throws -> String {
-        let payload = Payload(issuerIdentifier: issuerIdentifier, expirationTime: Int(dateProvider().addingTimeInterval(expireDuration).timeIntervalSince1970))
+    func digest(dateProvider: DateProvider) throws -> String {
+        let now = dateProvider()
+        let payload = Payload(issuerIdentifier: issuerIdentifier,
+                              issuedAt: Int(now.timeIntervalSince1970),
+                              expirationTime: Int(now.addingTimeInterval(expireDuration).timeIntervalSince1970))
         let headerString = try JSONEncoder().encode(header.self).base64URLEncoded()
         let payloadString = try JSONEncoder().encode(payload.self).base64URLEncoded()
         return "\(headerString).\(payloadString)"

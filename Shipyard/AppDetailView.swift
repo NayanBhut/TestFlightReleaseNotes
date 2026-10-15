@@ -99,11 +99,14 @@ struct AppDetailView: View {
                     ShipyardMenuLabel(text: "Status: \(releaseSection.statusFilter.rawValue)")
                 }
                 .menuStyle(.borderlessButton)
-                Button("New Version") {
-                    releaseSection.newVersionRequested = true
+                if reviewsVM.canCreateAppStoreVersion {
+                    Button("New Version") {
+                        releaseSection.newVersionRequested = true
+                    }
+                    .buttonStyle(.launchPrimary)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("review.new-version")
                 }
-                .buttonStyle(.launchPrimary)
-                .controlSize(.small)
             }
         }
         .padding(.horizontal, 16)

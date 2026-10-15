@@ -98,6 +98,97 @@ final class ValidationTests: XCTestCase {
     }
 #endif
 
+    func testJWTClaimsContainTeamIssuerAndIssuedAt() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let jwt = JWT(
+            keyIdentifier: "test-id",
+            issuerIdentifier: "test-issuer",
+            expireDuration: 600)
+        let digest = try jwt.digest(dateProvider: { now })
+        let payloadPart = String(digest.split(separator: ".")[1]).base64URLDecoded()
+        let data = try XCTUnwrap(Data(base64Encoded: payloadPart))
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(payload["aud"] as? String, "appstoreconnect-v1")
+        XCTAssertEqual(payload["iat"] as? Int, 1_700_000_000)
+        XCTAssertEqual(payload["exp"] as? Int, 1_700_000_600)
+        XCTAssertEqual(payload["iss"] as? String, "test-issuer")
+        XCTAssertNil(payload["sub"])
+    }
+
+    @MainActor
+    func testRegenerationRejectsMissingDevicesBeforeRequest() async {
+        let vm = ResourcesViewModel()
+        let result = await vm.regenerateProfile(
+            profileId: "old",
+            name: "Profile",
+            profileType: .IOS_APP_DEVELOPMENT,
+            bundleIdId: "bundle",
+            certificateIds: ["cert"],
+            deviceIds: [])
+        guard case .failure(let message) = result else {
+            return XCTFail("Expected preflight failure")
+        }
+        XCTAssertEqual(message, "Pick at least one enabled device.")
+    }
+
+    @MainActor
+    func testRegenerationRejectsMultipleDistributionCertificatesBeforeRequest() async {
+        let vm = ResourcesViewModel()
+        let result = await vm.regenerateProfile(
+            profileId: "old",
+            name: "Profile",
+            profileType: .IOS_APP_STORE,
+            bundleIdId: "bundle",
+            certificateIds: ["cert1", "cert2"],
+            deviceIds: [])
+        guard case .failure(let message) = result else {
+            return XCTFail("Expected preflight failure")
+        }
+        XCTAssertEqual(message, "Pick exactly one distribution certificate.")
+    }
+
+    func testProfileCertificateEligibilityRejectsWrongPlatformKindAndExpiry() throws {
+        func certificate(
+            type: String,
+            expiry: String = "2099-01-01T00:00:00Z",
+            active: Bool = true
+        ) throws -> CertificateModel {
+            let object: [String: Any] = [
+                "data": [
+                    "type": "certificates",
+                    "id": "cert",
+                    "attributes": [
+                        "certificateType": type,
+                        "expirationDate": expiry,
+                        "activated": active
+                    ]
+                ]
+            ]
+            return try getDecoder().decode(
+                CertificateModel.self,
+                from: JSONSerialization.data(withJSONObject: object))
+        }
+
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertTrue(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION"), now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "MAC_APP_DISTRIBUTION"), now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DEVELOPMENT"), now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION", expiry: "2000-01-01T00:00:00Z"),
+            now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION", expiry: "2000-01-01T00:00:00.000+00:00"),
+            now: now))
+        XCTAssertFalse(ProfileTypeOption.IOS_APP_STORE.acceptsCertificate(
+            try certificate(type: "IOS_DISTRIBUTION", active: false), now: now))
+        XCTAssertTrue(ProfileTypeOption.MAC_APP_STORE.acceptsCertificate(
+            try certificate(type: "MAC_APP_DISTRIBUTION"), now: now))
+    }
+
     // MARK: - ProvisioningWriteValidation (Batch G)
 
     func testValidUDIDs() {

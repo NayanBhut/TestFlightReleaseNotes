@@ -43,7 +43,7 @@ Releasing a TestFlight build normally means: upload from Xcode → wait for proc
 
 ## How to Create an API Key (Step by Step)
 
-1. Sign in at https://appstoreconnect.apple.com/access/api with an **Admin/Account Holder** Apple ID.
+1. Sign in at [[https://appstoreconnect.apple.com/access/api](https://appstoreconnect.apple.com/access/integrations/api)](https://appstoreconnect.apple.com/access/integrations/api) with an **Admin/Account Holder** Apple ID.
 2. Go to **Integrations → App Store Connect API** (older UI: **Users and Access → Integrations → Team Keys**).
 3. Click **+ / Generate API Key** (or "Request Access" first if your team never enabled API access).
 4. Enter a name you'll recognize (e.g. `release-notes-mac`), and choose the access/role:
