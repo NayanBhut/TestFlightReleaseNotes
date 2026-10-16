@@ -95,6 +95,10 @@
 		8315B5AFC3594CFFBA1291C5 /* AgeRatingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */; };
 		0840B0F584334AAEB30555AD /* AgeRatingEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */; };
 		4CBB0833AC0F41758CDA28C0 /* AgeRatingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */; };
+		2FE3BC950E9F43A4A35C00CE /* BetaFeedbackModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E92A8BA04174C6EBC468548 /* BetaFeedbackModels.swift */; };
+		8B88C8EC87D0405D863B8772 /* BetaFeedbackViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B380A290546A48A2BB45AE11 /* BetaFeedbackViewModel.swift */; };
+		F09E2F6C53B04E6AB35460EB /* BetaFeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9854A1339394B99814D6BB4 /* BetaFeedbackView.swift */; };
+		41C496BD1CEA48FBBD9BF93E /* BetaFeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C4CDF16A95244E48799F48B /* BetaFeedbackTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -207,6 +211,10 @@
 		130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgeRatingModels.swift; sourceTree = "<group>"; };
 		DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgeRatingEditor.swift; sourceTree = "<group>"; };
 		1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgeRatingTests.swift; sourceTree = "<group>"; };
+		5E92A8BA04174C6EBC468548 /* BetaFeedbackModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackModels.swift; sourceTree = "<group>"; };
+		B380A290546A48A2BB45AE11 /* BetaFeedbackViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackViewModel.swift; sourceTree = "<group>"; };
+		F9854A1339394B99814D6BB4 /* BetaFeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackView.swift; sourceTree = "<group>"; };
+		9C4CDF16A95244E48799F48B /* BetaFeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -277,6 +285,7 @@
 			isa = PBXGroup;
 			children = (
 				B47A0004B47A0004001A9E04 /* BetaViewModel.swift */,
+				B380A290546A48A2BB45AE11 /* BetaFeedbackViewModel.swift */,
 			);
 			path = Beta;
 			sourceTree = "<group>";
@@ -326,6 +335,7 @@
 				C47A003CC47A003C001A9E0C /* BetaGroupsView.swift */,
 				C47A003DC47A003D001A9E0D /* ReleaseNotesView.swift */,
 				C47A003EC47A003E001A9E0E /* ShipyardAppInfoView.swift */,
+				F9854A1339394B99814D6BB4 /* BetaFeedbackView.swift */,
 				DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */,
 				C47A003FC47A003F001A9E0F /* AppDetailView.swift */,
 				C47A0050C47A0050001A9E50 /* InviteTesterSheet.swift */,
@@ -458,6 +468,7 @@
 			isa = PBXGroup;
 			children = (
 				8D2F23302DD06C4F00B1AB0C /* APIModels.swift */,
+				5E92A8BA04174C6EBC468548 /* BetaFeedbackModels.swift */,
 				130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */,
 				8DBB60842DD3864F00111A9E /* APIManager.swift */,
 				B47A0002B47A0002001A9E02 /* BetaModels.swift */,
@@ -483,6 +494,7 @@
 				4C4D5A196EF3EA84E17D74B9 /* APIMethodTests.swift */,
 				609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */,
 				1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */,
+				9C4CDF16A95244E48799F48B /* BetaFeedbackTests.swift */,
 				872D0E1656CED3F05CC37A21 /* ValidationTests.swift */,
 				A1623F45D99F4A56903BB5B5 /* BuildStatsPaletteTests.swift */,
 				D75BD4271AAE41208D659E2F /* AppThemeAppearanceTests.swift */,
@@ -651,6 +663,7 @@
 				696D69A94C9314D7469E03FF /* APIMethodTests.swift in Sources */,
 				20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */,
 				4CBB0833AC0F41758CDA28C0 /* AgeRatingTests.swift in Sources */,
+				41C496BD1CEA48FBBD9BF93E /* BetaFeedbackTests.swift in Sources */,
 				F6A269D26A45DE35489CF8E5 /* ValidationTests.swift in Sources */,
 				E7A9D043FD0A43F299C6245F /* BuildStatsPaletteTests.swift in Sources */,
 				346737DF37214E6896D7B0EA /* AppThemeAppearanceTests.swift in Sources */,
@@ -674,6 +687,7 @@
 				CDC9F4952BE5F96700AEF643 /* DetailViewModel.swift in Sources */,
 				CD9DD4C42BE3ECE000820E2F /* ECKeyData.swift in Sources */,
 				8D2F23312DD06C5600B1AB0C /* APIModels.swift in Sources */,
+				2FE3BC950E9F43A4A35C00CE /* BetaFeedbackModels.swift in Sources */,
 				8315B5AFC3594CFFBA1291C5 /* AgeRatingModels.swift in Sources */,
 				CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */,
 				8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */,
@@ -684,6 +698,7 @@
 				8DB576A62DD8001005A9CA0 /* LaunchAssistantSheet.swift in Sources */,
 				B47A0001B47A0001001A9E01 /* BetaModels.swift in Sources */,
 				B47A0003B47A0003001A9E03 /* BetaViewModel.swift in Sources */,
+				8B88C8EC87D0405D863B8772 /* BetaFeedbackViewModel.swift in Sources */,
 				B47A0011B47A0011001A9E11 /* ResourceModels.swift in Sources */,
 				B47A0013B47A0013001A9E13 /* ReviewModels.swift in Sources */,
 				B47A0017B47A0017001A9E17 /* ReviewsViewModel.swift in Sources */,
@@ -714,6 +729,7 @@
 				C47A004CC47A004C001A9E0C /* BetaGroupsView.swift in Sources */,
 				C47A004DC47A004D001A9E0D /* ReleaseNotesView.swift in Sources */,
 				C47A004EC47A004E001A9E0E /* ShipyardAppInfoView.swift in Sources */,
+				F09E2F6C53B04E6AB35460EB /* BetaFeedbackView.swift in Sources */,
 				0840B0F584334AAEB30555AD /* AgeRatingEditor.swift in Sources */,
 				C47A004FC47A004F001A9E0F /* AppDetailView.swift in Sources */,
 				C47A0051C47A0051001A9E51 /* InviteTesterSheet.swift in Sources */,

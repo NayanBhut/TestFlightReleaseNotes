@@ -6,6 +6,57 @@ final class ReviewSubmissionUITests: XCTestCase {
     private let launchTimeout: TimeInterval = 8
     private var app: XCUIApplication!
 
+    func testTestFlightFeedbackScreenshotsCrashLogsAndSearch() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "feedback", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.feedback").waitForExistence(timeout: launchTimeout))
+        let screenshotsSegment = app.radioButtons["Screenshots"]
+        let crashesSegment = app.radioButtons["Crashes"]
+        XCTAssertTrue(screenshotsSegment.waitForExistence(timeout: interactionTimeout))
+        XCTAssertEqual(screenshotsSegment.frame.midY, crashesSegment.frame.midY, accuracy: 1)
+        XCTAssertLessThan(screenshotsSegment.frame.height, 30, "Segment labels must stay on one line")
+        XCTAssertEqual(screenshotsSegment.frame.midY, app.textFields["feedback.search"].frame.midY, accuracy: 3)
+        XCTAssertEqual(screenshotsSegment.frame.midY, element("feedback.filters").frame.midY, accuracy: 3)
+        XCTAssertLessThan(app.buttons["TestFlight Feedback"].firstMatch.frame.height, 30,
+                          "The app navigation tab must stay on one line")
+        let row = element("feedback.row.sample-screenshot")
+        XCTAssertTrue(row.waitForExistence(timeout: interactionTimeout))
+        row.click()
+        XCTAssertTrue(button("feedback.screenshot").waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(element("feedback.note").exists)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "testflight-screenshot-feedback"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        button("feedback.screenshot").click()
+        let done = app.windows.buttons["Done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: interactionTimeout))
+        done.click()
+
+        let crashes = app.descendants(matching: .any).matching(identifier: "Crashes").firstMatch
+        XCTAssertTrue(crashes.waitForExistence(timeout: interactionTimeout))
+        crashes.click()
+        let crash = element("feedback.row.sample-crash")
+        XCTAssertTrue(crash.waitForExistence(timeout: interactionTimeout))
+        crash.click()
+        XCTAssertTrue(element("feedback.crash-log").waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(button("feedback.copy-log").isEnabled)
+        let log = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        log.name = "testflight-crash-feedback"
+        log.lifetime = .keepAlways
+        add(log)
+
+        let search = app.textFields["feedback.search"]
+        search.click()
+        search.typeText("does-not-match")
+        XCTAssertTrue(app.staticTexts["No matches"].waitForExistence(timeout: interactionTimeout))
+        app.windows.buttons["Clear Filters"].firstMatch.click()
+        XCTAssertTrue(crash.waitForExistence(timeout: interactionTimeout))
+    }
+
     override func tearDown() {
         app?.terminate()
         app = nil

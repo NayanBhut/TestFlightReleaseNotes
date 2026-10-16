@@ -181,6 +181,21 @@ func isVersionEditable(appStoreState: String?) -> Bool {
 
 @MainActor
 final class ReviewsViewModel: ObservableObject {
+    typealias AppStoreVersionsRequest = @MainActor (APIMethod) async throws -> Data
+    private let appStoreVersionsRequest: AppStoreVersionsRequest
+    private let cacheNow: () -> Date
+    private var appStoreVersionsLoadedAt: Date?
+
+    init(appStoreVersionsRequest: @escaping AppStoreVersionsRequest = { method in
+        guard let request = APIClient.shared.getRequest(api: method) else {
+            throw APIError.apiError(error: "No team selected. Add a team to load App Store versions.")
+        }
+        return try await APIClient.shared.callAPI(with: request)
+    }, cacheNow: @escaping () -> Date = Date.init) {
+        self.appStoreVersionsRequest = appStoreVersionsRequest
+        self.cacheNow = cacheNow
+    }
+
     deinit {
         // A stuck network call must not keep the VM alive.
         reviewsFetchTask?.cancel()
@@ -244,15 +259,13 @@ final class ReviewsViewModel: ObservableObject {
 
     private var appStoreVersionsFetchTask: Task<Void, Never>?
     /// True while a versions fetch task is owned by the current
-    /// generation. Unlike the in-flight app id (which can go stale when
-    /// a task is cancelled), this is cleared in every fetch defer, so a
-    /// dead task can never strand the list in loading with no retry.
+    /// generation. Cleared in every fetch defer so a dead task cannot
+    /// strand the list in loading with no retry.
     private var appStoreVersionsFetchLive = false
     private var eligibleBuildsFetchTask: Task<Void, Never>?
     private var candidateBuildsFetchTask: Task<Void, Never>?
     private var versionLocalizationsFetchTask: Task<Void, Never>?
     private var reviewDetailsFetchTask: Task<Void, Never>?
-    private var appStoreVersionsInFlightAppId: String?
     private var eligibleBuildsInFlightVersionId: String?
     private var isPaginatingAppStoreVersions = false
     private var isPaginatingEligibleBuilds = false
@@ -646,11 +659,22 @@ final class ReviewsViewModel: ObservableObject {
 
     // MARK: - Loading
 
-    /// Loads both lists for the app. Safe to call from onAppear on every
+    /// Loads reviews, submissions, and versions. Safe to call on every
     /// tab switch: only lists that are stale (not yet loaded successfully)
     /// for this app are (re)fetched, and in-flight fetches for the same app
     /// are not cancelled-and-restarted.
     func load(app: AppsData) {
+        loadApp(app, versionsOnly: false)
+    }
+
+    /// Warm only the active app's versions while the user works in Builds.
+    /// Shares the foreground loader so opening the release tab joins the
+    /// same request and uses the same canonical state, rather than a copy.
+    func preloadAppStoreVersions(app: AppsData) {
+        loadApp(app, versionsOnly: true)
+    }
+
+    private func loadApp(_ app: AppsData, versionsOnly: Bool) {
 #if DEBUG
         if uiTestScenario != nil {
             currentAppId = app.id
@@ -685,6 +709,7 @@ final class ReviewsViewModel: ObservableObject {
             eligibleBuildsFetchTask?.cancel()
             eligibleBuildsGeneration += 1
             appStoreVersionsState = .idle
+            appStoreVersionsLoadedAt = nil
             appStoreVersionsNextCursor = nil
             appStoreVersionsPaginationFailed = false
             isPaginatingAppStoreVersions = false
@@ -719,13 +744,8 @@ final class ReviewsViewModel: ObservableObject {
             requestedBuildNumber = nil
         }
         currentAppId = app.id
-        if !appStoreVersionsFetchLive, appStoreVersionsInFlightAppId != app.id, appStoreVersionsState.loadedValue == nil {
-            appStoreVersionsFetchTask?.cancel()
-            appStoreVersionsInFlightAppId = app.id
-            appStoreVersionsFetchLive = true
-            let generation = versionWorkflowGeneration
-            appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: app.id, generation: generation) }
-        }
+        load(appId: app.id)
+        if versionsOnly { return }
         if reviewsLoadedAppId != app.id, reviewsInFlightAppId != app.id {
             reviewsFetchTask?.cancel()
             reviewsInFlightAppId = app.id
@@ -746,6 +766,7 @@ final class ReviewsViewModel: ObservableObject {
     /// team could still apply results, and a same-id app under the new team
     /// would hit the staleness guard and show stale cross-team data.
     func resetForTeamSwitch() {
+        appStoreVersionsLoadedAt = nil
         reviewsFetchTask?.cancel()
         submissionsFetchTask?.cancel()
         appStoreVersionsFetchTask?.cancel()
@@ -756,7 +777,6 @@ final class ReviewsViewModel: ObservableObject {
         submissionsLoadedAppId = nil
         reviewsInFlightAppId = nil
         submissionsInFlightAppId = nil
-        appStoreVersionsInFlightAppId = nil
         eligibleBuildsInFlightVersionId = nil
         versionWorkflowGeneration += 1
         eligibleBuildsGeneration += 1
@@ -1085,17 +1105,24 @@ final class ReviewsViewModel: ObservableObject {
     }
     func load(appId: String, force: Bool = false) {
         guard currentAppId == appId else { return }
-        if force || appStoreVersionsInFlightAppId != appId {
-            appStoreVersionsFetchTask?.cancel()
-            appStoreVersionsFetchLive = false
-            versionWorkflowGeneration += 1
-            isPaginatingAppStoreVersions = false
-            appStoreVersionsInFlightAppId = appId
-            appStoreVersionsFetchLive = true
-            appStoreVersionsNextCursor = nil
-            let generation = versionWorkflowGeneration
-            appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: appId, generation: generation) }
+        if !force {
+            guard !appStoreVersionsFetchLive else { return }
+            if let loadedAt = appStoreVersionsLoadedAt,
+               cacheNow().timeIntervalSince(loadedAt) < AppConfigs.appStoreVersionsCacheLifetime {
+                switch appStoreVersionsState {
+                case .loaded, .empty: return
+                default: break
+                }
+            }
         }
+        appStoreVersionsFetchTask?.cancel()
+        versionWorkflowGeneration += 1
+        isPaginatingAppStoreVersions = false
+        appStoreVersionsFetchLive = true
+        appStoreVersionsNextCursor = nil
+        if force { appStoreVersionsLoadedAt = nil }
+        let generation = versionWorkflowGeneration
+        appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: appId, generation: generation) }
     }
 
     func retryAppStoreVersions() {
@@ -1108,7 +1135,6 @@ final class ReviewsViewModel: ObservableObject {
         appStoreVersionsFetchTask?.cancel()
         appStoreVersionsFetchLive = false
         versionWorkflowGeneration += 1
-        appStoreVersionsInFlightAppId = appId
         appStoreVersionsFetchLive = true
         let generation = versionWorkflowGeneration
         appStoreVersionsFetchTask = Task { await fetchAppStoreVersions(appId: appId, cursor: cursor, generation: generation) }
@@ -1128,7 +1154,6 @@ final class ReviewsViewModel: ObservableObject {
         defer {
             if generation == versionWorkflowGeneration {
                 if isPaginating { isPaginatingAppStoreVersions = false }
-                appStoreVersionsInFlightAppId = nil
                 appStoreVersionsFetchLive = false
             }
         }
@@ -1148,13 +1173,8 @@ final class ReviewsViewModel: ObservableObject {
                     guard visitedCursors.insert(pageCursor).inserted else { break }
                     queryParams["cursor"] = pageCursor
                 }
-                guard let request = APIClient.shared.getRequest(
-                    api: .get(name: .getAllApps, queryParams: queryParams, path: "\(appId)/appStoreVersions"),
-                    apiVersion: .v1) else {
-                    if !isPaginating { appStoreVersionsState = .error("No team selected. Add a team to load App Store versions.") }
-                    return
-                }
-                let data = try await APIClient.shared.callAPI(with: request)
+                let data = try await appStoreVersionsRequest(
+                    .get(name: .getAllApps, queryParams: queryParams, path: "\(appId)/appStoreVersions"))
                 guard !Task.isCancelled,
                       Self.responseIsCurrent(generation: generation, current: versionWorkflowGeneration),
                       currentAppId == appId else { return }
@@ -1185,6 +1205,7 @@ final class ReviewsViewModel: ObservableObject {
                 reviewsLogger.warning("App returned \(pendingVersions.count, privacy: .public) pending App Store versions for the selected platform; showing the most recently created")
             }
             appStoreVersionsState = sorted.isEmpty ? .empty : .loaded(sorted)
+            appStoreVersionsLoadedAt = cacheNow()
             reconcileReviewStatusSync(with: sorted, appId: appId)
             appStoreVersionsNextCursor = nil
             let displayedVersion = Self.preferredAppStoreVersion(platformVersions)

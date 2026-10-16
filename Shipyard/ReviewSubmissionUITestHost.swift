@@ -3,6 +3,44 @@ import AppKit
 import Foundation
 import SwiftUI
 
+@MainActor
+extension BetaFeedbackAPI {
+    static var sample: Self {
+        Self(perform: { method in
+            if method.apiPath.hasSuffix("/crashLog") {
+                return Data(#"{"data":{"type":"betaCrashLogs","id":"sample-log","attributes":{"logText":"Incident Identifier: SAMPLE-123\nProcess: Northstar\nException Type: EXC_BAD_ACCESS\nThread 0 Crashed:\n0 Northstar  JourneyView.update() + 28"}}}"#.utf8)
+            }
+            let kind: BetaFeedbackKind = method.apiPath.hasSuffix(BetaFeedbackKind.crashes.rawValue) ? .crashes : .screenshots
+            let row: [String: Any] = [
+                "type": kind.rawValue, "id": kind == .crashes ? "sample-crash" : "sample-screenshot",
+                "attributes": [
+                    "createdDate": "2026-10-15T10:30:00Z",
+                    "comment": kind == .crashes ? "The app closed when I opened my saved journey." : "The route summary is clipped on the smaller display. I attached a screenshot.",
+                    "deviceModel": "iPhone 16", "osVersion": "iOS 26.0", "appPlatform": "IOS",
+                    "locale": "en-US", "batteryPercentage": 82,
+                    "screenshots": kind == .screenshots ? [["url": "https://example.invalid/tester-screenshot.png", "width": 390, "height": 600, "expirationDate": "2099-01-01T00:00:00Z"]] : []
+                ],
+                "relationships": ["build": ["data": ["type": "builds", "id": "sample-build"]],
+                                  "tester": ["data": ["type": "betaTesters", "id": "sample-tester"]]]
+            ]
+            return try JSONSerialization.data(withJSONObject: ["data": [row], "links": ["self": "https://example.invalid"],
+                "included": [["type": "builds", "id": "sample-build", "attributes": ["version": "42"]],
+                             ["type": "betaTesters", "id": "sample-tester", "attributes": ["firstName": "Alex", "lastName": "Morgan", "email": "alex@example.invalid"]]]])
+        }, screenshot: { _ in
+            let image = NSImage(size: NSSize(width: 390, height: 600))
+            image.lockFocus()
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 390, height: 600)).fill()
+            ("Northstar\n\nMorning walk\n\nRoute summary\n\n4.2 km · 52 minutes\n\nA quiet walk by the river." as NSString).draw(
+                in: NSRect(x: 28, y: 60, width: 340, height: 480),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.labelColor])
+            image.unlockFocus()
+            guard let data = image.tiffRepresentation else { throw URLError(.cannotDecodeContentData) }
+            return data
+        })
+    }
+}
+
 /// Process-wide safety boundary for review-submission UI tests. Test mode
 /// requires an explicit environment marker in addition to a valid scenario,
 /// so a missing or misspelled scenario fails closed instead of launching the
@@ -55,6 +93,7 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
     case builds
     case appInfo
     case ageRatings
+    case feedback
     case reviews
     case release
 
@@ -68,6 +107,7 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
         switch self {
         case .apps, .builds: return .builds
         case .appInfo, .ageRatings: return .appInfo
+        case .feedback: return .feedback
         case .reviews: return .reviews
         case .release: return .release
         }
@@ -343,6 +383,7 @@ struct AppStoreScreenshotHost: View {
         .background(ShipyardTheme.tableBackground)
         .environmentObject(toastCenter)
         .environment(\.openURL, OpenURLAction { _ in .discarded })
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isReady
             ? "screenshot.ready.\(screen.rawValue)"
             : "screenshot.preparing")
@@ -366,7 +407,8 @@ struct AppStoreScreenshotHost: View {
                 betaVM: betaVM,
                 onBack: {},
                 onManage: { _ in },
-                tab: $tab)
+                tab: $tab,
+                feedbackAPI: .sample)
         }
     }
 

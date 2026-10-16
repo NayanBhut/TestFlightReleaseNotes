@@ -3,7 +3,7 @@
 //  App Store
 //
 //  Per-app area from the app-info-light Figma frame: toolbar (Back, app
-//  name + bundle pill) with the Builds / App Info / Reviews sub-navigation.
+//  name + bundle pill) with app-level sub-navigation, including TestFlight feedback.
 //  Builds includes inline TestFlight release notes per build; the other
 //  tabs bring the App Store metadata editor, customer reviews, and App
 //  Store Versions workspace.
@@ -21,10 +21,12 @@ struct AppDetailView: View {
     var onManage: (BuildsModel) -> Void
 
     @Binding var tab: AppTab
+    var feedbackAPI: BetaFeedbackAPI = .live
     @StateObject private var releaseSection = ReleaseSectionState()
 
     enum AppTab: String, CaseIterable {
         case builds = "Builds"
+        case feedback = "TestFlight Feedback"
         case appInfo = "App Info"
         case reviews = "Reviews"
         case release = "App Store Versions"
@@ -38,6 +40,9 @@ struct AppDetailView: View {
             switch tab {
             case .builds:
                 BuildsTableView(sidebarVM: sidebarVM, detailVM: detailVM, onManage: onManage, onBack: onBack)
+            case .feedback:
+                BetaFeedbackView(appID: app.id, contextID: detailVM.ageRatingContextGeneration, api: feedbackAPI)
+                    .id("\(app.id):\(detailVM.ageRatingContextGeneration)")
             case .appInfo:
                 ShipyardAppInfoView(detailVM: detailVM, reviewsVM: reviewsVM, app: app)
             case .reviews:
@@ -52,6 +57,9 @@ struct AppDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ShipyardTheme.tableBackground)
+        .task(id: app.id) {
+            reviewsVM.preloadAppStoreVersions(app: app)
+        }
     }
 
     private var toolbar: some View {
@@ -115,28 +123,33 @@ struct AppDetailView: View {
     }
 
     private var subNavigation: some View {
-        HStack(spacing: 16) {
-            ForEach(AppTab.allCases, id: \.self) { item in
-                Button {
-                    tab = item
-                } label: {
-                    Text(item.rawValue)
-                        .font(.system(size: 13))
-                        .foregroundColor(tab == item ? ShipyardTheme.accent : ShipyardTheme.body)
-                        .padding(.vertical, 4)
-                        .overlay(
-                            ShipyardTheme.accent.frame(height: 2)
-                                .opacity(tab == item ? 1 : 0),
-                            alignment: .bottom
-                        )
-                        .contentShape(Rectangle())
+        ScrollView(.horizontal) {
+            HStack(spacing: 16) {
+                ForEach(AppTab.allCases, id: \.self) { item in
+                    Button {
+                        tab = item
+                    } label: {
+                        Text(item.rawValue)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .foregroundColor(tab == item ? ShipyardTheme.accent : ShipyardTheme.body)
+                            .padding(.vertical, 4)
+                            .overlay(
+                                ShipyardTheme.accent.frame(height: 2)
+                                    .opacity(tab == item ? 1 : 0),
+                                alignment: .bottom
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(item.rawValue)
+                    .accessibilityAddTraits(tab == item ? [.isButton, .isSelected] : .isButton)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(item.rawValue)
-                .accessibilityAddTraits(tab == item ? [.isButton, .isSelected] : .isButton)
             }
-            Spacer(minLength: 0)
+            .frame(height: 36)
         }
+        .scrollIndicators(.hidden)
         .padding(.horizontal, 24)
         .frame(height: 36)
         .background(ShipyardTheme.tableBackground)
