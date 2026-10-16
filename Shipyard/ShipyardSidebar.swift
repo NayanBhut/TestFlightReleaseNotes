@@ -342,6 +342,25 @@ struct ShipyardSidebar: View {
 
 private struct ShipyardHelpSheet: View {
     let onClose: () -> Void
+    @State private var topic: Topic = .usingShipyard
+
+    private enum Topic: String, CaseIterable {
+        case usingShipyard = "How to use Shipyard"
+        case publishing = "Publish Your First App"
+    }
+
+    private let usageSteps: [(title: String, detail: String)] = [
+        ("1. Connect or switch a team", "On the welcome screen, choose Add App Store Connect API Key. Enter a team name, Issuer ID, and Key ID, then import or paste your .p8 private key and complete validation. To add another team or switch accounts, open the team selector at the top of the sidebar."),
+        ("2. Find your app", "Choose Apps in the sidebar, then open an app to see Builds, App Info, Reviews, and App Store Versions. Use search, filters, and Load More where available to find additional records. Use the back button to return to the list."),
+        ("3. Update TestFlight release notes", "In Builds, choose Manage for a build and open Release Notes. Select a language, edit its What to Test text, and save that language. Use Save All to save all changed languages. Compliance and Groups let you manage the build's export compliance and beta-group assignments."),
+        ("4. Edit app information and screenshots", "Open App Info, select a localization, edit the available fields, and choose Save Changes. Add a localization before entering translated content. In Screenshots, use Manage to upload or remove images. Editing is available only when the version's state allows it."),
+        ("5. Prepare an App Store version", "Open App Store Versions and select a version, or choose New Version when available. Choose a processed build, complete What's New, App Review contact details, and any required sign-in information, then choose the release option. Save your changes and resolve missing requirements before choosing Submit for Review. Confirm the submission when prompted."),
+        ("6. Read and reply to customer reviews", "Open Reviews within an app. Filter or search the loaded reviews, then open a review to read it and write a response. Save Draft keeps your work locally; Submit Response sends it after confirmation. Check the reply status to see whether it is waiting to publish or has been published."),
+        ("7. Monitor processing builds", "Choose Processing Builds in the sidebar to check uploaded builds and their processing status. Configure polling and notifications in Settings. The menu-bar icon also shows processing builds and provides Check Now."),
+        ("8. Manage team resources", "Use Devices, Certificates, Identifiers, Bundle IDs, Profiles, and Users in the sidebar to browse and manage the active team's resources. Open a row for details and use the available actions. Read confirmation dialogs before disabling, revoking, or deleting a resource."),
+        ("9. Save, refresh, and resolve access issues", "Editors show a Save action when changes can be saved. Check the success or error message after saving. Use Refresh or Retry when data cannot be loaded. If an action needs broader permissions, switch to a key with the required role and app access."),
+        ("10. Personalize the app and use shortcuts", "Open Settings for the startup screen, default editing locale, teams, monitoring, notifications, and release-note snippets. Press ⌘K for the command palette, ⌘R to refresh apps, and ⌘D to toggle dark mode.")
+    ]
 
     private let steps: [(title: String, detail: String)] = [
         ("1. Membership and access", "Join the Apple Developer Program, accept current agreements, and confirm your App Store Connect role."),
@@ -368,10 +387,10 @@ private struct ShipyardHelpSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Publish Your First App")
-                        .font(.system(size: 20, weight: .semibold))
+                    Text("Shipyard Help")
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("A practical checklist from account setup to App Review")
+                    Text("Learn how to use the app and prepare your first submission")
                         .font(.system(size: 12))
                         .foregroundColor(ShipyardTheme.body)
                 }
@@ -383,14 +402,25 @@ private struct ShipyardHelpSheet: View {
 
             ShipyardTheme.rowDivider.frame(height: 1)
 
+            Picker("Help topic", selection: $topic) {
+                ForEach(Topic.allCases, id: \.self) { topic in
+                    Text(topic.rawValue).tag(topic)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Help topic")
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
             ScrollView {
                 HStack(alignment: .top, spacing: 28) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Submission checklist")
+                        Text(topic == .usingShipyard ? "How to use Shipyard" : "Submission checklist")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(ShipyardTheme.title)
 
-                        ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                        ForEach(Array((topic == .usingShipyard ? usageSteps : steps).enumerated()), id: \.offset) { _, step in
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(step.title)
                                     .font(.system(size: 12, weight: .semibold))
@@ -435,6 +465,7 @@ private struct ShipyardHelpSheet: View {
                 }
                 .padding(20)
             }
+            .id(topic)
         }
         .frame(width: 760, height: 580)
         .background(ShipyardTheme.tableBackground)

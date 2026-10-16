@@ -4,8 +4,8 @@
 //
 //  Shared palette and chrome for the Shipyard shell (sidebar + tables),
 //  taken from the *-light Figma frames with dark variants. Table type uses
-//  the system face at Figma's exact sizes — the rounded AppFont ramp has no
-//  10/11/12 steps, and the tables need Figma's metrics.
+//  the default system face at Figma's exact sizes. AppFont shares the same
+//  face for supporting screens and reusable controls.
 //
 
 import SwiftUI

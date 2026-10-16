@@ -8,44 +8,35 @@
 import SwiftUI
 import AppKit
 
-/// App-wide type ramp. Every font is anchored to a `Font.TextStyle` via
-/// `Font.custom(_:size:relativeTo:)` so it tracks the user's accessibility
-/// text-size setting; at the default size the point sizes are unchanged,
-/// so existing call sites keep their named fonts (:appBody, :caption, ...)
-/// and their current look. The rounded face is resolved from the *system*
-/// font descriptor (`.rounded` design) — never a downloadable PostScript
-/// name — so it works on every stock macOS install without bundling fonts.
+/// Shared system-font ramp matching the Shipyard screens: 18pt section
+/// headings, 13pt body text, 12pt secondary copy, and 11pt captions.
+/// Fonts stay anchored to a text style for accessibility text-size scaling.
 enum AppFont {
     static var appTitle: Font { dynamic(size: 28, weight: .bold, relativeTo: .title) }
     static var appLargeTitle: Font { dynamic(size: 24, weight: .bold, relativeTo: .title2) }
-    static var sectionHeader: Font { dynamic(size: 20, weight: .semibold, relativeTo: .title3) }
-    static var subheader: Font { dynamic(size: 17, weight: .semibold, relativeTo: .headline) }
-    static var appBody: Font { dynamic(size: 16, weight: .regular, relativeTo: .body) }
-    static var bodyMedium: Font { dynamic(size: 16, weight: .medium, relativeTo: .body) }
-    static var appCaption: Font { dynamic(size: 13, weight: .regular, relativeTo: .caption) }
-    static var captionMedium: Font { dynamic(size: 13, weight: .medium, relativeTo: .caption) }
+    static var sectionHeader: Font { dynamic(size: 18, weight: .semibold, relativeTo: .title3) }
+    static var subheader: Font { dynamic(size: 13, weight: .semibold, relativeTo: .headline) }
+    static var appBody: Font { dynamic(size: 13, weight: .regular, relativeTo: .body) }
+    static var bodyMedium: Font { dynamic(size: 13, weight: .medium, relativeTo: .body) }
+    static var appCaption: Font { dynamic(size: 12, weight: .regular, relativeTo: .caption) }
+    static var captionMedium: Font { dynamic(size: 12, weight: .medium, relativeTo: .caption) }
     static var appCaption2: Font { dynamic(size: 11, weight: .regular, relativeTo: .caption2) }
-    static var label: Font { dynamic(size: 14, weight: .medium, relativeTo: .subheadline) }
-    static var button: Font { dynamic(size: 14, weight: .semibold, relativeTo: .subheadline) }
+    static var label: Font { dynamic(size: 13, weight: .medium, relativeTo: .subheadline) }
+    static var button: Font { dynamic(size: 12, weight: .semibold, relativeTo: .subheadline) }
     static var monospaced: Font { .system(.body, design: .monospaced) }
 
-    /// Resolves the system rounded face for the given weight and anchors it
-    /// to a text style so it scales with Dynamic Type. The descriptor-based
-    /// route uses the system's built-in rounded design (available on all
-    /// supported macOS) rather than a downloadable PostScript name that may
-    /// be absent on stock installs. The resolved font's PostScript name is
-    /// fed to `Font.custom(_:size:relativeTo:)` so accessibility text-size
-    /// scaling stays in effect.
+    /// Resolves the default system face for the given weight, then anchors
+    /// its PostScript name to a text style to retain Dynamic Type scaling.
     private static func dynamic(size: CGFloat, weight: Font.Weight, relativeTo style: Font.TextStyle) -> Font {
         let descriptor = NSFontDescriptor
             .preferredFontDescriptor(forTextStyle: nsTextStyle(style))
-            .withDesign(.rounded)?
+            .withDesign(.default)?
             .addingAttributes([
                 .traits: [NSFontDescriptor.TraitKey.weight: nsFontWeight(weight)]
             ])
         guard let descriptor,
               let resolved = NSFont(descriptor: descriptor, size: size) else {
-            return .system(size: size, weight: weight, design: .rounded)
+            return .system(size: size, weight: weight)
         }
         return .custom(resolved.fontName, size: size, relativeTo: style)
     }

@@ -69,7 +69,7 @@ struct LaunchAssistantSheet: View {
     private var header: some View {
         HStack {
             Text(step.title)
-                .font(.subheader)
+                .font(.sectionHeader)
                 .foregroundColor(LaunchTheme.title)
 
             Spacer()
@@ -387,7 +387,7 @@ struct LaunchField: View {
                 .foregroundColor(LaunchTheme.title)
 
             TextField(prompt, text: $text)
-                .font(isMonospaced ? .system(size: 13, design: .monospaced) : .appCaption)
+                .font(isMonospaced ? .system(size: 13, design: .monospaced) : .appBody)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(LaunchTheme.field)

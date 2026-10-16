@@ -226,7 +226,7 @@ struct DevicesView: View {
                     .font(.appBody)
                     .foregroundColor(.primary)
                 Text(totalText)
-                    .font(.appCaption2)
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -243,7 +243,7 @@ struct DevicesView: View {
                     .accessibilityHidden(true)
                 TextField("Search Devices", text: viewModel.searchBinding(for: .devices))
                     .textFieldStyle(.plain)
-                    .font(.appCaption)
+                    .font(.appCaption2)
             }
             .padding(.horizontal, 8)
             .frame(width: 160, height: 24)
@@ -264,7 +264,7 @@ struct DevicesView: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Platform: \(platformFilter.map(devicePlatformDisplayName) ?? "All")")
-                        .font(.appCaption)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
@@ -430,7 +430,7 @@ struct DevicesView: View {
             Text("Added Date")
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.appCaption)
+        .font(.appCaption2)
         .foregroundColor(.secondary)
         .padding(.horizontal, 16)
         .frame(height: 28)
@@ -441,7 +441,7 @@ struct DevicesView: View {
         let isDisabled = device.status == "DISABLED"
         return HStack(spacing: 12) {
             Text(device.name ?? "Unknown device")
-                .font(.appCaption)
+                .font(.appBody)
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)

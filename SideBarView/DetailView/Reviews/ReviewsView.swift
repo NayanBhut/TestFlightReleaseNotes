@@ -95,6 +95,7 @@ struct ReviewsView: View {
                                subtitle: "Select an app from the sidebar to view its reviews")
             }
         }
+        .font(.system(size: 12))
     }
 
     /// Review opened from the cross-app inbox: jump the tab onto it.
@@ -110,11 +111,10 @@ struct ReviewsView: View {
     private func header(app: AppsData) -> some View {
         HStack {
             Text(selectedReviewId == nil ? "Reviews" : "Review Detail")
-                .font(.sectionHeader)
-                .fontWeight(.semibold)
+                .font(.system(size: 18, weight: .semibold))
             Spacer()
             Text(app.name ?? "")
-                .font(.appCaption)
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             if reviewsViewModel.isRefreshingReviews {
@@ -124,7 +124,7 @@ struct ReviewsView: View {
             }
             Button(action: { reviewsViewModel.retryAll() }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.appCaption)
+                    .font(.system(size: 12))
             }
             .buttonStyle(.bordered)
         }
@@ -140,7 +140,7 @@ struct ReviewsView: View {
         InfoCard(title: "Customer Reviews", systemImage: "star.bubble") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("\(app.name ?? "App") · written customer reviews")
-                    .font(.appBody)
+                    .font(.system(size: 13))
                     .fontWeight(.semibold)
                 filterChips
                 provenanceBanner
@@ -191,7 +191,7 @@ struct ReviewsView: View {
                 }
             } label: {
                 Text(reviewsViewModel.ratingFilter == 0 ? "Rating: All" : "Rating: \(reviewsViewModel.ratingFilter) ★")
-                    .font(.appCaption)
+                    .font(.system(size: 11))
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.bordered)
@@ -204,7 +204,7 @@ struct ReviewsView: View {
                 }
             } label: {
                 Text("Territory: \(reviewsViewModel.territoryFilter ?? "All")")
-                    .font(.appCaption)
+                    .font(.system(size: 11))
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.bordered)
@@ -216,7 +216,7 @@ struct ReviewsView: View {
                 }
             } label: {
                 Text(reviewsViewModel.dateFilter.displayName)
-                    .font(.appCaption)
+                    .font(.system(size: 11))
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.bordered)
@@ -228,7 +228,7 @@ struct ReviewsView: View {
                 }
             } label: {
                 Text(reviewsViewModel.reviewSort.displayName)
-                    .font(.appCaption)
+                    .font(.system(size: 11))
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.bordered)
@@ -240,7 +240,7 @@ struct ReviewsView: View {
                 }
             } label: {
                 Text(reviewsViewModel.replyFilter.displayName)
-                    .font(.appCaption)
+                    .font(.system(size: 11))
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.bordered)
@@ -248,12 +248,12 @@ struct ReviewsView: View {
 
             TextField("Search title / body / author", text: $reviewsViewModel.searchText)
                 .textFieldStyle(.roundedBorder)
-                .font(.appCaption)
+                .font(.system(size: 11))
                 .frame(maxWidth: 200)
 
             if hasActiveFilters {
                 Button("Clear") { clearFilters() }
-                    .font(.appCaption)
+                    .font(.system(size: 11))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
@@ -272,13 +272,13 @@ struct ReviewsView: View {
     private var provenanceBanner: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Statistics and filters below use the written reviews currently loaded from App Store Connect.")
-                .font(.appCaption2)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
             Text("Search, date, and reply filters apply to loaded reviews. Use Load more when available to include older reviews.")
-                .font(.appCaption2)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
             Text("Replies are shown as Unanswered, Waiting to publish, or Reply published.")
-                .font(.appCaption2)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
         .padding(10)
@@ -299,13 +299,13 @@ struct ReviewsView: View {
                         .font(.system(size: 36, weight: .semibold))
                     StarRating(rating: Int(round(average)))
                     Text("\(summary.total) loaded written reviews")
-                        .font(.appCaption)
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 } else {
                     Text("—")
                         .font(.system(size: 36, weight: .semibold))
                     Text("\(summary.total) loaded written reviews")
-                        .font(.appCaption)
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
             }
@@ -316,7 +316,7 @@ struct ReviewsView: View {
                     let share = summary.total > 0 ? Double(count) / Double(summary.total) : 0
                     HStack(spacing: 12) {
                         Text("\(stars) ★")
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .frame(width: 36, alignment: .leading)
                         GeometryReader { proxy in
@@ -331,7 +331,7 @@ struct ReviewsView: View {
                         }
                         .frame(height: 8)
                         Text("\(count)")
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .frame(width: 40, alignment: .leading)
                     }
@@ -350,13 +350,13 @@ struct ReviewsView: View {
         VStack(alignment: .leading, spacing: 0) {
             if reviewsViewModel.isRefreshingReviews {
                 Text("Refreshing reviews… cached rows stay visible.")
-                    .font(.appCaption2)
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .padding(.bottom, 8)
             }
             if reviewsViewModel.isShowingStaleReviews {
                 Text("Cached snapshot · stale · editing disabled until refresh succeeds.")
-                    .font(.appCaption2)
+                    .font(.system(size: 11))
                     .foregroundColor(.orange)
                     .padding(.bottom, 8)
             }
@@ -368,19 +368,19 @@ struct ReviewsView: View {
                 } label: {
                     HStack(spacing: 12) {
                         Text(review.title?.isEmpty == false ? review.title! : String((review.body ?? "").prefix(60)))
-                            .font(.appBody)
+                            .font(.system(size: 13))
                             .foregroundColor(.primary)
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(reviewStarsText(review.rating))
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(review.createdDate.map(reviewDisplayDate) ?? "—")
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(responseCellText(review))
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .foregroundColor(.blue)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -411,7 +411,7 @@ struct ReviewsView: View {
         HStack(spacing: 12) {
             ForEach(columns, id: \.self) { column in
                 Text(column)
-                    .font(.appCaption2)
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -424,7 +424,7 @@ struct ReviewsView: View {
     private func tableFooter(_ app: AppsData) -> some View {
         HStack(spacing: 12) {
             Text(syncStatusLine(app))
-                .font(.appCaption2)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
             Spacer()
             if let cursor = reviewsViewModel.reviewsNextCursor {
@@ -490,11 +490,11 @@ struct ReviewsView: View {
                     .foregroundColor(.blue)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Loading reviews…")
-                        .font(.appBody)
+                        .font(.system(size: 13))
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
                     Text("Review controls will be available as soon as the first page finishes loading.")
-                        .font(.appCaption)
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
             }
@@ -533,11 +533,11 @@ struct ReviewsView: View {
                     .foregroundColor(.blue)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No reviews yet")
-                        .font(.appBody)
+                        .font(.system(size: 13))
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
                     Text("Customer reviews will appear after customers post them. Reviews cannot be created by Shipyard.")
-                        .font(.appCaption)
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
             }
@@ -545,10 +545,10 @@ struct ReviewsView: View {
             .background(Color.blue.opacity(0.06))
             .cornerRadius(8)
             Text("Get started")
-                .font(.appBody)
+                .font(.system(size: 13))
                 .fontWeight(.medium)
             Text("Open App Store Listing opens the public listing in your browser. Shipyard cannot create customer reviews.")
-                .font(.appCaption)
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
             HStack {
                 Spacer()
@@ -578,16 +578,16 @@ struct ReviewsView: View {
                     .foregroundColor(.red)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Unable to refresh reviews")
-                        .font(.appBody)
+                        .font(.system(size: 13))
                         .fontWeight(.medium)
                         .foregroundColor(.red)
                     if reviewsViewModel.staleReviewsCache != nil {
                         Text("The latest refresh failed. Saved review data is shown below, and editing stays unavailable until a refresh succeeds.")
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     } else {
                         Text(message)
-                            .font(.appCaption)
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -600,7 +600,7 @@ struct ReviewsView: View {
             }
             HStack {
                 Text(staleFooterText)
-                    .font(.appCaption2)
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
                 Spacer()
                 Button("Show Sync Details") { showSyncDetails = true }
@@ -628,11 +628,11 @@ struct ReviewsView: View {
                     .foregroundColor(.blue)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No matching reviews")
-                        .font(.appBody)
+                        .font(.system(size: 13))
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
                     Text("No reviews match the current search and filters. Clear them to see all loaded reviews.")
-                        .font(.appCaption)
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
             }
@@ -687,7 +687,7 @@ struct ReviewsView: View {
                 LoadingStateView(text: "Loading...")
             case .empty:
                 Text("No review submissions")
-                    .font(.appCaption)
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
             case .error(let message):
                 sectionError(message: message) {
@@ -701,20 +701,20 @@ struct ReviewsView: View {
                             StateChip(text: submission.state ?? "UNKNOWN")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(submission.platform ?? "")
-                                    .font(.appBody)
+                                    .font(.system(size: 13))
                                     .fontWeight(.medium)
                                 if let version = submission.appStoreVersionForReview?.versionString, !version.isEmpty {
                                     Text("Version \(version)")
-                                        .font(.appCaption)
+                                        .font(.system(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                                 if let submitter = submission.submittedByActor {
                                     Text("Submitted by \(submitter.displayName)")
-                                        .font(.appCaption)
+                                        .font(.system(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                                 Text(submissionDateText(submission))
-                                    .font(.appCaption)
+                                    .font(.system(size: 12))
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
@@ -783,7 +783,7 @@ struct ReviewsView: View {
         let hasAttachedBuild = submittableVersion?.build != nil
         HStack {
             Text("Send the app for App Store review")
-                .font(.appCaption)
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
             Spacer()
             if reviewsViewModel.submittingReview {
@@ -847,7 +847,7 @@ struct ReviewsView: View {
     private func sectionError(message: String, retry: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message)
-                .font(.appCaption)
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
             Button("Retry", action: retry)
                 .buttonStyle(.bordered)
@@ -886,8 +886,7 @@ struct NewVersionView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("New App Store Version")
-                    .font(.sectionHeader)
-                    .fontWeight(.semibold)
+                    .font(.system(size: 18, weight: .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .buttonStyle(.bordered)
@@ -916,7 +915,7 @@ struct NewVersionView: View {
             .formStyle(.grouped)
             if let error = reviewsViewModel.createVersionError {
                 Text(error)
-                    .font(.appCaption)
+                    .font(.system(size: 12))
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -947,6 +946,7 @@ struct NewVersionView: View {
                 .disabled(reviewsViewModel.creatingVersion || versionString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        .font(.system(size: 12))
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -962,7 +962,7 @@ struct StarRating: View {
         HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { star in
                 Image(systemName: star <= rating ? "star.fill" : "star")
-                    .font(.appCaption2)
+                    .font(.system(size: 11))
                     .foregroundColor(star <= rating ? .yellow : .secondary)
             }
         }
@@ -984,7 +984,7 @@ struct StateChip: View {
 
     var body: some View {
         Text(text)
-            .font(.appCaption2)
+            .font(.system(size: 11))
             .fontWeight(.medium)
             .foregroundColor(color)
             .padding(.horizontal, 6)
@@ -1008,7 +1008,7 @@ struct InfoCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: systemImage)
-                .font(.subheader)
+                .font(.system(size: 13, weight: .semibold))
             content
         }
         .padding(14)
