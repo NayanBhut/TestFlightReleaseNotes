@@ -6,6 +6,101 @@ final class ReviewSubmissionUITests: XCTestCase {
     private let launchTimeout: TimeInterval = 8
     private var app: XCUIApplication!
 
+    func testPricingAndAvailabilityWithReviewedSamplePriceChange() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "pricing", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.pricing").waitForExistence(timeout: launchTimeout))
+        let schedule = button("pricing.schedule")
+        XCTAssertTrue(schedule.waitForExistence(timeout: interactionTimeout))
+        let enabled = NSPredicate(format: "enabled == true")
+        expectation(for: enabled, evaluatedWith: schedule)
+        waitForExpectations(timeout: interactionTimeout)
+        let prices = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        prices.name = "pricing-manual-prices"; prices.lifetime = .keepAlways; add(prices)
+
+        app.radioButtons["Availability"].click()
+        XCTAssertTrue(element("pricing.availability-table").waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(app.staticTexts["Missing Rating"].waitForExistence(timeout: interactionTimeout))
+        let availability = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        availability.name = "pricing-territory-availability"; availability.lifetime = .keepAlways; add(availability)
+
+        app.radioButtons["Prices"].click()
+        schedule.click()
+        let review = button("pricing.review-change")
+        XCTAssertTrue(review.waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(review.isEnabled, "Opening the editor must never schedule a price")
+        let point = app.popUpButtons["pricing.new-price"]
+        XCTAssertTrue(point.waitForExistence(timeout: interactionTimeout))
+        point.click()
+        let amount = app.menuItems["USD 2.99"]
+        XCTAssertTrue(amount.waitForExistence(timeout: interactionTimeout))
+        amount.click()
+        XCTAssertTrue(review.isEnabled)
+        let editor = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        editor.name = "pricing-schedule-editor"; editor.lifetime = .keepAlways; add(editor)
+        review.click()
+        let confirm = button("pricing.confirm-change")
+        XCTAssertTrue(confirm.waitForExistence(timeout: interactionTimeout))
+        confirm.click()
+        XCTAssertTrue(review.waitForNonExistence(timeout: interactionTimeout))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Price change confirmed")).firstMatch
+            .waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(schedule.isEnabled, "A future base-price schedule must be managed in the portal")
+    }
+
+    func testTestFlightFeedbackScreenshotsCrashLogsAndSearch() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "feedback", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.feedback").waitForExistence(timeout: launchTimeout))
+        let screenshotsSegment = app.radioButtons["Screenshots"]
+        let crashesSegment = app.radioButtons["Crashes"]
+        XCTAssertTrue(screenshotsSegment.waitForExistence(timeout: interactionTimeout))
+        XCTAssertEqual(screenshotsSegment.frame.midY, crashesSegment.frame.midY, accuracy: 1)
+        XCTAssertLessThan(screenshotsSegment.frame.height, 30, "Segment labels must stay on one line")
+        XCTAssertEqual(screenshotsSegment.frame.midY, app.textFields["feedback.search"].frame.midY, accuracy: 3)
+        XCTAssertEqual(screenshotsSegment.frame.midY, element("feedback.filters").frame.midY, accuracy: 3)
+        XCTAssertLessThan(app.buttons["TestFlight Feedback"].firstMatch.frame.height, 30,
+                          "The app navigation tab must stay on one line")
+        let row = element("feedback.row.sample-screenshot")
+        XCTAssertTrue(row.waitForExistence(timeout: interactionTimeout))
+        row.click()
+        XCTAssertTrue(button("feedback.screenshot").waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(element("feedback.note").exists)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "testflight-screenshot-feedback"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        button("feedback.screenshot").click()
+        let done = app.windows.buttons["Done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: interactionTimeout))
+        done.click()
+
+        let crashes = app.descendants(matching: .any).matching(identifier: "Crashes").firstMatch
+        XCTAssertTrue(crashes.waitForExistence(timeout: interactionTimeout))
+        crashes.click()
+        let crash = element("feedback.row.sample-crash")
+        XCTAssertTrue(crash.waitForExistence(timeout: interactionTimeout))
+        crash.click()
+        XCTAssertTrue(element("feedback.crash-log").waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(button("feedback.copy-log").isEnabled)
+        let log = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        log.name = "testflight-crash-feedback"
+        log.lifetime = .keepAlways
+        add(log)
+
+        let search = app.textFields["feedback.search"]
+        search.click()
+        search.typeText("does-not-match")
+        XCTAssertTrue(app.staticTexts["No matches"].waitForExistence(timeout: interactionTimeout))
+        app.windows.buttons["Clear Filters"].firstMatch.click()
+        XCTAssertTrue(crash.waitForExistence(timeout: interactionTimeout))
+    }
+
     override func tearDown() {
         app?.terminate()
         app = nil

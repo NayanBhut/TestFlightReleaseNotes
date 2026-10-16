@@ -3,8 +3,10 @@ import Foundation
 enum AppStoreConnectPermission {
     case apps
     case testFlight
+    case testFlightFeedback
     case appInfo
     case ageRatings
+    case pricing
     case reviews
     case resources
     case users
@@ -15,10 +17,14 @@ enum AppStoreConnectPermission {
             return "This API key can't access the team's apps. Check that the key is active and has access to at least one app, or ask an App Store Connect Admin to update its app scope."
         case .testFlight:
             return "This API key can't access TestFlight builds. Use a key with TestFlight access (Developer, App Manager, or Admin) and make sure the app is included in its scope."
+        case .testFlightFeedback:
+            return "This API key can’t access TestFlight feedback. Use a Developer, App Manager, or Admin key with access to this app, or ask an Admin for broader permissions."
         case .appInfo:
             return "This API key can't access App Info for this app. Check the key's app scope; saving App Info requires the App Manager or Admin role."
         case .ageRatings:
             return "This API key can't update age ratings for this app. Check its app scope and use an Account Holder, Admin, App Manager, or Marketing key, or ask an Admin for broader permissions."
+        case .pricing:
+            return "This API key can’t access pricing or availability for this app. Check its app scope; price changes require Account Holder, Admin, or App Manager access. Ask an Admin for broader permissions if needed."
         case .reviews:
             return "This API key can't access customer reviews for this app. Use a key with Customer Support, App Manager, or Admin access and make sure the app is included in its scope."
         case .resources:

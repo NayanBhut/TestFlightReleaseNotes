@@ -3,6 +3,101 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// Every request stays in memory, including simulated price writes.
+@MainActor
+final class PricingSampleServer {
+    var requests: [APIMethod] = []
+    var postedDay: String?
+    var postedPoint: String?
+    var api: PricingAPI { PricingAPI { method, _ in try self.respond(method) } }
+
+    func respond(_ method: APIMethod) throws -> Data {
+        requests.append(method)
+        if case .post(.appPriceSchedules, let body, _, _) = method {
+            let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            let prices = json?["included"] as? [[String: Any]]
+            let new = prices?.first { ($0["id"] as? String) == "${new-price}" }
+            postedDay = (new?["attributes"] as? [String: Any])?["startDate"] as? String
+            let relationships = new?["relationships"] as? [String: Any]
+            postedPoint = ((relationships?["appPricePoint"] as? [String: Any])?["data"] as? [String: String])?["id"]
+        }
+        func resource(_ type: String, _ id: String, _ attrs: [String: Any] = [:], _ refs: [String: [String: String]] = [:]) -> [String: Any] {
+            ["type": type, "id": id, "attributes": attrs, "relationships": refs.mapValues { ["data": $0] }]
+        }
+        let territories = [resource("territories", "USA", ["currency": "USD"]),
+                           resource("territories", "CAN", ["currency": "CAD"]),
+                           resource("territories", "GBR", ["currency": "GBP"])]
+        let points = [("usd099", "0.99", "0.69", "USA"), ("usd199", "1.99", "1.39", "USA"),
+                      ("usd299", "2.99", "2.09", "USA"), ("cad299", "2.99", "2.09", "CAN"),
+                      ("gbp149", "1.49", "1.04", "GBR")].map {
+            resource("appPricePoints", $0.0, ["customerPrice": $0.1, "proceeds": $0.2], ["territory": ["type": "territories", "id": $0.3]])
+        }
+        var doc: [String: Any]
+        if method.apiPath.hasSuffix("/appPriceSchedule") || method.httpMethod.0 == "POST" {
+            doc = ["data": resource("appPriceSchedules", "sample-schedule", [:], ["baseTerritory": ["type": "territories", "id": "USA"]]), "included": territories]
+        } else if method.apiPath.hasSuffix("/appAvailabilityV2") {
+            doc = ["data": resource("appAvailabilities", "sample-availability", ["availableInNewTerritories": false])]
+        } else if method.apiPath.hasSuffix("/manualPrices") {
+            var rows = [resource("appPrices", "base-price", ["manual": true, "startDate": NSNull(), "endDate": postedDay as Any? ?? NSNull()],
+                ["territory": ["type": "territories", "id": "USA"], "appPricePoint": ["type": "appPricePoints", "id": "usd199"]]),
+                resource("appPrices", "canada-override", ["manual": true],
+                ["territory": ["type": "territories", "id": "CAN"], "appPricePoint": ["type": "appPricePoints", "id": "cad299"]])]
+            if let postedDay, let postedPoint {
+                rows.append(resource("appPrices", "scheduled-price", ["manual": true, "startDate": postedDay],
+                    ["territory": ["type": "territories", "id": "USA"], "appPricePoint": ["type": "appPricePoints", "id": postedPoint]]))
+            }
+            doc = ["data": rows, "included": territories + points]
+        } else if method.apiPath.hasSuffix("/automaticPrices") {
+            doc = ["data": [resource("appPrices", "uk-automatic", ["manual": false],
+                ["territory": ["type": "territories", "id": "GBR"], "appPricePoint": ["type": "appPricePoints", "id": "gbp149"]])], "included": territories + points]
+        } else if method.apiPath.hasSuffix("/appPricePoints") {
+            doc = ["data": points.filter { ($0["id"] as? String)?.hasPrefix("usd") == true }, "included": territories]
+        } else if method.apiPath.hasSuffix("/territoryAvailabilities") {
+            doc = ["data": [resource("territoryAvailabilities", "usa-availability", ["available": true, "preOrderEnabled": false, "contentStatuses": ["AVAILABLE"]], ["territory": ["type": "territories", "id": "USA"]]),
+                resource("territoryAvailabilities", "japan-availability", ["available": false, "preOrderEnabled": false, "contentStatuses": ["MISSING_RATING"]], ["territory": ["type": "territories", "id": "JPN"]])], "included": territories]
+        } else { throw URLError(.badURL) }
+        return try JSONSerialization.data(withJSONObject: doc)
+    }
+}
+
+@MainActor
+extension BetaFeedbackAPI {
+    static var sample: Self {
+        Self(perform: { method in
+            if method.apiPath.hasSuffix("/crashLog") {
+                return Data(#"{"data":{"type":"betaCrashLogs","id":"sample-log","attributes":{"logText":"Incident Identifier: SAMPLE-123\nProcess: Northstar\nException Type: EXC_BAD_ACCESS\nThread 0 Crashed:\n0 Northstar  JourneyView.update() + 28"}}}"#.utf8)
+            }
+            let kind: BetaFeedbackKind = method.apiPath.hasSuffix(BetaFeedbackKind.crashes.rawValue) ? .crashes : .screenshots
+            let row: [String: Any] = [
+                "type": kind.rawValue, "id": kind == .crashes ? "sample-crash" : "sample-screenshot",
+                "attributes": [
+                    "createdDate": "2026-10-15T10:30:00Z",
+                    "comment": kind == .crashes ? "The app closed when I opened my saved journey." : "The route summary is clipped on the smaller display. I attached a screenshot.",
+                    "deviceModel": "iPhone 16", "osVersion": "iOS 26.0", "appPlatform": "IOS",
+                    "locale": "en-US", "batteryPercentage": 82,
+                    "screenshots": kind == .screenshots ? [["url": "https://example.invalid/tester-screenshot.png", "width": 390, "height": 600, "expirationDate": "2099-01-01T00:00:00Z"]] : []
+                ],
+                "relationships": ["build": ["data": ["type": "builds", "id": "sample-build"]],
+                                  "tester": ["data": ["type": "betaTesters", "id": "sample-tester"]]]
+            ]
+            return try JSONSerialization.data(withJSONObject: ["data": [row], "links": ["self": "https://example.invalid"],
+                "included": [["type": "builds", "id": "sample-build", "attributes": ["version": "42"]],
+                             ["type": "betaTesters", "id": "sample-tester", "attributes": ["firstName": "Alex", "lastName": "Morgan", "email": "alex@example.invalid"]]]])
+        }, screenshot: { _ in
+            let image = NSImage(size: NSSize(width: 390, height: 600))
+            image.lockFocus()
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 390, height: 600)).fill()
+            ("Northstar\n\nMorning walk\n\nRoute summary\n\n4.2 km · 52 minutes\n\nA quiet walk by the river." as NSString).draw(
+                in: NSRect(x: 28, y: 60, width: 340, height: 480),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.labelColor])
+            image.unlockFocus()
+            guard let data = image.tiffRepresentation else { throw URLError(.cannotDecodeContentData) }
+            return data
+        })
+    }
+}
+
 /// Process-wide safety boundary for review-submission UI tests. Test mode
 /// requires an explicit environment marker in addition to a valid scenario,
 /// so a missing or misspelled scenario fails closed instead of launching the
@@ -55,6 +150,8 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
     case builds
     case appInfo
     case ageRatings
+    case feedback
+    case pricing
     case reviews
     case release
 
@@ -68,6 +165,8 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
         switch self {
         case .apps, .builds: return .builds
         case .appInfo, .ageRatings: return .appInfo
+        case .feedback: return .feedback
+        case .pricing: return .pricing
         case .reviews: return .reviews
         case .release: return .release
         }
@@ -343,6 +442,7 @@ struct AppStoreScreenshotHost: View {
         .background(ShipyardTheme.tableBackground)
         .environmentObject(toastCenter)
         .environment(\.openURL, OpenURLAction { _ in .discarded })
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isReady
             ? "screenshot.ready.\(screen.rawValue)"
             : "screenshot.preparing")
@@ -366,7 +466,9 @@ struct AppStoreScreenshotHost: View {
                 betaVM: betaVM,
                 onBack: {},
                 onManage: { _ in },
-                tab: $tab)
+                tab: $tab,
+                feedbackAPI: .sample,
+                pricingAPI: PricingSampleServer().api)
         }
     }
 
