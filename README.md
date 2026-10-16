@@ -69,6 +69,7 @@ To manage another team/vendor, repeat steps 3–7 with a new Team Name — the s
 |---|---|---|---|
 | Apps / versions / builds | ✅ list, search, filter, sort, paginate | — (expire build only) | 50 apps / 10 versions / 10 builds per page, Load More |
 | Release notes (`whatsNew`, 50 locales) | ✅ per-build, completeness matrix | ✅ create / update / delete, Save All, snippets | Exact Apple locale codes (`de-DE`, `nl-NL`); default `en-US` |
+| Pricing & availability | ✅ manual/automatic prices, proceeds, date ranges, territory status | ✅ reviewed future base-price change | Preserves other manual prices; existing future schedules and general availability edits use App Store Connect |
 | TestFlight feedback | ✅ tester notes, screenshots, device details, crash logs | — | 50 per page; local search/build/platform filters; Developer, App Manager, or Admin with app access |
 | Beta groups & testers | ✅ groups, testers, review status | ✅ invite/add/remove, assign build, auto-notify, submit review, CRUD groups | External review submit supported; status check included |
 | App Info & version localizations | ✅ general, age rating, categories, export compliance | ✅ inline edit name/subtitle/keywords/description/URLs | Apple length caps validated client-side; needs App Manager+ |

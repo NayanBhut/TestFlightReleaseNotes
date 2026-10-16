@@ -18,6 +18,7 @@ enum AppConfigs {
     /// Batch C: page size for customer reviews and review submissions.
     static let reviewLimit: Int = 50
     static let feedbackLimit: Int = 50
+    static let pricingLimit: Int = 50
     /// Reuse the active app's prefetched App Store versions across tabs.
     /// Revalidate on the next entry after this interval; writes bypass it.
     static let appStoreVersionsCacheLifetime: TimeInterval = 120

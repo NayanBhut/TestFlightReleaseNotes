@@ -99,6 +99,10 @@
 		8B88C8EC87D0405D863B8772 /* BetaFeedbackViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B380A290546A48A2BB45AE11 /* BetaFeedbackViewModel.swift */; };
 		F09E2F6C53B04E6AB35460EB /* BetaFeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9854A1339394B99814D6BB4 /* BetaFeedbackView.swift */; };
 		41C496BD1CEA48FBBD9BF93E /* BetaFeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C4CDF16A95244E48799F48B /* BetaFeedbackTests.swift */; };
+		5A9E7F68B55849E0BF3037AF /* PricingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 492BECBCE3D2450CA94FA5F6 /* PricingModels.swift */; };
+		C51587DF5A1248EBAD2E1D6C /* PricingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF7C03C7FEBA49998D8D902F /* PricingViewModel.swift */; };
+		4AAB8BF1253B4BD180F1A0AC /* PricingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C984D43F87475987071FEC /* PricingView.swift */; };
+		4CA4DCA0E98447E986CD5A3C /* PricingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6005407CD5147858657C6B2 /* PricingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -215,6 +219,10 @@
 		B380A290546A48A2BB45AE11 /* BetaFeedbackViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackViewModel.swift; sourceTree = "<group>"; };
 		F9854A1339394B99814D6BB4 /* BetaFeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackView.swift; sourceTree = "<group>"; };
 		9C4CDF16A95244E48799F48B /* BetaFeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaFeedbackTests.swift; sourceTree = "<group>"; };
+		492BECBCE3D2450CA94FA5F6 /* PricingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingModels.swift; sourceTree = "<group>"; };
+		EF7C03C7FEBA49998D8D902F /* PricingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingViewModel.swift; sourceTree = "<group>"; };
+		26C984D43F87475987071FEC /* PricingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingView.swift; sourceTree = "<group>"; };
+		E6005407CD5147858657C6B2 /* PricingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -336,6 +344,7 @@
 				C47A003DC47A003D001A9E0D /* ReleaseNotesView.swift */,
 				C47A003EC47A003E001A9E0E /* ShipyardAppInfoView.swift */,
 				F9854A1339394B99814D6BB4 /* BetaFeedbackView.swift */,
+				26C984D43F87475987071FEC /* PricingView.swift */,
 				DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */,
 				C47A003FC47A003F001A9E0F /* AppDetailView.swift */,
 				C47A0050C47A0050001A9E50 /* InviteTesterSheet.swift */,
@@ -457,6 +466,7 @@
 			isa = PBXGroup;
 			children = (
 				CDC9F4942BE5F96700AEF643 /* DetailViewModel.swift */,
+				EF7C03C7FEBA49998D8D902F /* PricingViewModel.swift */,
 				B47A0007B47A0007001A9E07 /* Beta */,
 				B47A001EB47A001E001A9E1E /* AppInfo */,
 				B47A001FB47A001F001A9E1F /* Reviews */,
@@ -469,6 +479,7 @@
 			children = (
 				8D2F23302DD06C4F00B1AB0C /* APIModels.swift */,
 				5E92A8BA04174C6EBC468548 /* BetaFeedbackModels.swift */,
+				492BECBCE3D2450CA94FA5F6 /* PricingModels.swift */,
 				130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */,
 				8DBB60842DD3864F00111A9E /* APIManager.swift */,
 				B47A0002B47A0002001A9E02 /* BetaModels.swift */,
@@ -495,6 +506,7 @@
 				609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */,
 				1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */,
 				9C4CDF16A95244E48799F48B /* BetaFeedbackTests.swift */,
+				E6005407CD5147858657C6B2 /* PricingTests.swift */,
 				872D0E1656CED3F05CC37A21 /* ValidationTests.swift */,
 				A1623F45D99F4A56903BB5B5 /* BuildStatsPaletteTests.swift */,
 				D75BD4271AAE41208D659E2F /* AppThemeAppearanceTests.swift */,
@@ -664,6 +676,7 @@
 				20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */,
 				4CBB0833AC0F41758CDA28C0 /* AgeRatingTests.swift in Sources */,
 				41C496BD1CEA48FBBD9BF93E /* BetaFeedbackTests.swift in Sources */,
+				4CA4DCA0E98447E986CD5A3C /* PricingTests.swift in Sources */,
 				F6A269D26A45DE35489CF8E5 /* ValidationTests.swift in Sources */,
 				E7A9D043FD0A43F299C6245F /* BuildStatsPaletteTests.swift in Sources */,
 				346737DF37214E6896D7B0EA /* AppThemeAppearanceTests.swift in Sources */,
@@ -685,9 +698,11 @@
 				2DC2C56A2F3F4DE381A19D85 /* AppIconImageCache.swift in Sources */,
 				CD51EBA82C5FB91F004DBAC1 /* AppConfigs.swift in Sources */,
 				CDC9F4952BE5F96700AEF643 /* DetailViewModel.swift in Sources */,
+				C51587DF5A1248EBAD2E1D6C /* PricingViewModel.swift in Sources */,
 				CD9DD4C42BE3ECE000820E2F /* ECKeyData.swift in Sources */,
 				8D2F23312DD06C5600B1AB0C /* APIModels.swift in Sources */,
 				2FE3BC950E9F43A4A35C00CE /* BetaFeedbackModels.swift in Sources */,
+				5A9E7F68B55849E0BF3037AF /* PricingModels.swift in Sources */,
 				8315B5AFC3594CFFBA1291C5 /* AgeRatingModels.swift in Sources */,
 				CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */,
 				8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */,
@@ -730,6 +745,7 @@
 				C47A004DC47A004D001A9E0D /* ReleaseNotesView.swift in Sources */,
 				C47A004EC47A004E001A9E0E /* ShipyardAppInfoView.swift in Sources */,
 				F09E2F6C53B04E6AB35460EB /* BetaFeedbackView.swift in Sources */,
+				4AAB8BF1253B4BD180F1A0AC /* PricingView.swift in Sources */,
 				0840B0F584334AAEB30555AD /* AgeRatingEditor.swift in Sources */,
 				C47A004FC47A004F001A9E0F /* AppDetailView.swift in Sources */,
 				C47A0051C47A0051001A9E51 /* InviteTesterSheet.swift in Sources */,

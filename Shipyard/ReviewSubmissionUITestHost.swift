@@ -3,6 +3,63 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// Every request stays in memory, including simulated price writes.
+@MainActor
+final class PricingSampleServer {
+    var requests: [APIMethod] = []
+    var postedDay: String?
+    var postedPoint: String?
+    var api: PricingAPI { PricingAPI { method, _ in try self.respond(method) } }
+
+    func respond(_ method: APIMethod) throws -> Data {
+        requests.append(method)
+        if case .post(.appPriceSchedules, let body, _, _) = method {
+            let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            let prices = json?["included"] as? [[String: Any]]
+            let new = prices?.first { ($0["id"] as? String) == "${new-price}" }
+            postedDay = (new?["attributes"] as? [String: Any])?["startDate"] as? String
+            let relationships = new?["relationships"] as? [String: Any]
+            postedPoint = ((relationships?["appPricePoint"] as? [String: Any])?["data"] as? [String: String])?["id"]
+        }
+        func resource(_ type: String, _ id: String, _ attrs: [String: Any] = [:], _ refs: [String: [String: String]] = [:]) -> [String: Any] {
+            ["type": type, "id": id, "attributes": attrs, "relationships": refs.mapValues { ["data": $0] }]
+        }
+        let territories = [resource("territories", "USA", ["currency": "USD"]),
+                           resource("territories", "CAN", ["currency": "CAD"]),
+                           resource("territories", "GBR", ["currency": "GBP"])]
+        let points = [("usd099", "0.99", "0.69", "USA"), ("usd199", "1.99", "1.39", "USA"),
+                      ("usd299", "2.99", "2.09", "USA"), ("cad299", "2.99", "2.09", "CAN"),
+                      ("gbp149", "1.49", "1.04", "GBR")].map {
+            resource("appPricePoints", $0.0, ["customerPrice": $0.1, "proceeds": $0.2], ["territory": ["type": "territories", "id": $0.3]])
+        }
+        var doc: [String: Any]
+        if method.apiPath.hasSuffix("/appPriceSchedule") || method.httpMethod.0 == "POST" {
+            doc = ["data": resource("appPriceSchedules", "sample-schedule", [:], ["baseTerritory": ["type": "territories", "id": "USA"]]), "included": territories]
+        } else if method.apiPath.hasSuffix("/appAvailabilityV2") {
+            doc = ["data": resource("appAvailabilities", "sample-availability", ["availableInNewTerritories": false])]
+        } else if method.apiPath.hasSuffix("/manualPrices") {
+            var rows = [resource("appPrices", "base-price", ["manual": true, "startDate": NSNull(), "endDate": postedDay as Any? ?? NSNull()],
+                ["territory": ["type": "territories", "id": "USA"], "appPricePoint": ["type": "appPricePoints", "id": "usd199"]]),
+                resource("appPrices", "canada-override", ["manual": true],
+                ["territory": ["type": "territories", "id": "CAN"], "appPricePoint": ["type": "appPricePoints", "id": "cad299"]])]
+            if let postedDay, let postedPoint {
+                rows.append(resource("appPrices", "scheduled-price", ["manual": true, "startDate": postedDay],
+                    ["territory": ["type": "territories", "id": "USA"], "appPricePoint": ["type": "appPricePoints", "id": postedPoint]]))
+            }
+            doc = ["data": rows, "included": territories + points]
+        } else if method.apiPath.hasSuffix("/automaticPrices") {
+            doc = ["data": [resource("appPrices", "uk-automatic", ["manual": false],
+                ["territory": ["type": "territories", "id": "GBR"], "appPricePoint": ["type": "appPricePoints", "id": "gbp149"]])], "included": territories + points]
+        } else if method.apiPath.hasSuffix("/appPricePoints") {
+            doc = ["data": points.filter { ($0["id"] as? String)?.hasPrefix("usd") == true }, "included": territories]
+        } else if method.apiPath.hasSuffix("/territoryAvailabilities") {
+            doc = ["data": [resource("territoryAvailabilities", "usa-availability", ["available": true, "preOrderEnabled": false, "contentStatuses": ["AVAILABLE"]], ["territory": ["type": "territories", "id": "USA"]]),
+                resource("territoryAvailabilities", "japan-availability", ["available": false, "preOrderEnabled": false, "contentStatuses": ["MISSING_RATING"]], ["territory": ["type": "territories", "id": "JPN"]])], "included": territories]
+        } else { throw URLError(.badURL) }
+        return try JSONSerialization.data(withJSONObject: doc)
+    }
+}
+
 @MainActor
 extension BetaFeedbackAPI {
     static var sample: Self {
@@ -94,6 +151,7 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
     case appInfo
     case ageRatings
     case feedback
+    case pricing
     case reviews
     case release
 
@@ -108,6 +166,7 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
         case .apps, .builds: return .builds
         case .appInfo, .ageRatings: return .appInfo
         case .feedback: return .feedback
+        case .pricing: return .pricing
         case .reviews: return .reviews
         case .release: return .release
         }
@@ -408,7 +467,8 @@ struct AppStoreScreenshotHost: View {
                 onBack: {},
                 onManage: { _ in },
                 tab: $tab,
-                feedbackAPI: .sample)
+                feedbackAPI: .sample,
+                pricingAPI: PricingSampleServer().api)
         }
     }
 

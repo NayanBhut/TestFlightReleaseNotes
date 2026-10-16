@@ -23,11 +23,29 @@ struct AppDetailView: View {
     @Binding var tab: AppTab
     var feedbackAPI: BetaFeedbackAPI = .live
     @StateObject private var releaseSection = ReleaseSectionState()
+    @StateObject private var pricingModel: PricingViewModel
+
+    init(app: AppsData, sidebarVM: SideBarViewModel, detailVM: DetailViewModel,
+         reviewsVM: ReviewsViewModel, betaVM: BetaViewModel,
+         onBack: @escaping () -> Void, onManage: @escaping (BuildsModel) -> Void,
+         tab: Binding<AppTab>, feedbackAPI: BetaFeedbackAPI = .live, pricingAPI: PricingAPI = .live) {
+        self.app = app
+        self.sidebarVM = sidebarVM
+        self.detailVM = detailVM
+        self.reviewsVM = reviewsVM
+        self.betaVM = betaVM
+        self.onBack = onBack
+        self.onManage = onManage
+        _tab = tab
+        self.feedbackAPI = feedbackAPI
+        _pricingModel = StateObject(wrappedValue: PricingViewModel(api: pricingAPI))
+    }
 
     enum AppTab: String, CaseIterable {
         case builds = "Builds"
         case feedback = "TestFlight Feedback"
         case appInfo = "App Info"
+        case pricing = "Pricing & Availability"
         case reviews = "Reviews"
         case release = "App Store Versions"
     }
@@ -45,6 +63,9 @@ struct AppDetailView: View {
                     .id("\(app.id):\(detailVM.ageRatingContextGeneration)")
             case .appInfo:
                 ShipyardAppInfoView(detailVM: detailVM, reviewsVM: reviewsVM, app: app)
+            case .pricing:
+                PricingView(appID: app.id, contextID: detailVM.ageRatingContextGeneration, model: pricingModel)
+                    .id("\(app.id):\(detailVM.ageRatingContextGeneration)")
             case .reviews:
                 ReviewsSectionView(reviewsVM: reviewsVM, app: app)
             case .release:

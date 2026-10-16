@@ -466,6 +466,8 @@ enum APIName: String {
     // (the HTTP verb comes from APIMethod): .get/.post(name: .getBetaTesters).
     case getBetaTesters = "/betaTesters"
     case betaFeedbackCrashSubmissions = "/betaFeedbackCrashSubmissions"
+    case appPriceSchedules = "/appPriceSchedules"
+    case appAvailabilities = "/appAvailabilities"
     case patchBuildBetaDetail = "/buildBetaDetails"
     case postBetaAppReviewSubmission = "/betaAppReviewSubmissions"
 
