@@ -628,6 +628,10 @@ struct ShipyardAppInfoView: View {
                 }
                 .padding(24)
 
+                AgeRatingsSection(detailVM: detailVM, app: app)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+
                 screenshotsSection
                     .padding(.horizontal, 24)
                     .padding(.bottom, 24)

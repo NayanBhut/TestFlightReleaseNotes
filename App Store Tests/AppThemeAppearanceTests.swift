@@ -10,9 +10,37 @@
 import XCTest
 import AppKit
 import SwiftUI
+import CoreText
 @testable import Shipyard
 
 final class AppThemeAppearanceTests: XCTestCase {
+    func testSharedFontsResolveToTheSystemFace() throws {
+        guard #available(macOS 26.0, *) else { throw XCTSkip("Font resolution inspection requires macOS 26.") }
+        let context = EnvironmentValues().fontResolutionContext
+        let expectedFamily = NSFont.systemFont(ofSize: 12).familyName
+        for (font, size) in [(Font.appCaption, CGFloat(12)), (.subheader, 13), (.sectionHeader, 18)] {
+            let resolved = font.resolve(in: context)
+            XCTAssertEqual(CTFontCopyFamilyName(resolved.ctFont) as String, expectedFamily)
+            XCTAssertEqual(resolved.pointSize, size, accuracy: 0.01)
+        }
+    }
+
+    func testSharedFontsFollowNativeTextScaling() throws {
+        guard #available(macOS 26.0, *) else { throw XCTSkip("Font resolution inspection requires macOS 26.") }
+        var regular = EnvironmentValues()
+        regular.dynamicTypeSize = .large
+        var accessible = regular
+        accessible.dynamicTypeSize = .accessibility3
+        let font = Font.appBody
+        // Native macOS font resolution can use fixed text metrics for both
+        // contexts. Follow the native behavior instead of assuming iOS scaling.
+        let nativeScale = Font.body.resolve(in: accessible.fontResolutionContext).pointSize
+            / Font.body.resolve(in: regular.fontResolutionContext).pointSize
+        let appScale = font.resolve(in: accessible.fontResolutionContext).pointSize
+            / font.resolve(in: regular.fontResolutionContext).pointSize
+        XCTAssertEqual(appScale, nativeScale, accuracy: 0.01)
+    }
+
     /// Resolves a theme Color to sRGB components under the given appearance.
     /// AppKit has no `resolvedColor(with:)` (that's iOS) — resolution happens
     /// by making the appearance current and reading back the CGColor.

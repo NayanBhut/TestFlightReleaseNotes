@@ -92,6 +92,9 @@
 		FD67C33911DB452F804F1DC6 /* ReviewSubmissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22DD23B0DCFF4AB28F3A00AA /* ReviewSubmissionUITests.swift */; };
 		FD84C43F26D0419B822228A9 /* ReviewSubmissionUITestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 419AFA6271974F1DAC3E2FB2 /* ReviewSubmissionUITestHost.swift */; };
 		FE2E5F9AA0A9880B683B75E3 /* ViewStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0E15D8A22F0488C7836041 /* ViewStateTests.swift */; };
+		8315B5AFC3594CFFBA1291C5 /* AgeRatingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */; };
+		0840B0F584334AAEB30555AD /* AgeRatingEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */; };
+		4CBB0833AC0F41758CDA28C0 /* AgeRatingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -201,6 +204,9 @@
 		F47A0102F47A0102001A9E02 /* MonitoringDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringDiagnostics.swift; sourceTree = "<group>"; };
 		F47A0110F47A0110001A9E10 /* ReviewReplyFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewReplyFlow.swift; sourceTree = "<group>"; };
 		F47A0111F47A0111001A9E11 /* ReviewsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewsInboxView.swift; sourceTree = "<group>"; };
+		130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgeRatingModels.swift; sourceTree = "<group>"; };
+		DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgeRatingEditor.swift; sourceTree = "<group>"; };
+		1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgeRatingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -320,6 +326,7 @@
 				C47A003CC47A003C001A9E0C /* BetaGroupsView.swift */,
 				C47A003DC47A003D001A9E0D /* ReleaseNotesView.swift */,
 				C47A003EC47A003E001A9E0E /* ShipyardAppInfoView.swift */,
+				DDC3FA1525224AFC9AD48226 /* AgeRatingEditor.swift */,
 				C47A003FC47A003F001A9E0F /* AppDetailView.swift */,
 				C47A0050C47A0050001A9E50 /* InviteTesterSheet.swift */,
 				C47A0052C47A0052001A9E52 /* RevokeCertificateDialog.swift */,
@@ -451,6 +458,7 @@
 			isa = PBXGroup;
 			children = (
 				8D2F23302DD06C4F00B1AB0C /* APIModels.swift */,
+				130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */,
 				8DBB60842DD3864F00111A9E /* APIManager.swift */,
 				B47A0002B47A0002001A9E02 /* BetaModels.swift */,
 				B47A0010B47A0010001A9E10 /* ResourceModels.swift */,
@@ -474,6 +482,7 @@
 				8A16A19C399E5309EAABF97F /* BuildDisplayHelperTests.swift */,
 				4C4D5A196EF3EA84E17D74B9 /* APIMethodTests.swift */,
 				609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */,
+				1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */,
 				872D0E1656CED3F05CC37A21 /* ValidationTests.swift */,
 				A1623F45D99F4A56903BB5B5 /* BuildStatsPaletteTests.swift */,
 				D75BD4271AAE41208D659E2F /* AppThemeAppearanceTests.swift */,
@@ -641,6 +650,7 @@
 				9F1BB80B84C929D5710B4031 /* BuildDisplayHelperTests.swift in Sources */,
 				696D69A94C9314D7469E03FF /* APIMethodTests.swift in Sources */,
 				20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */,
+				4CBB0833AC0F41758CDA28C0 /* AgeRatingTests.swift in Sources */,
 				F6A269D26A45DE35489CF8E5 /* ValidationTests.swift in Sources */,
 				E7A9D043FD0A43F299C6245F /* BuildStatsPaletteTests.swift in Sources */,
 				346737DF37214E6896D7B0EA /* AppThemeAppearanceTests.swift in Sources */,
@@ -664,6 +674,7 @@
 				CDC9F4952BE5F96700AEF643 /* DetailViewModel.swift in Sources */,
 				CD9DD4C42BE3ECE000820E2F /* ECKeyData.swift in Sources */,
 				8D2F23312DD06C5600B1AB0C /* APIModels.swift in Sources */,
+				8315B5AFC3594CFFBA1291C5 /* AgeRatingModels.swift in Sources */,
 				CD616D862A8F62A4004ADF44 /* App_StoreApp.swift in Sources */,
 				8D00F61E2DCB34BC004CCA36 /* Extensions.swift in Sources */,
 				CD9DD4A02BE3DE9500820E2F /* SideBarViewModel.swift in Sources */,
@@ -703,6 +714,7 @@
 				C47A004CC47A004C001A9E0C /* BetaGroupsView.swift in Sources */,
 				C47A004DC47A004D001A9E0D /* ReleaseNotesView.swift in Sources */,
 				C47A004EC47A004E001A9E0E /* ShipyardAppInfoView.swift in Sources */,
+				0840B0F584334AAEB30555AD /* AgeRatingEditor.swift in Sources */,
 				C47A004FC47A004F001A9E0F /* AppDetailView.swift in Sources */,
 				C47A0051C47A0051001A9E51 /* InviteTesterSheet.swift in Sources */,
 				C47A0053C47A0053001A9E53 /* RevokeCertificateDialog.swift in Sources */,

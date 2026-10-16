@@ -54,6 +54,7 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
     case apps
     case builds
     case appInfo
+    case ageRatings
     case reviews
     case release
 
@@ -66,7 +67,7 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
     var appTab: AppDetailView.AppTab {
         switch self {
         case .apps, .builds: return .builds
-        case .appInfo: return .appInfo
+        case .appInfo, .ageRatings: return .appInfo
         case .reviews: return .reviews
         case .release: return .release
         }
@@ -240,6 +241,7 @@ struct ReviewSubmissionUITestHost: View {
         let sidebarVM = SideBarViewModel()
         let detailVM = DetailViewModel(sidebarViewModel: sidebarVM, readsStoredTeam: false)
         let reviewsVM = ReviewsViewModel()
+
         let app = Self.fixtureApp()
         reviewsVM.configureForUITesting(scenario: scenario, app: app)
 
@@ -295,6 +297,16 @@ struct AppStoreScreenshotHost: View {
         let detailVM = DetailViewModel(sidebarViewModel: sidebarVM, readsStoredTeam: false)
         let reviewsVM = ReviewsViewModel()
 
+        var sampleAppInfo = fixtures.appInfo
+        if screen == .ageRatings, !sampleAppInfo.isEmpty {
+            sampleAppInfo[0].state = "PREPARE_FOR_SUBMISSION"
+            var declaration = AgeRatingDeclarationModel(id: "sample-age-rating")
+            declaration.parentalControls = true
+            declaration.advertising = false
+            declaration.profanityOrCrudeHumor = "NONE"
+            sampleAppInfo[0].ageRatingDeclaration = declaration
+        }
+
         sidebarVM.configureForScreenshotSample(
             apps: fixtures.apps,
             selectedApp: fixtures.primaryApp,
@@ -304,7 +316,7 @@ struct AppStoreScreenshotHost: View {
             versions: fixtures.preReleaseVersions,
             selectedVersion: fixtures.preReleaseVersions[0],
             builds: fixtures.builds,
-            appInfo: fixtures.appInfo,
+            appInfo: sampleAppInfo,
             versionLocalizations: fixtures.versionLocalizations)
         reviewsVM.configureForScreenshotSample(
             app: fixtures.primaryApp,

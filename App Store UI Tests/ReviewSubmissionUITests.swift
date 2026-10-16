@@ -12,6 +12,43 @@ final class ReviewSubmissionUITests: XCTestCase {
         super.tearDown()
     }
 
+    func testAgeRatingEditorPreservesDraftUntilDiscarded() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "ageRatings", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.ageRatings").waitForExistence(timeout: launchTimeout))
+        let edit = button("app-info.age-ratings")
+        XCTAssertTrue(edit.waitForExistence(timeout: interactionTimeout))
+        for _ in 0..<6 where !edit.isHittable {
+            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -400)
+        }
+        XCTAssertTrue(edit.isHittable)
+        edit.click()
+        let save = button("age-ratings.save")
+        XCTAssertTrue(save.waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(save.isEnabled, "Opening saved answers must not create changes.")
+
+        let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        attachment.name = "age-rating-questionnaire"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let controls = app.popUpButtons["age-ratings.answer.parentalControls"]
+        XCTAssertTrue(controls.waitForExistence(timeout: interactionTimeout))
+        controls.click()
+        app.menuItems["No"].click()
+        XCTAssertTrue(save.isEnabled)
+        app.windows.buttons["Cancel"].firstMatch.click()
+        let keep = app.windows.buttons["Keep Editing"].firstMatch
+        XCTAssertTrue(keep.waitForExistence(timeout: interactionTimeout))
+        keep.click()
+        XCTAssertTrue(save.isEnabled, "Keep Editing must retain the draft.")
+        app.windows.buttons["Cancel"].firstMatch.click()
+        app.windows.buttons["Discard Changes"].firstMatch.click()
+        XCTAssertTrue(save.waitForNonExistence(timeout: interactionTimeout))
+    }
+
     func testCaptureAppStoreScreenshots() throws {
         let screens = ["apps", "builds", "appInfo", "reviews", "release"]
         for (index, screen) in screens.enumerated() {

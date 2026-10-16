@@ -430,25 +430,35 @@ struct AppInfoModel: Equatable {
 struct AgeRatingDeclarationModel: Equatable {
     var id: String
 
-    @ResourceAttribute(key: "ageRatingOverrideV2") var ageRatingOverrideV2: String?
+    @ResourceAttribute var advertising: Bool?
     @ResourceAttribute var alcoholTobaccoOrDrugUseOrReferences: String?
     @ResourceAttribute var contests: String?
     @ResourceAttribute var gambling: Bool?
     @ResourceAttribute var gamblingSimulated: String?
     @ResourceAttribute var gunsOrOtherWeapons: String?
-    @ResourceAttribute var horrorOrFearThemes: String?
+    @ResourceAttribute var healthOrWellnessTopics: Bool?
+    @ResourceAttribute var kidsAgeBand: String?
     @ResourceAttribute var lootBox: Bool?
-    @ResourceAttribute var matureOrSuggestiveThemes: String?
     @ResourceAttribute var medicalOrTreatmentInformation: String?
     @ResourceAttribute var messagingAndChat: Bool?
+    @ResourceAttribute var parentalControls: Bool?
     @ResourceAttribute var profanityOrCrudeHumor: String?
-    @ResourceAttribute var sexualContentOrNudity: String?
+    @ResourceAttribute var ageAssurance: Bool?
     @ResourceAttribute var sexualContentGraphicAndNudity: String?
+    @ResourceAttribute var sexualContentOrNudity: String?
+    @ResourceAttribute var socialMedia: Bool?
+    @ResourceAttribute var socialMediaAgeRestricted: Bool?
+    @ResourceAttribute var horrorOrFearThemes: String?
+    @ResourceAttribute var matureOrSuggestiveThemes: String?
     @ResourceAttribute var unrestrictedWebAccess: Bool?
     @ResourceAttribute var userGeneratedContent: Bool?
     @ResourceAttribute var violenceCartoonOrFantasy: String?
-    @ResourceAttribute var violenceRealistic: String?
     @ResourceAttribute var violenceRealisticProlongedGraphicOrSadistic: String?
+    @ResourceAttribute var violenceRealistic: String?
+    @ResourceAttribute var ageRatingOverrideV2: String?
+    @ResourceAttribute var koreaAgeRatingOverride: String?
+    @ResourceAttribute var gracRatingClassificationNumber: String?
+    @ResourceAttribute var developerAgeRatingInfoUrl: String?
 }
 
 @ResourceWrapper(type: "appInfoLocalizations")

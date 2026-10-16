@@ -25,20 +25,13 @@ enum AppFont {
     static var button: Font { dynamic(size: 12, weight: .semibold, relativeTo: .subheadline) }
     static var monospaced: Font { .system(.body, design: .monospaced) }
 
-    /// Resolves the default system face for the given weight, then anchors
-    /// its PostScript name to a text style to retain Dynamic Type scaling.
+    /// NSFont's system factory returns a CoreText-compatible UI font alias.
+    /// Descriptor-resolved private names such as .SFNS-Regular resolve to
+    /// Times New Roman when passed to Font.custom. Keep the system alias
+    /// and anchor it to a text style for Dynamic Type scaling.
     private static func dynamic(size: CGFloat, weight: Font.Weight, relativeTo style: Font.TextStyle) -> Font {
-        let descriptor = NSFontDescriptor
-            .preferredFontDescriptor(forTextStyle: nsTextStyle(style))
-            .withDesign(.default)?
-            .addingAttributes([
-                .traits: [NSFontDescriptor.TraitKey.weight: nsFontWeight(weight)]
-            ])
-        guard let descriptor,
-              let resolved = NSFont(descriptor: descriptor, size: size) else {
-            return .system(size: size, weight: weight)
-        }
-        return .custom(resolved.fontName, size: size, relativeTo: style)
+        let systemFont = NSFont.systemFont(ofSize: size, weight: nsFontWeight(weight))
+        return .custom(systemFont.fontName, size: size, relativeTo: style)
     }
 
     private static func nsFontWeight(_ weight: Font.Weight) -> NSFont.Weight {
@@ -51,19 +44,6 @@ enum AppFont {
         }
     }
 
-    private static func nsTextStyle(_ style: Font.TextStyle) -> NSFont.TextStyle {
-        switch style {
-        case .title: return .title1
-        case .title2: return .title2
-        case .title3: return .title3
-        case .headline: return .headline
-        case .body: return .body
-        case .subheadline: return .subheadline
-        case .caption: return .caption1
-        case .caption2: return .caption2
-        default: return .body
-        }
-    }
 }
 
 extension Font {

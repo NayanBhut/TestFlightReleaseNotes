@@ -43,6 +43,9 @@ class DetailViewModel: ObservableObject {
     @Published var exportComplianceState: ViewState<[AppEncryptionDeclarationModel]> = .idle
     @Published var appEventsState: ViewState<[AppEventModel]> = .idle
     @Published var webhooksState: ViewState<[WebhookModel]> = .idle
+    @Published private(set) var ageRatingContextGeneration = 0
+    @Published private(set) var busyAgeRatingDeclarationIds: Set<String> = []
+    var ageRatingAPI = AgeRatingAPI.live
 
     // MARK: Batch G (#10) — App Info writes
     /// Localization ids with a PATCH in flight — per-localization so saving
@@ -257,6 +260,8 @@ class DetailViewModel: ObservableObject {
     }
 
     private func resetAppInfoState() {
+        ageRatingContextGeneration += 1
+        busyAgeRatingDeclarationIds.removeAll()
         appInfoFetchTask?.cancel()
         versionLocalizationsFetchTask?.cancel()
         liveVersionLocalizationsFetchTask?.cancel()
@@ -1958,4 +1963,101 @@ struct BuildSaveError: Identifiable, Equatable {
     var kind: Kind = .save
 
     var id: String { "\(buildId)-\(locale)" }
+}
+
+// MARK: - Age-rating questionnaire
+
+/// Injectable transport keeps age-rating tests independent of Keychain and Apple.
+@MainActor
+struct AgeRatingAPI {
+    var perform: (APIMethod) async throws -> Data
+
+    static var live: Self {
+        Self { method in
+            guard let request = APIClient.shared.getRequest(api: method, apiVersion: .v1) else {
+                throw APIError.apiError(error: "No team selected. Add a team to manage age ratings.")
+            }
+            return try await APIClient.shared.callAPI(with: request)
+        }
+    }
+}
+
+enum AgeRatingOperationResult {
+    case success(AgeRatingDeclarationModel)
+    case failure(String, needsReload: Bool)
+    case ignored
+}
+
+extension DetailViewModel {
+    private func ageRatingInfo(appId: String, infoId: String, declarationId: String,
+                               generation: Int) -> AppInfoModel? {
+        guard !Task.isCancelled, generation == ageRatingContextGeneration,
+              selectedApp?.id == appId,
+              let info = appInfoState.loadedValue?.first(where: { $0.id == infoId }),
+              info.ageRatingDeclaration?.id == declarationId else { return nil }
+        return info
+    }
+
+    func saveAgeRating(appId: String, infoId: String, declarationId: String,
+                       generation: Int, changes: [String: AgeRatingAnswer]) async -> AgeRatingOperationResult {
+        guard let info = ageRatingInfo(appId: appId, infoId: infoId, declarationId: declarationId, generation: generation),
+              let saved = info.ageRatingDeclaration else { return .ignored }
+        guard AgeRatingEditingSupport.isEditable(info) else {
+            return .failure("These age ratings are read-only in the current app information state. Refresh App Info after the state changes.", needsReload: false)
+        }
+        if let message = AgeRatingDraft.validationMessage(
+            changes: changes, savedAnswers: AgeRatingQuestion.answers(from: saved),
+            wasMadeForKids: selectedApp?.isOrEverWasMadeForKids == true) {
+            return .failure(message, needsReload: false)
+        }
+        guard !changes.isEmpty else { return .success(saved) }
+        guard !busyAgeRatingDeclarationIds.contains(declarationId) else { return .ignored }
+        let body: Data
+        do { body = try JSONEncoder().encode(AgeRatingUpdateRequest(id: declarationId, changes: changes)) }
+        catch { return .failure("Couldn't prepare the age-rating update.", needsReload: false) }
+        return await performAgeRatingOperation(
+            .patch(name: .ageRatingDeclarations, body: body, path: declarationId),
+            appId: appId, infoId: infoId, declarationId: declarationId, generation: generation)
+    }
+
+    func reloadAgeRating(appId: String, infoId: String, declarationId: String,
+                         generation: Int) async -> AgeRatingOperationResult {
+        guard ageRatingInfo(appId: appId, infoId: infoId, declarationId: declarationId, generation: generation) != nil,
+              !busyAgeRatingDeclarationIds.contains(declarationId) else { return .ignored }
+        return await performAgeRatingOperation(
+            .get(name: .appInfos, path: "\(infoId)/ageRatingDeclaration"),
+            appId: appId, infoId: infoId, declarationId: declarationId, generation: generation)
+    }
+
+    private func performAgeRatingOperation(_ method: APIMethod, appId: String, infoId: String,
+                                            declarationId: String, generation: Int) async -> AgeRatingOperationResult {
+        busyAgeRatingDeclarationIds.insert(declarationId)
+        defer {
+            // A previous context must not unlock a new context's request.
+            if generation == ageRatingContextGeneration { busyAgeRatingDeclarationIds.remove(declarationId) }
+        }
+        do {
+            let data = try await ageRatingAPI.perform(method)
+            guard ageRatingInfo(appId: appId, infoId: infoId, declarationId: declarationId, generation: generation) != nil else {
+                return .ignored
+            }
+            let declaration = try getDecoder().decode(AgeRatingDeclarationModel.self, from: data)
+            guard declaration.id == declarationId else {
+                return .failure("App Store Connect returned different age-rating information. Reload saved answers before saving again.", needsReload: true)
+            }
+            guard case .loaded(var infos) = appInfoState,
+                  let index = infos.firstIndex(where: { $0.id == infoId }) else { return .ignored }
+            infos[index].ageRatingDeclaration = declaration
+            appInfoState = .loaded(infos)
+            return .success(declaration)
+        } catch {
+            guard ageRatingInfo(appId: appId, infoId: infoId, declarationId: declarationId, generation: generation) != nil else {
+                return .ignored
+            }
+            let status = (error as? APIError)?.statusCode
+            let needsReload = status == nil || status.map { $0 >= 500 } == true
+            let message = FriendlyErrorMessage.message(for: error, requiring: .ageRatings)
+            return .failure(message, needsReload: needsReload)
+        }
+    }
 }
