@@ -8,8 +8,8 @@
 //  inline validation (red border/hint like Figma), and the GENERAL
 //  INFORMATION inspector. General fields come from the app-info
 //  localization, the rest from the editable App Store version's
-//  localization; both PATCH through DetailViewModel. The numeric Apple ID
-//  is not exposed by the API, so the inspector dashes it.
+//  localization; both PATCH through DetailViewModel. The Apple ID comes
+//  from the app resource's identifier.
 //
 
 import SwiftUI
@@ -840,7 +840,7 @@ struct ShipyardAppInfoView: View {
                 .foregroundColor(ShipyardTheme.body)
 
             VStack(alignment: .leading, spacing: 12) {
-                inspectorRow(label: "APPLE ID", value: "—", mono: true)
+                inspectorRow(label: "APPLE ID", value: app.id, mono: true)
                 inspectorRow(label: "BUNDLE ID", value: app.bundleId ?? "—", mono: true)
                 inspectorRow(label: "SKU", value: app.sku ?? "—", mono: false)
                 inspectorRow(

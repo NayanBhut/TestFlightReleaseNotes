@@ -5,8 +5,7 @@
 //  Apps table from the apps-list-light Figma frame: toolbar (title + total
 //  pill, Filter Apps search, Status/Sort menus, refresh) over an Icon /
 //  App Name / Bundle ID / Apple ID / App Store Versions table. Row tap opens
-//  the app's builds. The numeric Apple ID is not exposed by the App Store
-//  Connect API, so that column renders a dash.
+//  the app's builds. The Apple ID is the app resource's identifier.
 //
 
 import SwiftUI
@@ -215,9 +214,9 @@ struct AppsTableView: View {
                     .truncationMode(.middle)
                     .frame(width: 220, alignment: .leading)
 
-                Text("—")
+                Text(app.id)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(ShipyardTheme.tertiary)
+                    .foregroundColor(ShipyardTheme.body)
                     .frame(width: 120, alignment: .leading)
 
                 listingVersions(app)
@@ -230,7 +229,7 @@ struct AppsTableView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(name), \(listingDescription(app))")
+        .accessibilityLabel("\(name), Apple ID \(app.id), \(listingDescription(app))")
         .accessibilityHint("Opens this app's builds")
     }
 
