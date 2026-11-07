@@ -21,6 +21,16 @@ struct BuildsTableView: View {
     @State private var statusFilter: String?
     @State private var expandedBuildIds: Set<String> = []
     @State private var selectedLocaleByBuild: [String: String] = [:]
+    @State private var initialVersionRetry = 0
+
+    /// Keep the automatically chosen version available even if its latest
+    /// upload belongs to a version outside the first page of the picker.
+    private var versionOptions: [PreReleaseVersionsModel] {
+        let versions = detailVM.arrVersions
+        guard let selected = detailVM.selectedVersion,
+              !versions.contains(where: { $0.id == selected.id }) else { return versions }
+        return [selected] + versions
+    }
 
     private var builds: [BuildsModel] { detailVM.arrBuilds }
 
@@ -45,6 +55,14 @@ struct BuildsTableView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ShipyardTheme.tableBackground)
+        .task(id: InitialVersionSelection(appID: detailVM.selectedApp?.id, retry: initialVersionRetry)) {
+            await detailVM.selectInitialBuildVersionIfNeeded()
+        }
+    }
+
+    private struct InitialVersionSelection: Equatable {
+        let appID: String?
+        let retry: Int
     }
 
     // MARK: - Toolbar
@@ -70,7 +88,7 @@ struct BuildsTableView: View {
                     .foregroundColor(ShipyardTheme.title)
                     .lineLimit(1)
                 Menu {
-                    ForEach(detailVM.arrVersions, id: \.id) { version in
+                    ForEach(versionOptions, id: \.id) { version in
                         Button("v\(version.version ?? "")") {
                             detailVM.setSelectedVersionAndGetBuilds(selectedVersion: version)
                         }
@@ -136,7 +154,7 @@ struct BuildsTableView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if detailVM.arrVersions.isEmpty {
+        } else if detailVM.arrVersions.isEmpty && detailVM.selectedVersion == nil {
             switch detailVM.versionsState {
             case .idle, .loading:
                 VStack(spacing: 12) {
@@ -171,17 +189,33 @@ struct BuildsTableView: View {
                 EmptyView()
             }
         } else if detailVM.selectedVersion == nil {
-            VStack(spacing: 12) {
-                Spacer()
-                Text("Select a Version")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(ShipyardTheme.title)
-                Text("Choose a version above to see its uploaded builds")
-                    .font(.system(size: 13))
-                    .foregroundColor(ShipyardTheme.body)
-                Spacer()
+            if let message = detailVM.buildsErrorMessage {
+                ErrorRetryView(
+                    title: "Couldn't Select Latest Version",
+                    message: message,
+                    retryTitle: "Retry",
+                    onRetry: { initialVersionRetry += 1 }
+                )
+            } else {
+                VStack(spacing: 12) {
+                    Spacer()
+                    if detailVM.buildsState == .empty {
+                        Text("No Builds")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(ShipyardTheme.title)
+                        Text("This app has no uploaded builds yet")
+                            .font(.system(size: 13))
+                            .foregroundColor(ShipyardTheme.body)
+                    } else {
+                        ProgressView()
+                        Text("Selecting latest version…")
+                            .font(.system(size: 13))
+                            .foregroundColor(ShipyardTheme.body)
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             switch detailVM.buildsState {
             case .idle, .loading:

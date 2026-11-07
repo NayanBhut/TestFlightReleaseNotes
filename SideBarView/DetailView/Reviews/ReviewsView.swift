@@ -6,8 +6,7 @@
 //  histogram over the loaded sample), filter chips, the Review / Rating /
 //  Date / Response table, the reply editor with its lifecycle branches,
 //  and the independent list states (loading / empty / error / no filter
-//  results). The review-submissions card below is preserved unchanged —
-//  App Store review submission is outside Module 11 scope.
+//  results). App Review submissions are grouped separately by lifecycle.
 //
 //  API contract notes (C11-H, Apple OpenAPI 4.5):
 //  - Reads: GET /v1/apps/{id}/customerReviews (sort=-createdDate,
@@ -117,33 +116,47 @@ struct ReviewsView: View {
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
-            if reviewsViewModel.isRefreshingReviews {
-                ProgressView()
-                    .controlSize(.small)
-                    .help("Refreshing reviews… cached rows stay visible")
-            }
             Button(action: { reviewsViewModel.retryAll() }) {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.system(size: 12))
+                HStack(spacing: 6) {
+                    if isRefreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    Text(isRefreshing ? "Refreshing…" : "Refresh")
+                }
+                .font(.system(size: 12))
+                .frame(minHeight: 28)
             }
             .buttonStyle(.bordered)
+            .disabled(isRefreshing)
+            .accessibilityLabel("Refresh reviews and submissions")
+            .accessibilityIdentifier("reviews.refresh")
+            .help("Refresh customer reviews and App Review submissions")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .background(AppTheme.secondaryBackground)
     }
 
+    private var isRefreshing: Bool {
+        reviewsViewModel.reviewsState.isLoading
+            || reviewsViewModel.isRefreshingReviews
+            || reviewsViewModel.submissionsState.isLoading
+    }
+
     // MARK: - Written-review summary (114:10098)
 
     @ViewBuilder
     private func customerReviewsSection(app: AppsData) -> some View {
-        InfoCard(title: "Customer Reviews", systemImage: "star.bubble") {
+        InfoCard(title: "Customer Reviews", systemImage: "star.bubble",
+                 actionTitle: "Open App Store Listing", onAction: { openStoreListing(app: app) }) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("\(app.name ?? "App") · written customer reviews")
                     .font(.system(size: 13))
                     .fontWeight(.semibold)
                 filterChips
-                provenanceBanner
+                if !reviewsViewModel.reviewRows.isEmpty { provenanceBanner }
                 switch reviewsViewModel.reviewsState {
                 case .idle, .loading:
                     if reviewsViewModel.reviewRows.isEmpty {
@@ -167,6 +180,9 @@ struct ReviewsView: View {
                         reviewsTable(app: app)
                     }
                 }
+                if !reviewsViewModel.reviewRows.isEmpty || reviewsViewModel.reviewsNextCursor != nil {
+                    tableFooter(app)
+                }
             }
         }
     }
@@ -183,81 +199,123 @@ struct ReviewsView: View {
     }
 
     private var filterChips: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Button("All ratings") { reviewsViewModel.ratingFilter = 0 }
-                ForEach(AppConfigs.ratingOptions.filter { $0 > 0 }, id: \.self) { value in
-                    Button("\(value) ★") { reviewsViewModel.ratingFilter = value }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .accessibilityHidden(true)
+                TextField("Search title, review, or author", text: $reviewsViewModel.searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .disabled(reviewsViewModel.reviewRows.isEmpty)
+                    .accessibilityIdentifier("reviews.search")
+                if !reviewsViewModel.searchText.isEmpty {
+                    Button { reviewsViewModel.searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear review search")
+                    .accessibilityIdentifier("reviews.search.clear")
                 }
-            } label: {
-                Text(reviewsViewModel.ratingFilter == 0 ? "Rating: All" : "Rating: \(reviewsViewModel.ratingFilter) ★")
-                    .font(.system(size: 11))
             }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(LaunchTheme.field)
+            .cornerRadius(6)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.border, lineWidth: 1))
 
-            Menu {
-                Button("All territories") { reviewsViewModel.territoryFilter = nil }
-                ForEach(reviewsViewModel.availableTerritories, id: \.self) { territory in
-                    Button(territory) { reviewsViewModel.territoryFilter = territory }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
+                Menu {
+                    Button("All ratings") { reviewsViewModel.ratingFilter = 0 }
+                    ForEach(AppConfigs.ratingOptions.filter { $0 > 0 }, id: \.self) { value in
+                        Button("\(value) ★") { reviewsViewModel.ratingFilter = value }
+                    }
+                } label: {
+                    filterLabel(reviewsViewModel.ratingFilter == 0 ? "Rating: All" : "Rating: \(reviewsViewModel.ratingFilter) ★")
                 }
-            } label: {
-                Text("Territory: \(reviewsViewModel.territoryFilter ?? "All")")
-                    .font(.system(size: 11))
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("reviews.filter.rating")
 
-            Menu {
-                ForEach(ReviewDateFilter.allCases, id: \.self) { option in
-                    Button(option.rawValue) { reviewsViewModel.dateFilter = option }
+                Menu {
+                    Button("All territories") { reviewsViewModel.territoryFilter = nil }
+                    ForEach(reviewsViewModel.availableTerritories, id: \.self) { territory in
+                        Button(territory) { reviewsViewModel.territoryFilter = territory }
+                    }
+                } label: {
+                    filterLabel("Territory: \(reviewsViewModel.territoryFilter ?? "All · \(reviewsViewModel.availableTerritories.count)")")
                 }
-            } label: {
-                Text(reviewsViewModel.dateFilter.displayName)
-                    .font(.system(size: 11))
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .help("Territories represented in the loaded reviews")
+                .accessibilityIdentifier("reviews.filter.territory")
 
-            Menu {
-                ForEach(ReviewSortOption.allCases, id: \.self) { option in
-                    Button(option.rawValue) { reviewsViewModel.reviewSort = option }
+                Menu {
+                    ForEach(ReviewDateFilter.allCases, id: \.self) { option in
+                        Button(option.rawValue) { reviewsViewModel.dateFilter = option }
+                    }
+                } label: {
+                    filterLabel(reviewsViewModel.dateFilter.displayName)
                 }
-            } label: {
-                Text(reviewsViewModel.reviewSort.displayName)
-                    .font(.system(size: 11))
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("reviews.filter.date")
 
-            Menu {
-                ForEach(ReviewReplyFilter.allCases, id: \.self) { option in
-                    Button(option.rawValue) { reviewsViewModel.replyFilter = option }
+                Menu {
+                    ForEach(ReviewSortOption.allCases, id: \.self) { option in
+                        Button(option.rawValue) { reviewsViewModel.reviewSort = option }
+                    }
+                } label: {
+                    filterLabel(reviewsViewModel.reviewSort.displayName)
                 }
-            } label: {
-                Text(reviewsViewModel.replyFilter.displayName)
-                    .font(.system(size: 11))
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("reviews.filter.sort")
+
+                Menu {
+                    ForEach(ReviewReplyFilter.allCases, id: \.self) { option in
+                        Button(option.rawValue) { reviewsViewModel.replyFilter = option }
+                    }
+                } label: {
+                    filterLabel(reviewsViewModel.replyFilter.displayName)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("reviews.filter.reply")
             }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(.large)
+            .disabled(reviewsViewModel.reviewRows.isEmpty)
 
-            TextField("Search title / body / author", text: $reviewsViewModel.searchText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11))
-                .frame(maxWidth: 200)
-
-            if hasActiveFilters {
-                Button("Clear") { clearFilters() }
+            HStack {
+                Text(reviewCountText)
                     .font(.system(size: 11))
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .foregroundColor(.secondary)
+                    .accessibilityIdentifier("reviews.count")
+                Spacer()
+                if hasActiveFilters {
+                    Button("Clear filters") { clearFilters() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("reviews.filters.clear")
+                }
             }
         }
+    }
+
+    private var reviewCountText: String {
+        let loaded = reviewsViewModel.reviewRows.count
+        let shown = reviewsViewModel.filteredReviews.count
+        let total = reviewsViewModel.reviewsMeta.map { " · \($0.paging.total) total" } ?? ""
+        return "\(shown) of \(loaded) loaded reviews\(total)"
+    }
+
+    private func filterLabel(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Text(text).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 12))
+        .frame(maxWidth: .infinity)
     }
 
     private func clearFilters() {
@@ -270,22 +328,10 @@ struct ReviewsView: View {
     }
 
     private var provenanceBanner: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Statistics and filters below use the written reviews currently loaded from App Store Connect.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            Text("Search, date, and reply filters apply to loaded reviews. Use Load more when available to include older reviews.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            Text("Replies are shown as Unanswered, Waiting to publish, or Reply published.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.blue.opacity(0.06))
-        .cornerRadius(6)
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.blue.opacity(0.25), lineWidth: 0.5))
+        Label("Search, filters, and statistics use loaded written reviews.", systemImage: "info.circle")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+            .help("These statistics describe loaded written reviews, not all App Store ratings. Load more to include older reviews. Replies may be unanswered, waiting to publish, or published.")
     }
 
     // MARK: Summary (sample statistics)
@@ -392,7 +438,6 @@ struct ReviewsView: View {
                 .buttonStyle(.plain)
                 Divider()
             }
-            tableFooter(app)
         }
     }
 
@@ -434,12 +479,14 @@ struct ReviewsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .accessibilityIdentifier("reviews.load-more")
                 } else {
                     Button("Load more") {
                         reviewsViewModel.loadMoreReviews(cursor: cursor)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .accessibilityIdentifier("reviews.load-more")
                 }
             }
             Button("Open Selected Review") {
@@ -524,8 +571,7 @@ struct ReviewsView: View {
         }
     }
 
-    /// Empty team: reviews appear after customers post them — Shipyard
-    /// cannot create customer reviews (114:13942).
+    /// The listing action stays in the card header in every list state.
     private func emptyState(app: AppsData) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
@@ -536,7 +582,7 @@ struct ReviewsView: View {
                         .font(.system(size: 13))
                         .fontWeight(.medium)
                         .foregroundColor(.blue)
-                    Text("Customer reviews will appear after customers post them. Reviews cannot be created by Shipyard.")
+                    Text("Customer reviews will appear here after customers post them.")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
@@ -544,20 +590,7 @@ struct ReviewsView: View {
             .padding(12)
             .background(Color.blue.opacity(0.06))
             .cornerRadius(8)
-            Text("Get started")
-                .font(.system(size: 13))
-                .fontWeight(.medium)
-            Text("Open App Store Listing opens the public listing in your browser. Shipyard cannot create customer reviews.")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-            HStack {
-                Spacer()
-                Button("Open App Store Listing") {
-                    openStoreListing(app: app)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            }
+            .help("Reviews are written by App Store customers and cannot be created by Shipyard.")
         }
     }
 
@@ -676,7 +709,7 @@ struct ReviewsView: View {
         .frame(width: 420)
     }
 
-    // MARK: - Review submissions (preserved; outside Module 11 scope)
+    // MARK: - Review submissions
 
     @ViewBuilder private func submissionsSection(app: AppsData) -> some View {
         InfoCard(title: "Review Submissions", systemImage: "doc.badge.gearshape") {
@@ -694,48 +727,26 @@ struct ReviewsView: View {
                     reviewsViewModel.retrySubmissions()
                 }
             case .loaded(let submissions):
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(submissions, id: \.id) { submission in
-                        if submission.id != submissions.first?.id { Divider() }
-                        HStack(alignment: .top, spacing: 10) {
-                            StateChip(text: submission.state ?? "UNKNOWN")
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(submission.platform ?? "")
-                                    .font(.system(size: 13))
-                                    .fontWeight(.medium)
-                                if let version = submission.appStoreVersionForReview?.versionString, !version.isEmpty {
-                                    Text("Version \(version)")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                }
-                                if let submitter = submission.submittedByActor {
-                                    Text("Submitted by \(submitter.displayName)")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                }
-                                Text(submissionDateText(submission))
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            if ReviewsViewModel.cancellableSubmissionStates
-                                .contains(submission.state ?? "") {
-                                if reviewsViewModel.cancellingSubmissionId == submission.id {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Button("Cancel") {
-                                        submissionToCancel = submission
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(ReviewSubmissionGroup.allCases, id: \.self) { group in
+                        let rows = submissions.filter { $0.displayGroup == group }
+                        if !rows.isEmpty {
+                            Text("\(group.rawValue) · \(rows.count)")
+                                .font(.system(size: 12, weight: .semibold))
+                            ScrollView(.horizontal) {
+                                VStack(spacing: 0) {
+                                    submissionTableHeader
+                                    ForEach(rows, id: \.id) { submission in
+                                        submissionRow(submission)
+                                        Divider()
                                     }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .foregroundColor(AppTheme.negative)
                                 }
+                                .containerRelativeFrame(.horizontal) { width, _ in max(700, width) }
                             }
                         }
                     }
                     .confirmationDialog(
-                        "Cancel Review Submission?",
+                        submissionToCancel?.cancellationTitle ?? "Withdraw Submission",
                         isPresented: Binding(
                             get: { submissionToCancel != nil },
                             set: { if !$0 { submissionToCancel = nil } }
@@ -743,13 +754,14 @@ struct ReviewsView: View {
                         titleVisibility: .visible,
                         presenting: submissionToCancel
                     ) { submission in
-                        Button("Cancel Submission", role: .destructive) {
+                        Button(submission.cancellationTitle, role: .destructive) {
                             Task {
                                 await reviewsViewModel.cancelSubmission(submission)
                             }
                         }
-                    } message: { _ in
-                        Text("The submission will be withdrawn from review.")
+                        Button("Keep Submission", role: .cancel) {}
+                    } message: { submission in
+                        Text(submission.cancellationMessage)
                     }
                     paginationControls(
                         nextCursor: reviewsViewModel.submissionsNextCursor,
@@ -759,6 +771,66 @@ struct ReviewsView: View {
                 }
             }
         }
+    }
+
+    private var submissionTableHeader: some View {
+        HStack(spacing: 12) {
+            Text("Submission").frame(maxWidth: .infinity, alignment: .leading)
+            Text("Version / Platform").frame(width: 120, alignment: .leading)
+            Text("Submitted").frame(maxWidth: .infinity, alignment: .leading)
+            Text("Status").frame(width: 145, alignment: .leading)
+            Text("Action").frame(width: 120, alignment: .trailing)
+        }
+        .font(.system(size: 11))
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(AppTheme.windowBackground)
+    }
+
+    private func submissionRow(_ submission: ReviewSubmissionModel) -> some View {
+        HStack(spacing: 12) {
+            Text(String(submission.id.prefix(12)))
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1)
+                .help(submission.id)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(submission.appStoreVersionForReview?.versionString ?? "No app version")
+                Text(submission.platform.map(shipyardPlatformDisplay) ?? "—")
+                    .foregroundColor(.secondary)
+            }
+            .font(.system(size: 12))
+            .frame(width: 120, alignment: .leading)
+            Text(submissionDateText(submission))
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .help(submission.submittedByActor.map { "Submitted by \($0.displayName)" } ?? "Submission date")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            StateChip(text: submission.displayState, state: submission.state)
+                .help(submission.state ?? "Unknown")
+                .frame(width: 145, alignment: .leading)
+            HStack {
+                Spacer(minLength: 0)
+                if ReviewsViewModel.cancellableSubmissionStates.contains(submission.state ?? "") {
+                    if reviewsViewModel.cancellingSubmissionId == submission.id {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button(submission.cancellationTitle) { submissionToCancel = submission }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+                            .foregroundColor(AppTheme.negative)
+                            .disabled(reviewsViewModel.cancellingSubmissionId != nil)
+                            .accessibilityIdentifier("reviews.submission.cancel.\(submission.id)")
+                    }
+                }
+            }
+            .frame(width: 120)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("reviews.submission.\(submission.id)")
     }
 
     private func submissionDateText(_ submission: ReviewSubmissionModel) -> String {
@@ -790,7 +862,7 @@ struct ReviewsView: View {
                 ProgressView()
                     .controlSize(.small)
             } else {
-                Button(hasOpenSubmission ? "Submission in progress" : "Submit for Review") {
+                Button(hasOpenSubmission ? "Open submission exists" : "Submit for Review") {
                     confirmingSubmit = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -979,8 +1051,9 @@ struct StarRating: View {
 /// version-state chips).
 struct StateChip: View {
     let text: String
+    var state: String? = nil
 
-    private var color: Color { text.stateColor }
+    private var color: Color { (state ?? text).stateColor }
 
     var body: some View {
         Text(text)
@@ -1003,12 +1076,24 @@ struct StateChip: View {
 struct InfoCard<Content: View>: View {
     let title: String
     let systemImage: String
+    var actionTitle: String? = nil
+    var onAction: (() -> Void)? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+            HStack {
+                Label(title, systemImage: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if let actionTitle, let onAction {
+                    Button(actionTitle, action: onAction)
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .help("Open the public App Store listing in your browser")
+                        .accessibilityIdentifier("reviews.open-listing")
+                }
+            }
             content
         }
         .padding(14)

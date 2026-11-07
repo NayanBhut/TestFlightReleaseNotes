@@ -437,7 +437,7 @@ struct ShipyardAppInfoView: View {
                     )
             }
             .buttonStyle(.plain)
-            .disabled(versionLocalization == nil)
+            .disabled(versionLocalization == nil || !isEditable)
             .accessibilityLabel("Remove \(locale) localization")
             .confirmationDialog(
                 "Remove the \(locale) localization? Its store metadata is deleted.",
@@ -502,7 +502,7 @@ struct ShipyardAppInfoView: View {
     /// Explains a disabled Save so it never reads as broken.
     private var saveDisabledHint: String {
         if versionId == nil { return "Loading versions…" }
-        if !isEditable { return "This version is read-only" }
+        if !isEditable { return appInfoReadOnlyMessage(appStoreState: selectedVersionState) ?? "This version is read-only" }
         if versionLocalization == nil, !canEditGeneral {
             return isLoadingVersionLocalization ? "Loading localization fields…" : "Add this localization first"
         }
@@ -531,13 +531,14 @@ struct ShipyardAppInfoView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 8)
                 Divider()
-            } else if versionId != nil, !isEditable {
+            } else if versionId != nil, let message = appInfoReadOnlyMessage(appStoreState: selectedVersionState) {
                 HStack {
                     Image(systemName: "lock.fill")
                         .foregroundColor(AppTheme.pending)
-                    Text("This version is live (read-only). Create a new version in App Store Connect to edit metadata.")
+                    Text(message)
                         .font(.system(size: 12))
                         .foregroundColor(AppTheme.pending)
+                        .accessibilityIdentifier("app-info.read-only-status")
                     Spacer()
                 }
                 .padding(.horizontal, 24)
@@ -774,10 +775,11 @@ struct ShipyardAppInfoView: View {
     @ViewBuilder
     private func metadataField(label: String, field: Field, limit: Int?, multiline: Bool = false, url: Bool = false, hint: String, disabled: Bool = false) -> some View {
         let text = draft(field)
+        let isDisabled = disabled || !isEditable
         // A disabled field can still be waiting for its server value. Do not
         // validate that temporary empty value and flash an error while App
         // Info is loading.
-        let error = disabled ? nil : fieldError(field, limit: limit, url: url)
+        let error = isDisabled ? nil : fieldError(field, limit: limit, url: url)
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)
@@ -805,7 +807,7 @@ struct ShipyardAppInfoView: View {
                             .stroke(error == nil ? LaunchTheme.border : ShipyardTheme.danger, lineWidth: 1)
                     )
                     .scrollContentBackground(.hidden)
-                    .disabled(disabled)
+                    .disabled(isDisabled)
             } else {
                 TextField(label, text: fieldBinding(field))
                     .textFieldStyle(.plain)
@@ -820,7 +822,7 @@ struct ShipyardAppInfoView: View {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(error == nil ? LaunchTheme.border : ShipyardTheme.danger, lineWidth: 1)
                     )
-                    .disabled(disabled)
+                    .disabled(isDisabled)
             }
 
             Text(error ?? hint)
@@ -928,6 +930,10 @@ struct ShipyardAppInfoView: View {
     }
 
     private func save() async {
+        guard isEditable else {
+            saveError = appInfoReadOnlyMessage(appStoreState: selectedVersionState)
+            return
+        }
         // Client-side gate mirrors fieldError so over-limit/ malformed
         // input never reaches the API. Surface it instead of no-op'ing:
         // the Save button stays enabled, so the failure must be visible

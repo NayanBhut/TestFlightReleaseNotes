@@ -1199,6 +1199,25 @@ final class ValidationTests: XCTestCase {
         }
     }
 
+    func testAppInfoReadOnlyMessageDistinguishesReviewFromLive() {
+        let waiting = appInfoReadOnlyMessage(appStoreState: "WAITING_FOR_REVIEW") ?? ""
+        XCTAssertTrue(waiting.contains("Waiting for Review"))
+        XCTAssertTrue(waiting.contains("remove the submission from review"))
+        XCTAssertFalse(waiting.contains("live"))
+        XCTAssertFalse(waiting.contains("Create a new version"))
+        for state in ["READY_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "PROCESSING_FOR_DISTRIBUTION"] {
+            let message = appInfoReadOnlyMessage(appStoreState: state) ?? ""
+            XCTAssertTrue(message.contains(getStatusLabel(appStoreState: state)), state)
+            XCTAssertFalse(message.contains("live"), state)
+        }
+        for state in ["READY_FOR_SALE", "READY_FOR_DISTRIBUTION"] {
+            XCTAssertTrue(appInfoReadOnlyMessage(appStoreState: state)?.contains("live") == true)
+        }
+        XCTAssertNil(appInfoReadOnlyMessage(appStoreState: "PREPARE_FOR_SUBMISSION"))
+        XCTAssertNil(appInfoReadOnlyMessage(appStoreState: "DEVELOPER_REJECTED"))
+        XCTAssertTrue(appInfoReadOnlyMessage(appStoreState: nil)?.contains("status is unavailable") == true)
+    }
+
     private static func version(id: String, state: String, created: String) -> AppStoreVersionsModel {
         var version = AppStoreVersionsModel(id: id, appStoreVersionLocalizations: [])
         version.appStoreState = state

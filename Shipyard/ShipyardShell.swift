@@ -22,6 +22,9 @@ struct ShipyardShell: View {
     @StateObject private var betaVM = BetaViewModel()
     @StateObject private var toastCenter = ShipyardToastCenter()
     @ObservedObject private var credentialStorage = CredentialStorage.shared
+    @ObservedObject private var intentNavigation = ShipyardIntentNavigation.shared
+    @Environment(\.controlActiveState) private var controlActiveState
+    @State private var preserveIntentDetailOnSectionChange = false
 
     /// Launch section honors the General settings default (Figma 3-4361).
     @State private var section: ShipyardSection = ShipyardSection(
@@ -72,10 +75,32 @@ struct ShipyardShell: View {
         // Sidebar navigation always leaves app/build detail: the detail
         // screens take precedence over the section, so a section change
         // must clear them or taps would appear to do nothing.
-        .onChange(of: section) { _, _ in
+        .onChange(of: section) { _, newSection in
+            if preserveIntentDetailOnSectionChange, newSection == .apps {
+                preserveIntentDetailOnSectionChange = false
+                return
+            }
             detailApp = nil
             detailBuild = nil
             settingsPresented = false
+        }
+        .task(id: IntentNavigationTrigger(requestID: intentNavigation.pending?.id,
+                                          isKeyWindow: controlActiveState == .key)) {
+            guard controlActiveState == .key else { return }
+            do {
+                guard let app = try intentNavigation.takeRequest(in: .current) else { return }
+                if section != .apps {
+                    preserveIntentDetailOnSectionChange = true
+                    section = .apps
+                }
+                detailBuild = nil
+                settingsPresented = false
+                detailTab = .builds
+                sidebarVM.setSelectedAppAndGetVersions(app: app)
+                detailApp = app
+            } catch {
+                toastCenter.show("Couldn't open app", detail: error.localizedDescription, variant: .error)
+            }
         }
         .onChange(of: sidebarVM.isTeamChanged) { _, changed in
             if changed {
@@ -88,6 +113,11 @@ struct ShipyardShell: View {
             activeTeamKey = newKey
             refreshForActiveTeam(resetNavigation: true)
         }
+    }
+
+    private struct IntentNavigationTrigger: Hashable {
+        let requestID: UUID?
+        let isKeyWindow: Bool
     }
 
     @ViewBuilder

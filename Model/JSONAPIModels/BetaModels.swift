@@ -181,7 +181,7 @@ enum BetaReviewSubmissionBody {
 // MARK: - Batch I (I5): beta group writes
 //
 // Bodies verified against Apple's OpenAPI spec (EvanBacon mirror):
-// - POST /v1/betaGroups: attributes name (required) + publicLinkEnabled /
+// - POST /v1/betaGroups: attributes name (required), isInternalGroup + publicLinkEnabled /
 //   publicLinkLimitEnabled / publicLinkLimit / feedbackEnabled (optional);
 //   relationships.app (required).
 // - PATCH /v1/betaGroups/{id}: id + attributes (rename uses name only).
@@ -199,10 +199,11 @@ struct BetaGroupCreateData: Encodable {
 
 struct BetaGroupCreateAttributes: Encodable {
     var name: String
-    var publicLinkEnabled: Bool
-    var publicLinkLimitEnabled: Bool
+    var publicLinkEnabled: Bool?
+    var publicLinkLimitEnabled: Bool?
     /// Omitted when nil (encodeIfPresent) — unlimited public link.
     var publicLinkLimit: Int?
+    var isInternalGroup: Bool = false
 }
 
 struct BetaGroupCreateRelationships: Encodable {

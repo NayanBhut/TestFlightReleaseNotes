@@ -11,6 +11,8 @@ enum AppConfigs {
     /// Page size for the apps list. The GET /v1/apps limit caps at 200
     /// (Apple docs), so 50 is safe; the sidebar paginates on demand.
     static let appListLimit: Int = 50
+    /// Keep the Shortcuts app picker small; search can query additional apps.
+    static let shortcutSuggestionsLimit: Int = 10
     static let versionLimit: Int = 10
     /// Show the first 10 builds for the selected version, then let the user
     /// request each additional cursor page explicitly from the Builds table.

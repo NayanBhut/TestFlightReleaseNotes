@@ -221,3 +221,161 @@ final class BetaFeedbackTests: XCTestCase {
         }
     }
 }
+
+@MainActor
+final class BetaGroupsTests: XCTestCase {
+    private let emptyPage = Data(#"{"data":[],"meta":{"paging":{"total":0,"limit":50}}}"#.utf8)
+    private let createdGroup = Data(#"{"data":{"type":"betaGroups","id":"new-group","attributes":{"name":"Early Access","isInternalGroup":false},"relationships":{"betaTesters":{"data":[]},"builds":{"data":[]}}}}"#.utf8)
+    private var app: AppsData { AppsData(id: "app", appStoreVersions: []) }
+
+    func testEmptyResponseFinishesLoading() async {
+        let model = BetaViewModel(groupsRequest: { _ in self.emptyPage })
+        await model.fetchBetaGroups(app: app)
+        XCTAssertTrue(model.isGroupsLoaded)
+        XCTAssertFalse(model.isGroupsLoading)
+        XCTAssertTrue(model.groups.isEmpty)
+        XCTAssertNil(model.groupsErrorMessage)
+        XCTAssertEqual(model.viewState, ._none)
+    }
+
+    func testFailureFinishesLoadingAndRetryClearsError() async {
+        var fail = true
+        let model = BetaViewModel(groupsRequest: { _ in
+            if fail { throw URLError(.notConnectedToInternet) }
+            return self.emptyPage
+        })
+        await model.fetchBetaGroups(app: app)
+        XCTAssertFalse(model.isGroupsLoading)
+        XCTAssertNotNil(model.groupsErrorMessage)
+        fail = false
+        await model.fetchBetaGroups(app: app)
+        XCTAssertFalse(model.isGroupsLoading)
+        XCTAssertNil(model.groupsErrorMessage)
+        XCTAssertFalse(model.hasError)
+    }
+
+    func testMalformedResponseFinishesLoadingWithError() async {
+        let model = BetaViewModel(groupsRequest: { _ in Data("{}".utf8) })
+        await model.fetchBetaGroups(app: app)
+        XCTAssertFalse(model.isGroupsLoading)
+        XCTAssertNotNil(model.groupsErrorMessage)
+    }
+
+    func testCreateFirstGroupUsesAppAndLeavesPublicLinksDisabled() async throws {
+        var postedBody: Data?
+        let model = BetaViewModel(groupsRequest: { method in
+            if case .post(.getBetaGroups, let body, _, _) = method {
+                postedBody = body
+                return self.createdGroup
+            }
+            return self.emptyPage
+        })
+        await model.fetchBetaGroups(app: app)
+        let created = await model.createGroup(name: "  Early Access  ", publicLinkEnabled: false, publicLinkLimit: nil)
+        XCTAssertTrue(created)
+        XCTAssertEqual(model.groups.map(\.id), ["new-group"])
+        XCTAssertNil(model.updatingGroupId)
+        XCTAssertFalse(model.hasError)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(postedBody)) as? [String: Any])
+        let data = try XCTUnwrap(json["data"] as? [String: Any])
+        let attributes = try XCTUnwrap(data["attributes"] as? [String: Any])
+        XCTAssertEqual(attributes["name"] as? String, "Early Access")
+        XCTAssertEqual(attributes["publicLinkEnabled"] as? Bool, false)
+        XCTAssertNil(attributes["publicLinkLimit"])
+        let relationships = try XCTUnwrap(data["relationships"] as? [String: Any])
+        let appRelation = try XCTUnwrap(relationships["app"] as? [String: Any])
+        XCTAssertEqual((appRelation["data"] as? [String: String])?["id"], "app")
+    }
+
+    func testCreateFailureShowsPermissionsAndCanRetry() async {
+        var fail = true
+        let model = BetaViewModel(groupsRequest: { method in
+            if case .post = method {
+                if fail { throw APIError.httpError(statusCode: 403) }
+                return self.createdGroup
+            }
+            return self.emptyPage
+        })
+        await model.fetchBetaGroups(app: app)
+        let failed = await model.createGroup(name: "Early Access", publicLinkEnabled: false, publicLinkLimit: nil)
+        XCTAssertFalse(failed)
+        XCTAssertTrue(model.errorMessage?.contains("Admin") == true)
+        XCTAssertNil(model.updatingGroupId)
+        XCTAssertNil(model.groupsErrorMessage, "A write failure must not replace the empty state with a list-load error")
+        fail = false
+        let created = await model.createGroup(name: "Early Access", publicLinkEnabled: false, publicLinkLimit: nil)
+        XCTAssertTrue(created)
+        XCTAssertFalse(model.hasError)
+    }
+
+    func testCreateInternalGroupSendsTypeWithoutPublicLinkOptions() async throws {
+        var postedBody: Data?
+        let model = BetaViewModel(groupsRequest: { method in
+            if case .post(.getBetaGroups, let body, _, _) = method {
+                postedBody = body
+                return Data(String(decoding: self.createdGroup, as: UTF8.self)
+                    .replacingOccurrences(of: "\"isInternalGroup\":false", with: "\"isInternalGroup\":true").utf8)
+            }
+            return self.emptyPage
+        })
+        await model.fetchBetaGroups(app: app)
+        let created = await model.createGroup(name: "Early Access", publicLinkEnabled: false,
+                                              publicLinkLimit: nil, isInternalGroup: true)
+        XCTAssertTrue(created)
+        XCTAssertEqual(model.groups.first?.isInternalGroup, true)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(postedBody)) as? [String: Any])
+        let data = try XCTUnwrap(json["data"] as? [String: Any])
+        let attributes = try XCTUnwrap(data["attributes"] as? [String: Any])
+        XCTAssertEqual(attributes["isInternalGroup"] as? Bool, true)
+        XCTAssertNil(attributes["publicLinkEnabled"])
+        XCTAssertNil(attributes["publicLinkLimitEnabled"])
+        XCTAssertNil(attributes["publicLinkLimit"])
+    }
+
+    func testInternalGroupRejectsPublicLinksBeforeSendingRequest() async {
+        let model = BetaViewModel(groupsRequest: { _ in
+            XCTFail("Invalid public-link options must never reach the API")
+            return Data()
+        })
+        let created = await model.createGroup(name: "Internal", publicLinkEnabled: true,
+                                              publicLinkLimit: nil, isInternalGroup: true)
+        XCTAssertFalse(created)
+        XCTAssertTrue(model.errorMessage?.contains("external") == true)
+    }
+
+    func testOlderReadCannotStopNewerLoadingForSameApp() async {
+        var pending: [CheckedContinuation<Data, Error>] = []
+        let model = BetaViewModel(groupsRequest: { _ in
+            try await withCheckedThrowingContinuation { pending.append($0) }
+        })
+        let first = Task { await model.fetchBetaGroups(app: app) }
+        while pending.count < 1 { await Task.yield() }
+        let second = Task { await model.fetchBetaGroups(app: app) }
+        while pending.count < 2 { await Task.yield() }
+        pending[0].resume(returning: emptyPage)
+        await first.value
+        XCTAssertTrue(model.isGroupsLoading)
+        pending[1].resume(returning: emptyPage)
+        await second.value
+        XCTAssertFalse(model.isGroupsLoading)
+    }
+
+    func testCreateResponseAfterAppSwitchDoesNotInsertIntoOtherApp() async {
+        var pending: CheckedContinuation<Data, Error>?
+        let model = BetaViewModel(groupsRequest: { method in
+            if case .post = method {
+                return try await withCheckedThrowingContinuation { pending = $0 }
+            }
+            return self.emptyPage
+        })
+        await model.fetchBetaGroups(app: app)
+        let create = Task { await model.createGroup(name: "Early Access", publicLinkEnabled: false, publicLinkLimit: nil) }
+        while pending == nil { await Task.yield() }
+        await model.fetchBetaGroups(app: AppsData(id: "other", appStoreVersions: []))
+        pending?.resume(returning: createdGroup)
+        let created = await create.value
+        XCTAssertFalse(created)
+        XCTAssertTrue(model.groups.isEmpty)
+        XCTAssertNil(model.updatingGroupId)
+    }
+}

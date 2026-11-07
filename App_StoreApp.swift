@@ -84,6 +84,7 @@ struct App_StoreApp: App {
 private struct ProductionAppRoot: View {
     @ObservedObject var buildMonitor: BuildProcessingMonitor
     @ObservedObject var appCommands: AppCommandStore
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var navigationManager = NavigationManager()
     @StateObject private var viewModel = SideBarViewModel()
 
@@ -93,6 +94,16 @@ private struct ProductionAppRoot: View {
             .environmentObject(appCommands)
             .sheet(isPresented: $appCommands.showPalette) {
                 CommandPalette(commands: appCommands)
+            }
+            .onAppear {
+                ShipyardIntentNavigation.shared.presentWindow = {
+                    if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.sheetParent == nil }) {
+                        window.makeKeyAndOrderFront(nil)
+                    } else {
+                        openWindow(id: "main")
+                    }
+                    NSApp.activate(ignoringOtherApps: true)
+                }
             }
             .task {
                 buildMonitor.start()

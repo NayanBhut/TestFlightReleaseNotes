@@ -37,6 +37,8 @@ final class BetaViewModel: ObservableObject {
 
     // MARK: - Loading Flags
     @Published var isGroupsLoaded = false
+    @Published private(set) var isGroupsLoading = false
+    @Published private(set) var groupsErrorMessage: String?
     @Published var isTestersLoaded = false
     @Published var updatingTesterId: String?
     @Published var updatingBuildId: String?
@@ -65,7 +67,18 @@ final class BetaViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
+    /// Inject only group reads/creation so empty-state and creation tests never
+    /// need credentials or write to a real App Store Connect account.
+    private let groupsRequest: @MainActor (APIMethod) async throws -> Data
+    private var groupsRequestID = UUID()
+
+    init(groupsRequest: @escaping @MainActor (APIMethod) async throws -> Data = { method in
+        guard let request = APIClient.shared.getRequest(api: method, apiVersion: .v1) else {
+            throw APIError.apiError(error: "Couldn't prepare the request. Check the selected team's API key.")
+        }
+        return try await APIClient.shared.callAPI(with: request)
+    }) {
+        self.groupsRequest = groupsRequest
         $searchText
             .dropFirst()
             .removeDuplicates()
@@ -139,7 +152,13 @@ final class BetaViewModel: ObservableObject {
     // MARK: - Beta Groups
 
     func fetchBetaGroups(app: AppsData) async {
+        let requestID = UUID()
+        groupsRequestID = requestID
         currentAppId = app.id
+        clearError()
+        isGroupsLoaded = false
+        isGroupsLoading = true
+        groupsErrorMessage = nil
         selectedGroup = nil
         testers = []
         isTestersLoaded = false
@@ -153,17 +172,18 @@ final class BetaViewModel: ObservableObject {
             "sort": "name",
             "limit": "50"
         ]
-        guard let request = APIClient.shared.getRequest(
-            api: .get(name: .getBetaGroups, queryParams: queryParams), apiVersion: .v1) else { return }
-
-        isGroupsLoaded = false
         viewState = .betaGroupsLoading
         let stateToken = viewState
+        defer {
+            if groupsRequestID == requestID {
+                isGroupsLoading = false
+                if viewState == stateToken { viewState = ._none }
+            }
+        }
 
         do {
-            let data = try await APIClient.shared.callAPI(with: request)
-            // Drop stale responses if the user switched apps mid-flight.
-            guard self.currentAppId == app.id else { return }
+            let data = try await groupsRequest(.get(name: .getBetaGroups, queryParams: queryParams))
+            guard groupsRequestID == requestID, !Task.isCancelled else { return }
             if viewState == stateToken { viewState = ._none }
             isGroupsLoaded = true
             do {
@@ -174,14 +194,16 @@ final class BetaViewModel: ObservableObject {
             } catch {
                 groups = []
                 presentMessage(serverMessage(from: data) ?? APIError.jsonParsingFailure.details)
+                groupsErrorMessage = errorMessage
             }
         } catch {
             // Drop stale failures: the user switched apps mid-flight and
             // the newer fetch owns the state now.
-            guard self.currentAppId == app.id else { return }
+            guard groupsRequestID == requestID, !Task.isCancelled else { return }
             if viewState == stateToken { viewState = ._none }
             groups = []
             presentError(error)
+            groupsErrorMessage = errorMessage
             isGroupsLoaded = true
         }
     }
@@ -520,10 +542,14 @@ final class BetaViewModel: ObservableObject {
 
     /// POST /v1/betaGroups. Returns true when the group was created (the
     /// caller can dismiss); false leaves the form open with the error shown.
-    func createGroup(name: String, publicLinkEnabled: Bool, publicLinkLimit: Int?) async -> Bool {
+    func createGroup(name: String, publicLinkEnabled: Bool, publicLinkLimit: Int?, isInternalGroup: Bool = false) async -> Bool {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             presentMessage("Enter a name for the group.")
+            return false
+        }
+        guard !isInternalGroup || (!publicLinkEnabled && publicLinkLimit == nil) else {
+            presentMessage("Public links are only available for external testing groups.")
             return false
         }
         if let limit = publicLinkLimit, limit <= 0 {
@@ -534,7 +560,9 @@ final class BetaViewModel: ObservableObject {
             presentMessage("Select an app first.")
             return false
         }
-        guard updatingGroupId == nil else { return false }
+        guard updatingGroupId == nil, !isGroupsLoading else { return false }
+        let requestID = groupsRequestID
+        clearError()
         updatingGroupId = Self.createGroupKey
 
         let encoder = JSONEncoder()
@@ -543,16 +571,16 @@ final class BetaViewModel: ObservableObject {
             data: BetaGroupCreateData(
                 attributes: BetaGroupCreateAttributes(
                     name: trimmedName,
-                    publicLinkEnabled: publicLinkEnabled,
-                    publicLinkLimitEnabled: publicLinkLimit != nil,
-                    publicLinkLimit: publicLinkLimit
+                    publicLinkEnabled: isInternalGroup ? nil : publicLinkEnabled,
+                    publicLinkLimitEnabled: isInternalGroup ? nil : publicLinkLimit != nil,
+                    publicLinkLimit: publicLinkLimit,
+                    isInternalGroup: isInternalGroup
                 ),
                 relationships: BetaGroupCreateRelationships(
                     app: BetaGroupAppRelationship(data: BetaGroupAppRef(id: appId))
                 )
             )
-        )), let request = APIClient.shared.getRequest(
-            api: .post(name: .getBetaGroups, body: body), apiVersion: .v1) else {
+        )) else {
             updatingGroupId = nil
             presentMessage(APIError.jsonConversionFailure.details)
             return false
@@ -561,14 +589,16 @@ final class BetaViewModel: ObservableObject {
         viewState = .betaAssignmentUpdating
         let stateToken = viewState
         do {
-            let data = try await APIClient.shared.callAPI(with: request)
+            let data = try await groupsRequest(.post(name: .getBetaGroups, body: body))
             updatingGroupId = nil
             if viewState == stateToken { viewState = ._none }
-            guard !Task.isCancelled else { return false }
+            guard groupsRequestID == requestID, currentAppId == appId, !Task.isCancelled else { return false }
             do {
                 let group = try getDecoder().decode(BetaGroupModel.self, from: data)
                 // The list fetch sorts by name server-side — insert sorted
                 // so the new row lands where a refresh would put it.
+                groupsErrorMessage = nil
+                isGroupsLoaded = true
                 groups.append(group)
                 groups.sort { ($0.name ?? "") < ($1.name ?? "") }
                 return true
@@ -579,7 +609,7 @@ final class BetaViewModel: ObservableObject {
         } catch {
             updatingGroupId = nil
             if viewState == stateToken { viewState = ._none }
-            guard !Task.isCancelled else { return false }
+            guard groupsRequestID == requestID, currentAppId == appId, !Task.isCancelled else { return false }
             presentWriteError(error)
             return false
         }

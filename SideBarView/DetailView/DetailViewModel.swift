@@ -95,6 +95,8 @@ class DetailViewModel: ObservableObject {
     /// UI tests render deterministic fixtures and must not read the user's
     /// App Store Connect credentials from Keychain.
     private let readsStoredTeam: Bool
+    typealias BuildsRequest = @MainActor (APIMethod) async throws -> Data
+    private let buildsRequest: BuildsRequest
     /// Debug screenshot fixtures are seeded after subscriptions are wired.
     /// Ignore their queued initial sidebar values so they cannot clear the
     /// deterministic state before XCUITest captures the window.
@@ -180,10 +182,17 @@ class DetailViewModel: ObservableObject {
 
     init(sidebarViewModel: SideBarViewModel,
          pasteboard: PasteboardWriting = NSPasteboard.general,
-         readsStoredTeam: Bool = true) {
+         readsStoredTeam: Bool = true,
+         buildsRequest: @escaping BuildsRequest = { method in
+             guard let request = APIClient.shared.getRequest(api: method, apiVersion: .v1) else {
+                 throw APIError.apiError(error: "No team selected. Add a team to load builds.")
+             }
+             return try await APIClient.shared.callAPI(with: request)
+         }) {
         self.sidebarViewModel = sidebarViewModel
         self.pasteboard = pasteboard
         self.readsStoredTeam = readsStoredTeam
+        self.buildsRequest = buildsRequest
         self.currentTeam = readsStoredTeam ? CredentialStorage.shared.selectedTeam : nil
         sidebarViewModel.$versionsState
             .receive(on: DispatchQueue.main)
@@ -328,6 +337,74 @@ class DetailViewModel: ObservableObject {
 }
 
 extension DetailViewModel {
+    /// The newest upload can belong to an older version or a version beyond
+    /// the first picker page. Never replace a selection made while this loads.
+    func selectInitialBuildVersionIfNeeded() async {
+        guard let app = selectedApp, selectedVersion == nil else { return }
+        buildsFetchGeneration += 1
+        let generation = buildsFetchGeneration
+        buildsState = .loading
+        defer {
+            if generation == buildsFetchGeneration, selectedVersion == nil,
+               buildsState.isLoading {
+                buildsState = .idle
+            }
+        }
+        do {
+            let data = try await buildsRequest(.get(name: .getVersionBuilds, queryParams: [
+                "filter[app]": app.id, "sort": "-uploadedDate", "limit": "1",
+                "include": "preReleaseVersion",
+                "fields[builds]": "preReleaseVersion",
+                "fields[preReleaseVersions]": "version,platform"
+            ]))
+            let response = try JSONDecoder().decode(InitialBuildVersionResponse.self, from: data)
+            guard !Task.isCancelled, generation == buildsFetchGeneration,
+                  selectedApp?.id == app.id, selectedVersion == nil else { return }
+            guard let build = response.data.first else {
+                buildsState = .empty
+                return
+            }
+            guard build.type == "builds",
+                  let reference = build.relationships?.preReleaseVersion?.data,
+                  reference.type == "preReleaseVersions",
+                  let included = response.included?.first(where: {
+                      $0.id == reference.id && $0.type == reference.type
+                  }) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Missing pre-release version"))
+            }
+            var version = PreReleaseVersionsModel(id: included.id)
+            version.version = included.attributes.version
+            version.platform = included.attributes.platform
+            setSelectedVersionAndGetBuilds(selectedVersion: version)
+        } catch {
+            guard !Task.isCancelled, generation == buildsFetchGeneration,
+                  selectedApp?.id == app.id, selectedVersion == nil else { return }
+            buildsState = .error(FriendlyErrorMessage.message(for: error, requiring: .testFlight))
+        }
+    }
+
+    // Decode this sparse projection without the shared BuildsModel's required
+    // betaBuildLocalizations relationship (which isn't needed for selection).
+    private struct InitialBuildVersionResponse: Decodable {
+        struct Reference: Decodable { let type: String; let id: String }
+        struct Build: Decodable {
+            struct Relationships: Decodable {
+                struct ToOne: Decodable { let data: Reference? }
+                let preReleaseVersion: ToOne?
+            }
+            let type: String
+            let relationships: Relationships?
+        }
+        struct Version: Decodable {
+            struct Attributes: Decodable { let version: String?; let platform: String? }
+            let type: String
+            let id: String
+            let attributes: Attributes
+        }
+        let data: [Build]
+        let included: [Version]?
+    }
+
     func retryVersions() {
         sidebarViewModel.retryVersions()
     }
@@ -473,15 +550,8 @@ extension DetailViewModel {
             preReleaseVersionId: version.id,
             cursor: cursor)
 
-        guard let request = APIClient.shared.getRequest(api: .get(name: .getVersionBuilds, queryParams: queryParams), apiVersion: .v1) else {
-            if !isPaginating {
-                buildsState = .error("No team selected. Add a team to load builds.")
-            }
-            return
-        }
-
         do {
-            let data = try await APIClient.shared.callAPI(with: request)
+            let data = try await buildsRequest(.get(name: .getVersionBuilds, queryParams: queryParams))
             let model = try getDecoder().decode(BuildsDocument.self, from: data)
             // Ignore stale responses superseded by a newer fetch or a
             // selection reset: the generation is bumped on both, so a

@@ -95,10 +95,18 @@ Not supported (Apple has no public API or it's web-only): sales/finance reports,
 - Create (`POST`), update (`PATCH`), and delete (`DELETE`) beta build localizations.
 - Bulk **Save All**, dirty-diff review, locale-completeness matrix, snippet menu, and expire-build action.
 
+### Shortcuts and Spotlight
+
+- In the macOS Shortcuts app, find Shipyard's **Get Latest Build** and **Open App** actions.
+- Choose an app from the currently selected team. Search by name or exact bundle ID for apps beyond the first suggestions. Saved app choices retain their account scope; select the original team before running them.
+- **Get Latest Build** returns a TestFlight Build with version, build number, processing status, platform, upload date, expired flag, and build ID. It uses the latest upload across versions and platforms, including expired builds.
+- **Open App** brings the selected app's Builds screen forward. Both actions use existing Keychain credentials and API permissions.
+- Shortcuts actions work with the app's macOS 15 minimum; direct Spotlight actions require macOS 26 or later.
+
 ### Beta Groups & Testers
 - List internal/external groups (incl. public links), view testers, invite by email or from team users.
 - Add/remove testers, assign builds to groups, toggle auto-notify, submit external review and check its status.
-- Create/rename/delete groups.
+- Create internal or external groups from New Group (or +), and rename/delete existing groups. Internal testers must be App Store Connect team members with access to the app.
 
 ### App Info
 - General info (Apple ID, bundle ID, SKU, primary locale), app info state, age rating, categories, and export compliance.

@@ -4,7 +4,7 @@
 //
 //  Apps table from the apps-list-light Figma frame: toolbar (title + total
 //  pill, Filter Apps search, Status/Sort menus, refresh) over an Icon /
-//  App Name / Bundle ID / Apple ID / State / Platform table. Row tap opens
+//  App Name / Bundle ID / Apple ID / App Store Versions table. Row tap opens
 //  the app's builds. The numeric Apple ID is not exposed by the App Store
 //  Connect API, so that column renders a dash.
 //
@@ -58,6 +58,7 @@ struct AppsTableView: View {
             }
             .menuStyle(.borderlessButton)
             .accessibilityLabel("Filter by status")
+            .help("Matches any App Store version in this state, including drafts.")
 
             Menu {
                 ForEach(AppConfigs.SortOption.allCases, id: \.self) { option in
@@ -183,8 +184,7 @@ struct AppsTableView: View {
             Text("App Name").frame(width: 180, alignment: .leading)
             Text("Bundle ID").frame(width: 220, alignment: .leading)
             Text("Apple ID").frame(width: 120, alignment: .leading)
-            Text("State").frame(width: 200, alignment: .leading)
-            Text("Platform").frame(maxWidth: .infinity, alignment: .leading)
+            Text("App Store Versions").frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundColor(ShipyardTheme.body)
@@ -220,37 +220,17 @@ struct AppsTableView: View {
                     .foregroundColor(ShipyardTheme.tertiary)
                     .frame(width: 120, alignment: .leading)
 
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(app.currentState.stateColor)
-                        .frame(width: 6, height: 6)
-                        .accessibilityHidden(true)
-                    Text(app.currentState.isEmpty ? "—" : app.currentState)
-                        .font(.system(size: 12))
-                        .foregroundColor(ShipyardTheme.title)
-                        .lineLimit(1)
-                }
-                .frame(width: 200, alignment: .leading)
+                listingVersions(app)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 4) {
-                    ForEach(appPlatforms(app), id: \.self) { platform in
-                        Text(platform)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(ShipyardTheme.body)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(ShipyardTheme.tableHeader)
-                            .cornerRadius(4)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 16)
-            .frame(height: 38)
+            .frame(minHeight: 44)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(name), \(app.currentState)")
+        .accessibilityLabel("\(name), \(listingDescription(app))")
         .accessibilityHint("Opens this app's builds")
     }
 
@@ -273,10 +253,51 @@ struct AppsTableView: View {
         }
     }
 
-    /// Platforms from the app's store versions (the apps endpoint carries
-    /// no per-app platform list).
-    private func appPlatforms(_ app: AppsData) -> [String] {
-        Array(Set(app.appStoreVersions.compactMap(\.platform).map(shipyardPlatformDisplay))).sorted()
+    private func listingLines(_ app: AppsData) -> [String] {
+        guard let versions = sidebarVM.listingVersionStates[app.id]?.loadedValue else { return [] }
+        return AppStoreListingSummary(versions: versions).platforms.flatMap { platform -> [String] in
+            let prefix = platform.id.isEmpty ? "" : "\(shipyardPlatformDisplay(platform.id)) · "
+            var lines: [String] = []
+            if let live = platform.live {
+                lines.append("\(prefix)Live \(live.versionString ?? "—")")
+            }
+            if let upcoming = platform.upcoming {
+                let lead = platform.live == nil ? "" : "Next "
+                lines.append("\(prefix)\(lead)\(upcoming.versionString ?? "—") · \(getStatusLabel(appStoreState: AppStoreListingSummary.state(upcoming)))")
+            }
+            if let other = platform.other {
+                lines.append("\(prefix)\(other.versionString ?? "—") · \(getStatusLabel(appStoreState: AppStoreListingSummary.state(other)))")
+            }
+            return lines
+        }
+    }
+
+    private func listingDescription(_ app: AppsData) -> String {
+        if case .error = sidebarVM.listingVersionStates[app.id] { return "App Store versions unavailable. Refresh apps to retry." }
+        guard sidebarVM.listingVersionStates[app.id]?.loadedValue != nil else { return "Loading App Store versions" }
+        let lines = listingLines(app)
+        return lines.isEmpty ? "No App Store versions" : lines.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private func listingVersions(_ app: AppsData) -> some View {
+        let lines = listingLines(app)
+        if lines.isEmpty {
+            Text(listingDescription(app))
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .help(listingDescription(app))
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 12))
+                        .foregroundColor(ShipyardTheme.title)
+                        .lineLimit(1)
+                        .help(line)
+                }
+            }
+        }
     }
 
     @ViewBuilder

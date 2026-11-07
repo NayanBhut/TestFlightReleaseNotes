@@ -149,10 +149,13 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
     case apps
     case builds
     case appInfo
+    case appInfoWaiting
     case ageRatings
     case feedback
     case pricing
+    case groups
     case reviews
+    case reviewsEmpty
     case release
 
     static var current: Self? {
@@ -163,11 +166,11 @@ enum AppStoreScreenshotScreen: String, CaseIterable {
 
     var appTab: AppDetailView.AppTab {
         switch self {
-        case .apps, .builds: return .builds
-        case .appInfo, .ageRatings: return .appInfo
+        case .apps, .builds, .groups: return .builds
+        case .appInfo, .appInfoWaiting, .ageRatings: return .appInfo
         case .feedback: return .feedback
         case .pricing: return .pricing
-        case .reviews: return .reviews
+        case .reviews, .reviewsEmpty: return .reviews
         case .release: return .release
         }
     }
@@ -385,7 +388,7 @@ struct AppStoreScreenshotHost: View {
     @StateObject private var sidebarVM: SideBarViewModel
     @StateObject private var detailVM: DetailViewModel
     @StateObject private var reviewsVM: ReviewsViewModel
-    @StateObject private var betaVM = BetaViewModel()
+    @StateObject private var betaVM: BetaViewModel
     @StateObject private var toastCenter = ShipyardToastCenter()
     @State private var tab: AppDetailView.AppTab
     @State private var isReady = false
@@ -417,10 +420,50 @@ struct AppStoreScreenshotHost: View {
             builds: fixtures.builds,
             appInfo: sampleAppInfo,
             versionLocalizations: fixtures.versionLocalizations)
+        var sampleVersion = fixtures.appStoreVersion
+        if screen == .appInfoWaiting {
+            sampleVersion.appStoreState = "WAITING_FOR_REVIEW"
+            sampleVersion.appVersionState = "WAITING_FOR_REVIEW"
+        }
         reviewsVM.configureForScreenshotSample(
             app: fixtures.primaryApp,
             reviews: fixtures.reviews,
-            version: fixtures.appStoreVersion)
+            version: sampleVersion)
+        if screen == .reviews || screen == .reviewsEmpty {
+            if screen == .reviewsEmpty {
+                reviewsVM.reviewsState = .empty
+                reviewsVM.reviewsMeta = Meta(paging: .init(total: 0, limit: 50, nextCursor: nil))
+            } else {
+                reviewsVM.reviewsMeta = Meta(paging: .init(total: fixtures.reviews.count + 2, limit: 50, nextCursor: "sample-next"))
+                reviewsVM.reviewsNextCursor = "sample-next"
+            }
+            var draft = ReviewSubmissionModel(id: "sample-draft")
+            draft.state = "READY_FOR_REVIEW"
+            var waiting = ReviewSubmissionModel(id: "sample-waiting")
+            waiting.state = "WAITING_FOR_REVIEW"
+            waiting.platform = sampleVersion.platform
+            waiting.appStoreVersionForReview = sampleVersion
+            waiting.submittedDate = "2026-10-19T10:00:00Z"
+            var completed = ReviewSubmissionModel(id: "sample-complete")
+            completed.state = "COMPLETE"
+            completed.platform = sampleVersion.platform
+            completed.appStoreVersionForReview = sampleVersion
+            completed.submittedDate = "2026-10-01T10:00:00Z"
+            reviewsVM.submissionsState = .loaded([draft, waiting, completed])
+        }
+
+        _betaVM = StateObject(wrappedValue: BetaViewModel(groupsRequest: { method in
+            if case .post(.getBetaGroups, let body, _, _) = method {
+                let request = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+                let data = request?["data"] as? [String: Any]
+                let attributes = data?["attributes"] as? [String: Any]
+                return try JSONSerialization.data(withJSONObject: ["data": [
+                    "type": "betaGroups", "id": "sample-new-group", "attributes": attributes ?? [:],
+                    "relationships": ["betaTesters": ["data": []], "builds": ["data": []]]
+                ]])
+            }
+            return Data(#"{"data":[],"meta":{"paging":{"total":0,"limit":50}}}"#.utf8)
+        }))
 
         self.screen = screen
         self.app = fixtures.primaryApp
@@ -455,7 +498,9 @@ struct AppStoreScreenshotHost: View {
 
     @ViewBuilder
     private var content: some View {
-        if screen == .apps {
+        if screen == .groups {
+            BetaGroupsView(betaVM: betaVM, app: app, build: ScreenshotFixtures().builds[0])
+        } else if screen == .apps {
             AppsTableView(sidebarVM: sidebarVM, onOpenApp: { _ in })
         } else {
             AppDetailView(
@@ -628,8 +673,14 @@ private struct ScreenshotFixtures {
         var primary = makeApp("northstar", "Northstar", "com.example.northstar", "3.8.1", "READY_FOR_SALE")
         primary.currentLiveVersion = ("northstar-live", "3.8.1")
         primaryApp = primary
+        var upcoming = AppStoreVersionsModel(id: "northstar-upcoming", appStoreVersionLocalizations: [])
+        upcoming.versionString = "3.8.2"
+        upcoming.platform = "MAC_OS"
+        upcoming.appStoreState = "WAITING_FOR_REVIEW"
+        var listingPrimary = primary
+        listingPrimary.appStoreVersions.insert(upcoming, at: 0)
         apps = [
-            primary,
+            listingPrimary,
             makeApp("atlas", "Atlas Journal", "com.example.atlas", "2.6.0", "READY_FOR_SALE"),
             makeApp("harbor", "Harbor Weather", "com.example.harbor", "5.1.2", "PREPARE_FOR_SUBMISSION"),
             makeApp("lumen", "Lumen Tasks", "com.example.lumen", "4.4.0", "WAITING_FOR_REVIEW"),

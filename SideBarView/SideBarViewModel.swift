@@ -13,6 +13,21 @@ private let sidebarLogger = Logger(subsystem: "com.appstore.release-notes", cate
 
 @MainActor
 class SideBarViewModel: ObservableObject {
+    typealias AppStoreVersionsRequest = @MainActor (APIMethod) async throws -> Data
+    private let appStoreVersionsRequest: AppStoreVersionsRequest
+    @Published private(set) var listingVersionStates: [String: ViewState<[AppStoreVersionsModel]>] = [:]
+    private var listingVersionsTask: Task<Void, Never>?
+    private var listingVersionsGeneration = UUID()
+
+    init(appStoreVersionsRequest: AppStoreVersionsRequest? = nil) {
+        self.appStoreVersionsRequest = appStoreVersionsRequest ?? { method in
+            guard let request = APIClient.shared.getRequest(api: method, apiVersion: .v1) else {
+                throw URLError(.userAuthenticationRequired)
+            }
+            return try await APIClient.shared.callAPI(with: request)
+        }
+    }
+
     @Published var isExpanded = false
     @Published var appsState: ViewState<[AppsData]> = .idle
     @Published var versionsState: ViewState<[PreReleaseVersionsModel]> = .idle
@@ -125,6 +140,7 @@ class SideBarViewModel: ObservableObject {
             // Silent refresh (search): keep the current list and selection
             // visible while the server query is in flight.
         } else {
+            resetListingVersions()
             appsState = .loading
             // Team switch / refresh / filter change clears selection cleanly.
             selectedApp = nil
@@ -222,13 +238,17 @@ class SideBarViewModel: ObservableObject {
     private func updateCurrentLiveVersion(responseApp: AppsDocument, nextPage: String? = nil, isSearchRefresh: Bool = false, requestSearchTerm: String = "") {
         let processedApps = responseApp.data.map { appData -> AppsData in
             var tempApp = appData
-            let currentVersion = appData.appStoreVersions.first
-
-            tempApp.currentLiveVersion = (
-                currentVersion?.id ?? "",
-                currentVersion?.versionString ?? "Not Last Version"
-            )
-            tempApp.currentState = currentVersion?.appVersionState ?? ""
+            // Included relationships can be truncated. Do not present them as
+            // the authoritative release summary while the dedicated fetch runs.
+            tempApp.currentLiveVersion = ("", "")
+            tempApp.currentState = ""
+            if let versions = listingVersionStates[appData.id]?.loadedValue {
+                tempApp.appStoreVersions = versions
+                let summary = AppStoreListingSummary(versions: versions)
+                let primary = summary.primaryVersion
+                tempApp.currentLiveVersion = (summary.liveVersion?.id ?? "", summary.liveVersion?.versionString ?? "")
+                tempApp.currentState = primary.map(AppStoreListingSummary.state) ?? ""
+            }
             // Phase 5: app icon template URL (resolved to a concrete size in the view).
             tempApp.iconURL = appData.appStoreIcon?.iconAsset?.templateUrl
 
@@ -270,10 +290,113 @@ class SideBarViewModel: ObservableObject {
         }
 
         appMeta = responseApp.meta
+        startListingVersions()
         if allLoadedApps.isEmpty {
             appsState = .empty
         } else {
             appsState = .loaded(allLoadedApps)
+        }
+    }
+
+    private func resetListingVersions() {
+        listingVersionsTask?.cancel()
+        listingVersionsGeneration = UUID()
+        listingVersionStates = [:]
+    }
+
+    private func startListingVersions() {
+        listingVersionsTask?.cancel()
+        listingVersionsGeneration = UUID()
+        let generation = listingVersionsGeneration
+        let appIDs = allLoadedApps.filter { listingVersionStates[$0.id]?.loadedValue == nil }.map(\.id)
+        for appID in appIDs { listingVersionStates[appID] = .loading }
+        listingVersionsTask = Task { [weak self] in
+            guard let self else { return }
+            // Bound concurrent requests. Sparse version attributes avoid fetching
+            // builds, screenshots, and localizations for every app in the list.
+            for offset in stride(from: 0, to: appIDs.count, by: 3) {
+                guard !Task.isCancelled else { return }
+                await withTaskGroup(of: Void.self) { group in
+                    for appID in appIDs[offset..<min(offset + 3, appIDs.count)] {
+                        group.addTask { [self] in
+                            await self.loadListingVersions(appID: appID, generation: generation)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func loadListingVersions(appID: String) async {
+        await loadListingVersions(appID: appID, generation: listingVersionsGeneration)
+    }
+
+    private func loadListingVersions(appID: String, generation: UUID) async {
+        guard generation == listingVersionsGeneration, !Task.isCancelled else { return }
+        listingVersionStates[appID] = .loading
+        do {
+            var versions: [AppStoreVersionsModel] = []
+            var cursor: String?
+            var visited = Set<String>()
+            repeat {
+                var query = ["limit": "200", "fields[appStoreVersions]": "versionString,platform,appStoreState,appVersionState,createdDate"]
+                if let cursor {
+                    guard visited.insert(cursor).inserted else { throw URLError(.badServerResponse) }
+                    query["cursor"] = cursor
+                }
+                let data = try await appStoreVersionsRequest(.get(name: .getAllApps, queryParams: query, path: "\(appID)/appStoreVersions"))
+                guard generation == listingVersionsGeneration, !Task.isCancelled else { return }
+                let page = try JSONDecoder().decode(ListingVersionsPage.self, from: data)
+                versions.append(contentsOf: page.data.map { item in
+                    var version = AppStoreVersionsModel(id: item.id, appStoreVersionLocalizations: [])
+                    version.versionString = item.attributes?.versionString
+                    version.platform = item.attributes?.platform
+                    version.appStoreState = item.attributes?.appStoreState
+                    version.appVersionState = item.attributes?.appVersionState
+                    version.createdDate = item.attributes?.createdDate
+                    return version
+                })
+                cursor = page.nextCursor
+            } while cursor != nil
+            listingVersionStates[appID] = .loaded(versions)
+            if let index = allLoadedApps.firstIndex(where: { $0.id == appID }) {
+                allLoadedApps[index].appStoreVersions = versions
+                let summary = AppStoreListingSummary(versions: versions)
+                let primary = summary.primaryVersion
+                allLoadedApps[index].currentLiveVersion = (summary.liveVersion?.id ?? "", summary.liveVersion?.versionString ?? "")
+                allLoadedApps[index].currentState = primary.map(AppStoreListingSummary.state) ?? ""
+                appsState = .loaded(allLoadedApps)
+            }
+        } catch {
+            guard generation == listingVersionsGeneration, !Task.isCancelled else { return }
+            listingVersionStates[appID] = .error(FriendlyErrorMessage.message(for: error, requiring: .apps))
+        }
+    }
+
+    private struct ListingVersionsPage: Decodable {
+        struct Resource: Decodable {
+            struct Attributes: Decodable {
+                let versionString: String?
+                let platform: String?
+                let appStoreState: String?
+                let appVersionState: String?
+                let createdDate: String?
+            }
+            let id: String
+            let attributes: Attributes?
+        }
+        struct Metadata: Decodable {
+            struct Paging: Decodable { let nextCursor: String? }
+            let paging: Paging?
+        }
+        struct Links: Decodable { let next: String? }
+        let data: [Resource]
+        let meta: Metadata?
+        let links: Links?
+
+        var nextCursor: String? {
+            meta?.paging?.nextCursor ?? links?.next.flatMap { URLComponents(string: $0) }?
+                .queryItems?.first(where: { $0.name == "cursor" })?.value
         }
     }
 
@@ -283,6 +406,7 @@ class SideBarViewModel: ObservableObject {
     }
 
     func updateTeam() {
+        resetListingVersions()
         // Reset search/filter state without firing per-field observers; the
         // single explicit fetch below is the only request for the new team.
         suppressFilterObservers = true
@@ -299,6 +423,7 @@ class SideBarViewModel: ObservableObject {
     /// or builds linger behind the login sheet. DetailViewModel observes
     /// selectedApp/versionsState and clears its own state in turn.
     func clearOnLogout() {
+        resetListingVersions()
         appsFetchTask?.cancel()
         versionsFetchTask?.cancel()
         searchDebounceTask?.cancel()
@@ -379,6 +504,8 @@ class SideBarViewModel: ObservableObject {
         appsFetchTask?.cancel()
         versionsFetchTask?.cancel()
         searchDebounceTask?.cancel()
+        resetListingVersions()
+        listingVersionStates = Dictionary(uniqueKeysWithValues: apps.map { ($0.id, .loaded($0.appStoreVersions)) })
         allLoadedApps = apps
         appsState = .loaded(apps)
         appMeta = Meta(paging: .init(total: apps.count, limit: apps.count, nextCursor: nil))

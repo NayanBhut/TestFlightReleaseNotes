@@ -32,7 +32,9 @@ struct InviteTesterSheet: View {
                 Text("Invite Tester")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(ShipyardTheme.title)
-                Text("Invite an external tester to join beta testing.")
+                Text(betaVM.selectedGroup?.isInternalGroup == true
+                     ? "Add a team member using their App Store Connect email. They must have access to this app."
+                     : "Invite an external tester to join beta testing.")
                     .font(.system(size: 12))
                     .foregroundColor(ShipyardTheme.body)
             }

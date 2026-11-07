@@ -67,6 +67,47 @@ struct ReviewSubmissionModel: Equatable {
 typealias CustomerReviewsDocument = CompoundDocument<[CustomerReviewModel], Meta>
 typealias ReviewSubmissionsDocument = CompoundDocument<[ReviewSubmissionModel], Meta>
 
+enum ReviewSubmissionGroup: String, CaseIterable {
+    case drafts = "Drafts"
+    case inProgress = "In Progress"
+    case completed = "Completed"
+    case other = "Other"
+}
+
+extension ReviewSubmissionModel {
+    var displayState: String {
+        switch state {
+        case "READY_FOR_REVIEW": return "Ready for Review"
+        case "WAITING_FOR_REVIEW": return "Waiting for Review"
+        case "IN_REVIEW": return "In Review"
+        case "UNRESOLVED_ISSUES": return "Unresolved Issues"
+        case "CANCELING": return "Withdrawing"
+        case "COMPLETING": return "Completing"
+        case "COMPLETE": return "Completed"
+        default: return state?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Unknown"
+        }
+    }
+
+    var displayGroup: ReviewSubmissionGroup {
+        switch state {
+        case "READY_FOR_REVIEW": return .drafts
+        case "WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES", "CANCELING", "COMPLETING": return .inProgress
+        case "COMPLETE": return .completed
+        default: return .other
+        }
+    }
+
+    var cancellationTitle: String {
+        state == "READY_FOR_REVIEW" ? "Discard Draft" : "Withdraw"
+    }
+
+    var cancellationMessage: String {
+        state == "READY_FOR_REVIEW"
+            ? "This removes the unsubmitted review draft. It has not been sent to Apple."
+            : "This withdraws the submission from App Review. You can submit it again later."
+    }
+}
+
 // MARK: - POST /v1/reviewSubmissions (submit for review)
 
 /// Verified against spec v4.3.1: only `relationships.app` is required;

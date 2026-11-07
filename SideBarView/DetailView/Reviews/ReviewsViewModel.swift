@@ -179,6 +179,24 @@ func isVersionEditable(appStoreState: String?) -> Bool {
     return editableAppStoreVersionStates.contains(appStoreState)
 }
 
+/// A locked version isn't necessarily live: submitted and approved versions
+/// must retain their actual status and offer the appropriate next step.
+func appInfoReadOnlyMessage(appStoreState: String?) -> String? {
+    guard !isVersionEditable(appStoreState: appStoreState) else { return nil }
+    switch appStoreState {
+    case "WAITING_FOR_REVIEW", "READY_FOR_REVIEW":
+        return "This version is \(getStatusLabel(appStoreState: appStoreState)). Submitted metadata is read-only here. To edit it, remove the submission from review in App Store Versions."
+    case "IN_REVIEW":
+        return "This version is In Review. Submitted metadata is read-only here while App Review is in progress."
+    case "READY_FOR_SALE", "READY_FOR_DISTRIBUTION":
+        return "This version is live (read-only). Create a new version in App Store Versions to edit metadata."
+    case nil:
+        return "Version status is unavailable. Metadata is read-only until the status can be verified."
+    default:
+        return "This version is \(getStatusLabel(appStoreState: appStoreState)). Metadata is read-only in this state."
+    }
+}
+
 @MainActor
 final class ReviewsViewModel: ObservableObject {
     typealias AppStoreVersionsRequest = @MainActor (APIMethod) async throws -> Data
@@ -2909,10 +2927,10 @@ enum ReviewSortOption: String, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .newest: return "Sort: Newest ↓"
-        case .oldest: return "Sort: Oldest ↑"
-        case .highestRated: return "Sort: Highest ★"
-        case .lowestRated: return "Sort: Lowest ★"
+        case .newest: return "Sort: Newest first"
+        case .oldest: return "Sort: Oldest first"
+        case .highestRated: return "Sort: Highest rated"
+        case .lowestRated: return "Sort: Lowest rated"
         }
     }
 }
@@ -3037,7 +3055,7 @@ extension ReviewsViewModel {
     /// territory filter. The server filter[territory] values (USA/CAN/GBR/
     /// DEU/JPN) are a subset of what may appear here.
     var availableTerritories: [String] {
-        Array(Set((reviewsState.loadedValue ?? []).compactMap(\.territory))).sorted()
+        Array(Set(reviewRows.compactMap(\.territory))).sorted()
     }
 
     /// Sample statistics over the loaded written reviews.

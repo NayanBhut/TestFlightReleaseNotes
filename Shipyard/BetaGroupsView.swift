@@ -21,6 +21,7 @@ struct BetaGroupsView: View {
 
     @State private var tab: GroupTab = .testers
     @State private var showInviteSheet = false
+    @State private var showCreateGroupSheet = false
     @State private var removingTester: BetaTesterModel?
     @State private var deletingTester: BetaTesterModel?
     @State private var showDeleteGroupConfirm = false
@@ -50,8 +51,13 @@ struct BetaGroupsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ShipyardTheme.tableBackground)
-        .onAppear {
-            Task { await refreshIfStale() }
+        .task(id: app?.id) {
+            await refreshIfStale()
+        }
+        .sheet(isPresented: $showCreateGroupSheet) {
+            CreateBetaGroupSheet(betaVM: betaVM) {
+                showCreateGroupSheet = false
+            }
         }
         .onChange(of: betaVM.groups) { _, groups in
             if betaVM.selectedGroup == nil, let first = groups.first {
@@ -167,22 +173,49 @@ struct BetaGroupsView: View {
 
     // MARK: - Groups column
 
+    private func openCreateGroup() {
+        betaVM.clearError()
+        showCreateGroupSheet = true
+    }
+
+    private var groupControlsDisabled: Bool {
+        app == nil || betaVM.currentAppId != app?.id
+            || betaVM.isGroupsLoading || betaVM.updatingGroupId != nil
+    }
+
     private var groupsColumn: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("BETA GROUPS")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(ShipyardTheme.body)
-                .padding(.horizontal, 10)
-                .padding(.top, 12)
+            HStack {
+                Text("BETA GROUPS")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(ShipyardTheme.body)
+                Spacer()
+                Button(action: openCreateGroup) {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("New Beta Group")
+                .accessibilityLabel("New Beta Group")
+                .accessibilityIdentifier("beta-groups.new")
+                .disabled(groupControlsDisabled)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 12)
 
-            if betaVM.groups.isEmpty {
+            if betaVM.isGroupsLoading {
                 HStack {
                     Spacer()
                     ProgressView()
                         .scaleEffect(0.8)
+                        .accessibilityIdentifier("beta-groups.loading")
                     Spacer()
                 }
                 .padding(.top, 20)
+            } else if betaVM.groups.isEmpty {
+                Text(betaVM.groupsErrorMessage != nil ? "Couldn't load groups" : "No beta groups yet")
+                    .font(.system(size: 12))
+                    .foregroundColor(ShipyardTheme.body)
+                    .padding(12)
             } else {
                 ForEach(betaVM.groups, id: \.id) { group in
                     groupRow(group)
@@ -259,15 +292,39 @@ struct BetaGroupsView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
+        } else if betaVM.isGroupsLoading {
+            ProgressView("Loading beta groups…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let message = betaVM.groupsErrorMessage {
+            VStack(spacing: 12) {
+                Text("Couldn't Load Beta Groups")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(message)
+                    .font(.system(size: 12))
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    guard let app else { return }
+                    Task { await betaVM.fetchBetaGroups(app: app) }
+                }
+                .buttonStyle(.launchSecondary)
+                .accessibilityIdentifier("beta-groups.retry")
+                .disabled(betaVM.updatingGroupId != nil)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 12) {
                 Spacer()
                 Text("No Beta Groups")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(ShipyardTheme.title)
-                Text("Create a group in App Store Connect to manage testers")
+                Text("Create a beta group to start inviting testers.")
                     .font(.system(size: 13))
                     .foregroundColor(ShipyardTheme.body)
+                Button("New Group", action: openCreateGroup)
+                    .buttonStyle(.launchPrimary)
+                    .accessibilityIdentifier("beta-groups.create-empty")
+                    .disabled(groupControlsDisabled)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -347,7 +404,9 @@ struct BetaGroupsView: View {
                     Text("No Testers")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(ShipyardTheme.title)
-                    Text("Invite testers by email to fill this group")
+                    Text(group.isInternalGroup == true
+                         ? "Add App Store Connect team members to this group"
+                         : "Invite testers by email to fill this group")
                         .font(.system(size: 12))
                         .foregroundColor(ShipyardTheme.body)
                     Spacer()
@@ -589,4 +648,81 @@ private func testerStatus(_ tester: BetaTesterModel) -> TesterStatus {
         return TesterStatus(color: ShipyardTheme.warning, text: "Invited")
     }
     return TesterStatus(color: ShipyardTheme.success, text: "Active")
+}
+
+/// Testers can be added after creation. Public links start disabled for
+/// external groups and are not sent for internal groups.
+private struct CreateBetaGroupSheet: View {
+    @ObservedObject var betaVM: BetaViewModel
+    var onDone: () -> Void
+    @EnvironmentObject private var toastCenter: ShipyardToastCenter
+    @State private var name = ""
+    @State private var isInternalGroup = false
+    @State private var isCreating = false
+    @FocusState private var nameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("New Beta Group")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(ShipyardTheme.title)
+            Picker("Group Type", selection: $isInternalGroup) {
+                Text("External").tag(false)
+                Text("Internal").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .disabled(isCreating)
+            .accessibilityIdentifier("beta-groups.type")
+            Text(isInternalGroup
+                 ? "Internal testers must be App Store Connect team members with access to this app."
+                 : "External testers can join by email without App Store Connect access.")
+                .font(.system(size: 12))
+                .foregroundColor(ShipyardTheme.body)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("GROUP NAME")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ShipyardTheme.body)
+                TextField("e.g. Early Access", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
+                    .focused($nameFocused)
+                    .disabled(isCreating)
+                    .accessibilityIdentifier("beta-groups.name")
+            }
+            if betaVM.hasError, let message = betaVM.errorMessage {
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppTheme.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onDone)
+                    .buttonStyle(.launchSecondary)
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isCreating)
+                if isCreating { ProgressView().controlSize(.small) }
+                Button("Create Group") {
+                    Task { @MainActor in
+                        isCreating = true
+                        defer { isCreating = false }
+                        if await betaVM.createGroup(name: name, publicLinkEnabled: false, publicLinkLimit: nil,
+                                                    isInternalGroup: isInternalGroup) {
+                            toastCenter.show("Beta group created", detail: name, variant: .success)
+                            onDone()
+                        }
+                    }
+                }
+                .buttonStyle(.launchPrimary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+                .accessibilityIdentifier("beta-groups.confirm-create")
+            }
+        }
+        .padding(24)
+        .frame(width: 440)
+        .interactiveDismissDisabled(isCreating)
+        .onAppear { nameFocused = true }
+    }
 }

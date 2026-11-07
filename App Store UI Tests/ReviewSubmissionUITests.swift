@@ -6,6 +6,135 @@ final class ReviewSubmissionUITests: XCTestCase {
     private let launchTimeout: TimeInterval = 8
     private var app: XCUIApplication!
 
+    func testAppsListUsesLiveAndUpcomingAppStoreVersions() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "apps", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.apps").waitForExistence(timeout: launchTimeout))
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Northstar,")).firstMatch
+        XCTAssertTrue(row.exists)
+        XCTAssertTrue(row.label.contains("Live 3.8.1"), row.label)
+        XCTAssertTrue(row.label.contains("Next 3.8.2 · Waiting for Review"), row.label)
+        XCTAssertFalse(row.label.contains("3.9.0"), "The TestFlight version must not supply App Store details")
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "apps-app-store-versions"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    func testReviewsEmptyControlsAndDraftWithdrawalConfirmation() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "reviewsEmpty", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.reviewsEmpty").waitForExistence(timeout: launchTimeout))
+        XCTAssertFalse(app.textFields["reviews.search"].isEnabled)
+        for id in ["rating", "territory", "date", "sort", "reply"] {
+            let filter = element("reviews.filter.\(id)")
+            XCTAssertTrue(filter.exists)
+            XCTAssertFalse(filter.isEnabled)
+            XCTAssertGreaterThanOrEqual(filter.frame.height, 28)
+        }
+        let count = element("reviews.count")
+        XCTAssertTrue(((count.value as? String) ?? count.label).contains("0 of 0"))
+        XCTAssertEqual(app.buttons.matching(identifier: "reviews.refresh").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "reviews.open-listing").count, 1)
+        let draft = button("reviews.submission.cancel.sample-draft")
+        XCTAssertTrue(draft.exists)
+        XCTAssertEqual(draft.label, "Discard Draft")
+        let waiting = button("reviews.submission.cancel.sample-waiting")
+        XCTAssertEqual(waiting.label, "Withdraw")
+        draft.click()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "unsubmitted review draft")).firstMatch
+            .waitForExistence(timeout: interactionTimeout))
+        button("Keep Submission").click()
+        XCTAssertTrue(draft.isEnabled, "Dismissing confirmation must preserve the draft")
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "reviews-empty-and-submissions"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    func testReviewsSearchRecoveryKeepsPaginationAndFiltersAvailable() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "reviews", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.reviews").waitForExistence(timeout: launchTimeout))
+        let search = app.textFields["reviews.search"]
+        let rating = element("reviews.filter.rating")
+        XCTAssertTrue(search.isEnabled)
+        XCTAssertGreaterThan(search.frame.width, 600)
+        XCTAssertLessThan(search.frame.maxY, rating.frame.minY)
+        search.click()
+        search.typeText("zzzz-no-matching-review")
+        XCTAssertTrue(app.staticTexts["No matching reviews"].waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(rating.isEnabled, "Filters must stay usable when matches are zero but loaded reviews exist")
+        XCTAssertTrue(button("reviews.load-more").exists, "Pagination must remain available when filters hide loaded rows")
+        XCTAssertTrue(button("reviews.search.clear").exists)
+        button("reviews.search.clear").click()
+        XCTAssertTrue(app.staticTexts["No matching reviews"].waitForNonExistence(timeout: interactionTimeout))
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "reviews-loaded-and-filters"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    func testWaitingAppInfoShowsReviewStatusAndDisablesMetadataEdits() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "appInfoWaiting", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        let status = app.staticTexts["app-info.read-only-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: launchTimeout))
+        let message = (status.value as? String) ?? status.label
+        XCTAssertTrue(message.contains("Waiting for Review"), message)
+        XCTAssertFalse(message.contains("live"), message)
+        XCTAssertFalse(app.textFields["App Name"].firstMatch.isEnabled)
+        XCTAssertFalse(app.textViews.firstMatch.isEnabled)
+        XCTAssertFalse(button("Save metadata changes").isEnabled)
+        XCTAssertFalse(button("Remove en-US localization").isEnabled)
+        app.buttons["App Store Versions"].firstMatch.click()
+        XCTAssertTrue(button("review.view-info").waitForExistence(timeout: interactionTimeout))
+    }
+
+    func testEmptyBetaGroupsAndCreateFirstGroup() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "groups", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.groups").waitForExistence(timeout: launchTimeout))
+        let create = button("beta-groups.create-empty")
+        XCTAssertTrue(create.waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(element("beta-groups.loading").exists, "An empty response must stop the spinner")
+        XCTAssertTrue(create.isEnabled)
+        create.click()
+        let confirm = button("beta-groups.confirm-create")
+        XCTAssertTrue(confirm.waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(confirm.isEnabled, "A group requires a name")
+        app.windows.buttons["Cancel"].firstMatch.click()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: interactionTimeout))
+        button("beta-groups.new").click()
+        let name = app.textFields["beta-groups.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: interactionTimeout))
+        app.radioButtons["Internal"].click()
+        name.click()
+        name.typeText("Early Access")
+        XCTAssertTrue(confirm.isEnabled)
+        confirm.click()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: interactionTimeout))
+        XCTAssertTrue(app.staticTexts["Early Access"].firstMatch.waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(app.staticTexts["INTERNAL"].exists)
+        XCTAssertFalse(create.exists)
+        XCTAssertFalse(element("beta-groups.loading").exists)
+        XCTAssertTrue(button("beta-groups.new").isEnabled, "New groups must remain available once a group exists")
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "beta-group-created"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testPricingAndAvailabilityWithReviewedSamplePriceChange() {
         app = XCUIApplication()
         app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"

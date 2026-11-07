@@ -948,3 +948,55 @@ struct WebhookModel: Equatable {
 
 typealias AppEventsDocument = CompoundDocument<[AppEventModel], Meta>
 typealias WebhooksDocument = CompoundDocument<[WebhookModel], Meta>
+
+/// App Store release information only. TestFlight/pre-release versions never
+/// participate in the app-list status or version number.
+struct AppStoreListingSummary {
+    struct Platform: Identifiable {
+        let id: String
+        let live: AppStoreVersionsModel?
+        let upcoming: AppStoreVersionsModel?
+        let other: AppStoreVersionsModel?
+    }
+
+    let platforms: [Platform]
+
+    init(versions: [AppStoreVersionsModel]) {
+        let liveStates: Set<String> = ["READY_FOR_SALE", "READY_FOR_DISTRIBUTION"]
+        let upcomingStates: Set<String> = [
+            "PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW", "WAITING_FOR_REVIEW",
+            "IN_REVIEW", "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE",
+            "REJECTED", "METADATA_REJECTED", "DEVELOPER_REJECTED", "INVALID_BINARY",
+            "PENDING_CONTRACT", "PROCESSING_FOR_DISTRIBUTION", "ACCEPTED",
+            "WAITING_FOR_EXPORT_COMPLIANCE", "PREORDER_READY_FOR_SALE"
+        ]
+        let grouped = Dictionary(grouping: versions) { $0.platform ?? "" }
+        platforms = grouped.keys.sorted().map { platform in
+            let sorted = (grouped[platform] ?? []).sorted { lhs, rhs in
+                let order = (lhs.versionString ?? "").compare(rhs.versionString ?? "", options: .numeric)
+                if order != .orderedSame { return order == .orderedDescending }
+                if lhs.createdDate != rhs.createdDate { return (lhs.createdDate ?? "") > (rhs.createdDate ?? "") }
+                return lhs.id < rhs.id
+            }
+            let live = sorted.first { liveStates.contains(Self.state($0)) }
+            let upcoming = sorted.first { version in
+                guard upcomingStates.contains(Self.state(version)) else { return false }
+                guard let live else { return true }
+                return (version.versionString ?? "").compare(live.versionString ?? "", options: .numeric) == .orderedDescending
+            }
+            return Platform(id: platform, live: live, upcoming: upcoming,
+                            other: live == nil && upcoming == nil ? sorted.first : nil)
+        }
+    }
+
+    static func state(_ version: AppStoreVersionsModel) -> String {
+        version.appStoreState ?? version.appVersionState ?? ""
+    }
+
+    var liveVersion: AppStoreVersionsModel? { platforms.compactMap(\.live).first }
+
+    var primaryVersion: AppStoreVersionsModel? {
+        liveVersion ?? platforms.compactMap(\.upcoming).first
+            ?? platforms.compactMap(\.other).first
+    }
+}

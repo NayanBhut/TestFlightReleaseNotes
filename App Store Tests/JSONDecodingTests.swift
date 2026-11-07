@@ -14,6 +14,34 @@ import JSONAPI
 
 final class JSONDecodingTests: XCTestCase {
     @MainActor
+    func testSubmissionPresentationDistinguishesDraftsFromQueuedReviews() {
+        var draft = ReviewSubmissionModel(id: "draft")
+        draft.state = "READY_FOR_REVIEW"
+        XCTAssertEqual(draft.displayGroup, .drafts)
+        XCTAssertEqual(draft.displayState, "Ready for Review")
+        XCTAssertEqual(draft.cancellationTitle, "Discard Draft")
+        XCTAssertTrue(draft.cancellationMessage.contains("unsubmitted"))
+
+        var waiting = ReviewSubmissionModel(id: "queued")
+        waiting.state = "WAITING_FOR_REVIEW"
+        XCTAssertEqual(waiting.displayGroup, .inProgress)
+        XCTAssertEqual(waiting.displayState, "Waiting for Review")
+        XCTAssertEqual(waiting.cancellationTitle, "Withdraw")
+        XCTAssertTrue(waiting.cancellationMessage.contains("App Review"))
+
+        var completed = ReviewSubmissionModel(id: "finished")
+        completed.state = "COMPLETE"
+        XCTAssertEqual(completed.displayGroup, .completed)
+        XCTAssertEqual(completed.displayState, "Completed", "Complete does not imply acceptance")
+
+        var future = ReviewSubmissionModel(id: "future")
+        future.state = "NEW_SERVER_STATE"
+        XCTAssertEqual(future.displayGroup, .other)
+        XCTAssertEqual(future.displayState, "New Server State")
+        XCTAssertFalse(ReviewsViewModel.cancellableSubmissionStates.contains(future.state ?? ""))
+    }
+
+    @MainActor
     func testReviewSubmissionsDecodeAndCancelMatchesExactVersion() throws {
         let json = """
         {

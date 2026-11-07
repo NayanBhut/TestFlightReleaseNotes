@@ -858,10 +858,11 @@ struct ReleaseTabView: View {
                 .font(.system(size: 11))
                 .foregroundColor(ShipyardTheme.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Edit Info") {
+            Button("View Info") {
                 onOpenAppInfo()
             }
             .buttonStyle(.launchSecondary)
+            .accessibilityIdentifier("review.view-info")
             if let version = shownVersion,
                reviewsVM.cancellableSubmission(for: version) != nil {
                 Button("Remove from Review") {
