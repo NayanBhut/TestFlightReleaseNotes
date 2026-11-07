@@ -448,3 +448,310 @@ final class AppStoreListingTests: XCTestCase {
         XCTAssertTrue(model.listingVersionStates.isEmpty)
     }
 }
+
+@MainActor
+final class AppStoreMediaTests: XCTestCase {
+    private func resource(_ type: String, _ id: String, _ attributes: [String: Any]) -> [String: Any] {
+        ["type": type, "id": id, "attributes": attributes]
+    }
+    private func page(_ resources: [[String: Any]], cursor: String? = nil) throws -> Data {
+        var value: [String: Any] = ["data": resources]
+        if let cursor { value["links"] = ["next": "https://api.appstoreconnect.apple.com/v1/ignored?cursor=\(cursor)"] }
+        return try JSONSerialization.data(withJSONObject: value)
+    }
+    private func single(_ resource: [String: Any]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["data": resource])
+    }
+    private func asset(_ id: String = "asset", state: String = "AWAITING_UPLOAD", checksum: String? = nil, preview: Bool = false, validOperation: Bool = true) -> [String: Any] {
+        var attributes: [String: Any] = ["fileName": "asset.png", "fileSize": 4,
+            preview ? "videoDeliveryState" : "assetDeliveryState": ["state": state],
+            "uploadOperations": [["method": "PUT", "url": "https://example.invalid/upload", "offset": 0, "length": validOperation ? 4 : 9]]]
+        if let checksum { attributes["sourceFileChecksum"] = checksum }
+        return resource(preview ? "appPreviews" : "appScreenshots", id, attributes)
+    }
+    private func methodQuery(_ method: APIMethod) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: (method.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+    }
+    private func model(request: @escaping @MainActor (APIMethod) async throws -> Data,
+                       upload: @escaping @MainActor (URL, String, [String: String], Data) async throws -> Void = { _, _, _, _ in }) -> AppStoreMediaLibrary {
+        AppStoreMediaLibrary(api: StoreMediaAPI(request: request, upload: upload))
+    }
+
+    func testDeliveryStateDoesNotInferReadinessFromThumbnailOrMissingUploadedField() throws {
+        for (state, expected) in [("COMPLETE", "Ready"), ("AWAITING_UPLOAD", "Awaiting upload"), ("UPLOAD_COMPLETE", "Processing"), ("PROCESSING", "Processing"), ("FAILED", "Failed")] {
+            let data = try JSONSerialization.data(withJSONObject: asset(state: state))
+            let decoded = try JSONDecoder().decode(StoreMediaResource.self, from: data)
+            XCTAssertEqual(decoded.delivery.label, expected)
+        }
+        let raw = resource("appScreenshots", "thumbnail", ["imageAsset": ["templateUrl": "https://example.invalid/{w}.png"]])
+        let decoded = try JSONDecoder().decode(StoreMediaResource.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(decoded.delivery.label, "Status unavailable")
+        XCTAssertNotNil(decoded.thumbnail)
+    }
+
+    func testVideoStateOverridesDeprecatedAssetStateAndDecodesPosterAndPlaybackURL() throws {
+        let raw = resource("appPreviews", "video", ["videoDeliveryState": ["state": "PROCESSING"],
+            "assetDeliveryState": ["state": "COMPLETE"], "videoUrl": "https://example.invalid/preview.mov",
+            "previewFrameImage": ["image": ["templateUrl": "https://example.invalid/{w}.png"]]])
+        let decoded = try JSONDecoder().decode(StoreMediaResource.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(decoded.delivery.label, "Processing")
+        XCTAssertNotNil(decoded.videoURL)
+        XCTAssertNotNil(decoded.thumbnail)
+    }
+
+    func testAllDeviceSetsAndCursorPagesPopulateOneSharedSummary() async throws {
+        var methods: [APIMethod] = []
+        let library = model { method in
+            methods.append(method)
+            if method.apiPath.hasSuffix("appScreenshotSets") {
+                return try self.page([self.resource("appScreenshotSets", "phone", ["screenshotDisplayType": "APP_IPHONE_67"]), self.resource("appScreenshotSets", "tablet", ["screenshotDisplayType": "APP_IPAD_PRO_3GEN_129"])])
+            }
+            if method.apiPath.hasPrefix("/phone/") {
+                return try self.page([self.asset("phone-image")], cursor: nil)
+            }
+            return try self.page(self.methodQuery(method)["cursor"] == nil ? [self.asset("tablet-1")] : [self.asset("tablet-1"), self.asset("tablet-2")], cursor: self.methodQuery(method)["cursor"] == nil ? "next" : nil)
+        }
+        await library.refresh(localizationID: "locale", kind: .screenshots)
+        let entry = library.entry("locale", .screenshots)
+        XCTAssertEqual(entry.allAssets.count, 3)
+        XCTAssertEqual(entry.assets["tablet"]?.count, 2)
+        XCTAssertTrue(entry.isLoaded)
+        XCTAssertEqual(methods.count, 4)
+        XCTAssertEqual(methodQuery(methods.last!)["cursor"], "next")
+        XCTAssertEqual(methodQuery(methods.last!)["limit"], "200")
+    }
+
+    func testFailedPageRetainsLastCompleteSnapshotAndExposesError() async throws {
+        var fail = false
+        let library = model { method in
+            if method.apiPath.hasSuffix("appScreenshotSets") { return try self.page([self.resource("appScreenshotSets", "set", ["screenshotDisplayType": "APP_DESKTOP"])]) }
+            if fail { throw URLError(.timedOut) }
+            return try self.page([self.asset()])
+        }
+        await library.refresh(localizationID: "locale", kind: .screenshots)
+        fail = true
+        await library.refresh(localizationID: "locale", kind: .screenshots)
+        XCTAssertEqual(library.entry("locale", .screenshots).allAssets.count, 1)
+        XCTAssertNotNil(library.entry("locale", .screenshots).error)
+        XCTAssertFalse(library.entry("locale", .screenshots).isLoading)
+    }
+
+    func testResetDiscardsLateResponseAndStopsOldFollowupRequests() async throws {
+        var pending: CheckedContinuation<Data, Error>?
+        var count = 0
+        let library = model { _ in
+            count += 1
+            return try await withCheckedThrowingContinuation { pending = $0 }
+        }
+        let task = Task { await library.refresh(localizationID: "old", kind: .screenshots) }
+        for _ in 0..<1000 where pending == nil { await Task.yield() }
+        library.reset()
+        pending?.resume(returning: try page([resource("appScreenshotSets", "old-set", ["screenshotDisplayType": "APP_DESKTOP"])]))
+        await task.value
+        XCTAssertTrue(library.entries.isEmpty)
+        XCTAssertEqual(count, 1)
+    }
+
+    func testPutTimeoutRetryReusesReservationAndCommitsChecksum() async throws {
+        let file = StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4]))
+        var postCount = 0
+        var putCount = 0
+        var patchCount = 0
+        var exists = false
+        var complete = false
+        let library = model(request: { method in
+            if method.httpMethod.0 == "POST" { postCount += 1; exists = true; return try self.single(self.asset()) }
+            if method.httpMethod.0 == "PATCH" {
+                patchCount += 1
+                if case .patch(_, let data, _, _) = method {
+                    let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+                    let attributes = (json["data"] as! [String: Any])["attributes"] as! [String: Any]
+                    XCTAssertEqual(attributes["sourceFileChecksum"] as? String, file.checksum)
+                    XCTAssertEqual(attributes["uploaded"] as? Bool, true)
+                }
+                complete = true
+                return try self.single(self.asset(state: "COMPLETE", checksum: file.checksum))
+            }
+            if method.apiPath.hasSuffix("appScreenshotSets") { return try self.page([self.resource("appScreenshotSets", "set", ["screenshotDisplayType": "APP_DESKTOP"])]) }
+            if method.apiPath == "/asset" { return try self.single(self.asset()) }
+            return try self.page(exists ? [self.asset(state: complete ? "COMPLETE" : "AWAITING_UPLOAD", checksum: complete ? file.checksum : nil)] : [])
+        }, upload: { _, _, _, data in
+            putCount += 1
+            XCTAssertEqual(data, file.bytes)
+            if putCount == 1 { throw URLError(.timedOut) }
+        })
+        let first = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        XCTAssertFalse(first)
+        XCTAssertTrue(library.actionError?.contains("reservation was kept") == true)
+        let retry = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        XCTAssertTrue(retry)
+        XCTAssertEqual(postCount, 1)
+        XCTAssertEqual(putCount, 2)
+        XCTAssertEqual(patchCount, 1)
+        XCTAssertEqual(library.entry("locale", .screenshots).allAssets.first?.delivery.label, "Ready")
+    }
+
+    func testReservationTimeoutReconcilesSingleNewAssetWithoutAnotherPost() async throws {
+        var posts = 0
+        var exists = false
+        let library = model { method in
+            if method.httpMethod.0 == "POST" { posts += 1; exists = true; throw URLError(.timedOut) }
+            if method.httpMethod.0 == "PATCH" || method.apiPath == "/asset" { return try self.single(self.asset()) }
+            if method.apiPath.hasSuffix("appScreenshotSets") { return try self.page([]) }
+            return try self.page(exists ? [self.asset()] : [])
+        }
+        let file = StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4]))
+        _ = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        let result = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        XCTAssertTrue(result)
+        XCTAssertEqual(posts, 1)
+    }
+
+    func testUnconfirmedReservationDoesNotBlindlyCreateAnotherAsset() async throws {
+        var posts = 0
+        let library = model { method in
+            if method.httpMethod.0 == "POST" { posts += 1; throw URLError(.timedOut) }
+            return try self.page([])
+        }
+        let file = StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4]))
+        _ = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        let result = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        XCTAssertFalse(result)
+        XCTAssertEqual(posts, 1)
+        XCTAssertTrue(library.actionError?.contains("unconfirmed") == true)
+    }
+
+    func testExistingFilenameBlocksDuplicateAfterRestart() async throws {
+        var posts = 0
+        let library = model { method in
+            if method.httpMethod.0 == "POST" { posts += 1 }
+            return try self.page([self.asset()])
+        }
+        let result = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set",
+                                          file: StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4])))
+        XCTAssertFalse(result)
+        XCTAssertEqual(posts, 0)
+        XCTAssertTrue(library.actionError?.contains("already exists") == true)
+    }
+
+    func testInvalidChunkCannotCommitOrUploadClampedBytes() async throws {
+        var puts = 0
+        var patches = 0
+        let library = model(request: { method in
+            if method.httpMethod.0 == "POST" { return try self.single(self.asset(validOperation: false)) }
+            if method.httpMethod.0 == "PATCH" { patches += 1 }
+            return try self.page([])
+        }, upload: { _, _, _, _ in puts += 1 })
+        let result = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set",
+                                          file: StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4])))
+        XCTAssertFalse(result)
+        XCTAssertEqual(puts, 0)
+        XCTAssertEqual(patches, 0)
+    }
+
+    func testPreviewUploadUsesPreviewRoutesAndMimeType() async throws {
+        var methods: [APIMethod] = []
+        let library = model { method in
+            methods.append(method)
+            if method.httpMethod.0 == "POST" || method.httpMethod.0 == "PATCH" { return try self.single(self.asset(preview: true)) }
+            return try self.page([])
+        }
+        let result = await library.upload(localizationID: "locale", kind: .previews, setID: "video-set",
+                                          file: StoreMediaFile(name: "asset.mov", bytes: Data([1, 2, 3, 4]), mimeType: "video/quicktime"))
+        XCTAssertTrue(result)
+        let post = try XCTUnwrap(methods.first { $0.httpMethod.0 == "POST" })
+        XCTAssertEqual(post.apiPath, "")
+        if case .post(let name, let body, _, _) = post {
+            XCTAssertEqual(name, .appPreviews)
+            let data = (try JSONSerialization.jsonObject(with: body) as! [String: Any])["data"] as! [String: Any]
+            XCTAssertEqual((data["attributes"] as! [String: Any])["mimeType"] as? String, "video/quicktime")
+            XCTAssertNotNil((data["relationships"] as! [String: Any])["appPreviewSet"])
+        }
+    }
+
+    func testPreviewTypesExcludeWatchAndIPadLabelIncludesThirteenInch() {
+        XCTAssertFalse(StoreMediaKind.previews.displayTypes(platform: "IOS").contains { $0.contains("WATCH") })
+        XCTAssertEqual(StoreMediaKind.previews.displayTypes(platform: "MAC_OS"), ["DESKTOP"])
+        XCTAssertTrue(ScreenshotDisplayType.iPad129.displayName.contains("13"))
+    }
+}
+
+extension AppStoreMediaTests {
+    func testCommitTimeoutReconcilesCompletedAssetWithoutResendingFile() async throws {
+        let file = StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4]))
+        var completed = false
+        var posts = 0
+        var puts = 0
+        var patches = 0
+        let library = model(request: { method in
+            if method.httpMethod.0 == "POST" { posts += 1; return try self.single(self.asset()) }
+            if method.httpMethod.0 == "PATCH" { patches += 1; completed = true; throw URLError(.timedOut) }
+            if method.apiPath.hasSuffix("appScreenshotSets") { return try self.page([self.resource("appScreenshotSets", "set", ["screenshotDisplayType": "APP_DESKTOP"])]) }
+            return try self.page(completed ? [self.asset(state: "COMPLETE", checksum: file.checksum)] : [])
+        }, upload: { _, _, _, _ in puts += 1 })
+        _ = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        let retry = await library.upload(localizationID: "locale", kind: .screenshots, setID: "set", file: file)
+        XCTAssertTrue(retry)
+        XCTAssertEqual(posts, 1)
+        XCTAssertEqual(puts, 1)
+        XCTAssertEqual(patches, 1)
+    }
+
+    func testResetDuringUploadPreventsCommitAndLateStateChanges() async throws {
+        var pending: CheckedContinuation<Void, Error>?
+        var patches = 0
+        let library = model(request: { method in
+            if method.httpMethod.0 == "POST" { return try self.single(self.asset()) }
+            if method.httpMethod.0 == "PATCH" { patches += 1 }
+            return try self.page([])
+        }, upload: { _, _, _, _ in try await withCheckedThrowingContinuation { pending = $0 } })
+        let file = StoreMediaFile(name: "asset.png", bytes: Data([1, 2, 3, 4]))
+        let task = Task { await library.upload(localizationID: "old-locale", kind: .screenshots, setID: "set", file: file) }
+        for _ in 0..<1000 where pending == nil { await Task.yield() }
+        XCTAssertNotNil(pending)
+        library.reset()
+        pending?.resume()
+        let result = await task.value
+        XCTAssertFalse(result)
+        XCTAssertEqual(patches, 0)
+        XCTAssertTrue(library.entries.isEmpty)
+        XCTAssertFalse(library.busy)
+    }
+
+    func testDeletionUpdatesTheSameSummaryUsedByTheManager() async throws {
+        var exists = true
+        let library = model { method in
+            if method.httpMethod.0 == "DELETE" { exists = false; return Data() }
+            if method.apiPath.hasSuffix("appScreenshotSets") { return try self.page([self.resource("appScreenshotSets", "set", ["screenshotDisplayType": "APP_DESKTOP"])]) }
+            return try self.page(exists ? [self.asset()] : [])
+        }
+        await library.refresh(localizationID: "locale", kind: .screenshots)
+        XCTAssertEqual(library.entry("locale", .screenshots).allAssets.count, 1)
+        let asset = try XCTUnwrap(library.entry("locale", .screenshots).allAssets.first)
+        await library.delete(localizationID: "locale", kind: .screenshots, asset: asset)
+        XCTAssertEqual(library.entry("locale", .screenshots).allAssets.count, 0)
+        XCTAssertEqual(library.entry("locale", .screenshots).assets["set"]?.count, 0)
+    }
+
+    func testPreviewSetCreationUsesVerifiedTypeAndReusesExistingDeviceSet() async throws {
+        var exists = false
+        var posts = 0
+        let set = resource("appPreviewSets", "video-set", ["previewType": "DESKTOP"])
+        let library = model { method in
+            if case .post(let name, let body, _, _) = method {
+                posts += 1
+                exists = true
+                XCTAssertEqual(name, .appPreviewSets)
+                let data = (try JSONSerialization.jsonObject(with: body) as! [String: Any])["data"] as! [String: Any]
+                XCTAssertEqual((data["attributes"] as! [String: Any])["previewType"] as? String, "DESKTOP")
+                XCTAssertNotNil((data["relationships"] as! [String: Any])["appStoreVersionLocalization"])
+                return try self.single(set)
+            }
+            return try self.page(method.apiPath.hasSuffix("appPreviewSets") && exists ? [set] : [])
+        }
+        await library.createSet(localizationID: "locale", kind: .previews, displayType: "DESKTOP")
+        await library.createSet(localizationID: "locale", kind: .previews, displayType: "DESKTOP")
+        XCTAssertEqual(posts, 1)
+        XCTAssertEqual(library.entry("locale", .previews).sets.count, 1)
+    }
+}

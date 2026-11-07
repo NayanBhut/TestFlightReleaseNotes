@@ -6,6 +6,46 @@ final class ReviewSubmissionUITests: XCTestCase {
     private let launchTimeout: TimeInterval = 8
     private var app: XCUIApplication!
 
+    func testMediaManagerSharesDeviceSelectionAndShowsVideosAndDeliveryState() {
+        app = XCUIApplication()
+        app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"
+        app.launchArguments = ["--sample-data-screen", "appInfo", "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(element("screenshot.ready.appInfo").waitForExistence(timeout: launchTimeout))
+        let manage = button("media.manage.en-US")
+        for _ in 0..<8 where !manage.isHittable {
+            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -350)
+        }
+        XCTAssertTrue(manage.isHittable)
+        manage.click()
+        let manager = app.sheets.firstMatch
+        XCTAssertTrue(manager.waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(manager.descendants(matching: .any)["media.count"].firstMatch.exists)
+        XCTAssertTrue(manager.staticTexts["Screenshot.png"].firstMatch.waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(manager.descendants(matching: .any)["media.status.sample-image"].firstMatch.exists)
+        XCTAssertFalse(manager.staticTexts["PENDING"].exists)
+        let device = manager.popUpButtons["media.display-type"]
+        XCTAssertTrue(device.exists)
+        device.click()
+        app.menuItems["iPad 13\" / 12.9\""].click()
+        XCTAssertTrue(manager.staticTexts["Tablet.png"].firstMatch.waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(manager.staticTexts["Screenshot.png"].exists)
+        app.radioButtons["App Previews"].click()
+        XCTAssertTrue(manager.staticTexts["Preview.mov"].firstMatch.waitForExistence(timeout: interactionTimeout))
+        XCTAssertTrue(manager.buttons["media.play.sample-video"].exists)
+        XCTAssertEqual(button("media.upload").label, "Upload Video")
+        XCTAssertTrue(button("media.upload").isEnabled)
+        button("media.upload").click()
+        let cancel = app.windows.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: interactionTimeout))
+        cancel.click()
+        XCTAssertTrue(button("media.upload").isEnabled)
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "media-manager-app-previews"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testAppsListUsesLiveAndUpcomingAppStoreVersions() {
         app = XCUIApplication()
         app.launchEnvironment["SHIPYARD_SCREENSHOT_MODE"] = "1"

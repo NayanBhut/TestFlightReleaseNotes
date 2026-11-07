@@ -8,6 +8,8 @@
 import Foundation
 
 enum AppConfigs {
+    /// CDN asset chunks can take longer than URLRequest's default minute.
+    static let assetUploadTimeout: TimeInterval = 300
     /// Page size for the apps list. The GET /v1/apps limit caps at 200
     /// (Apple docs), so 50 is safe; the sidebar paginates on demand.
     static let appListLimit: Int = 50

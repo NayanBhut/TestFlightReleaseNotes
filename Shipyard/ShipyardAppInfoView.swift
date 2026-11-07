@@ -700,7 +700,7 @@ struct ShipyardAppInfoView: View {
     /// delete — all gated on the same `isEditable` as metadata.
     private var screenshotsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Screenshots")
+            Text("Screenshots & App Previews")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(ShipyardTheme.title)
             if versionId == nil {

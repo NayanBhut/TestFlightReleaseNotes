@@ -186,14 +186,9 @@ struct SubmittedMetadataCard: View {
         .onAppear {
             detailVM.loadAppInfo()
             seedSelectionIfNeeded()
-            loadSelectedScreenshots()
         }
         .onChange(of: localizationKey) {
             seedSelectionIfNeeded()
-            loadSelectedScreenshots()
-        }
-        .onChange(of: selectedLocalizationId) {
-            loadSelectedScreenshots()
         }
     }
 
@@ -203,11 +198,6 @@ struct SubmittedMetadataCard: View {
             return
         }
         selectedLocalizationId = selectedLocalization?.id
-    }
-
-    private func loadSelectedScreenshots() {
-        guard let id = selectedLocalization?.id else { return }
-        detailVM.loadLocalizationScreenshotPreview(localizationId: id)
     }
 
     private func appInfoLocalization(for locale: String?) -> AppInfoLocalizationModel? {
@@ -290,9 +280,8 @@ private struct VersionLocalizationSubmittedCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            ScreenshotPreviewStrip(
-                state: detailVM.localizationScreenshotPreviews[localization.id],
-                localizationId: localization.id)
+            StoreMediaLocaleView(library: detailVM.storeMedia, localizationID: localization.id,
+                locale: localization.locale ?? "Locale", primaryLocale: nil, platform: nil, isEditable: false)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -302,9 +291,6 @@ private struct VersionLocalizationSubmittedCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(LaunchTheme.border, lineWidth: 1)
         )
-        .onAppear {
-            detailVM.loadLocalizationScreenshotPreview(localizationId: localization.id)
-        }
     }
 }
 
@@ -371,79 +357,6 @@ private struct SubmittedMetadataField: View {
                             .stroke(LaunchTheme.border, lineWidth: 1)
                     )
             }
-        }
-    }
-}
-
-private struct ScreenshotPreviewStrip: View {
-    var state: ViewState<[AppScreenshotModel]>?
-    var localizationId: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("SCREENSHOTS")
-                .font(.system(size: 10))
-                .foregroundColor(ShipyardTheme.tertiary)
-            switch state {
-            case .some(.loaded(let screenshots)) where !screenshots.isEmpty:
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(screenshots, id: \.id) { screenshot in
-                            ScreenshotThumbnail(screenshot: screenshot)
-                        }
-                    }
-                }
-            case .some(.empty):
-                Text("No screenshots uploaded for this locale.")
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.tertiary)
-            case .some(.error(let message)):
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.danger)
-            default:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.mini)
-                    Text("Loading screenshots…")
-                        .font(.system(size: 12))
-                        .foregroundColor(ShipyardTheme.body)
-                }
-            }
-        }
-    }
-}
-
-private struct ScreenshotThumbnail: View {
-    var screenshot: AppScreenshotModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            AsyncImage(url: screenshotThumbnailURL(screenshot.imageAsset?.templateUrl, maxDimension: 180)) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                case .failure:
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(LaunchTheme.page)
-                        .overlay {
-                            Image(systemName: "photo")
-                                .foregroundColor(ShipyardTheme.body)
-                        }
-                default:
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(LaunchTheme.page)
-                        .overlay { ProgressView().controlSize(.mini) }
-                }
-            }
-            .frame(width: 120, height: 120)
-            .cornerRadius(6)
-            Text(screenshot.fileName ?? "Screenshot")
-                .font(.system(size: 10))
-                .foregroundColor(ShipyardTheme.body)
-                .lineLimit(1)
-                .frame(width: 120, alignment: .leading)
         }
     }
 }

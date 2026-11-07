@@ -135,21 +135,7 @@ extension ShipyardToastCenter {
         }
     }
 
-    func report(
-        _ result: DetailViewModel.ScreenshotUploadResult,
-        success title: String,
-        successDetail: String? = nil,
-        errorTitle: String = "Couldn't update screenshots"
-    ) {
-        switch result {
-        case .success:
-            show(title, detail: successDetail, variant: .success)
-        case .failure(let message):
-            show(errorTitle, detail: message, variant: .error)
-        case .ignored:
-            break
-        }
-    }
+
 }
 
 // MARK: - View

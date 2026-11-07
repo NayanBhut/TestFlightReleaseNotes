@@ -81,7 +81,7 @@ To manage another team/vendor, repeat steps 3–7 with a new Team Name — the s
 | Users & invitations | ✅ list | ✅ invite / edit roles / remove, resend invite | Admin key required |
 | Build monitoring | ✅ menu-bar `PROCESSING` poll + notifications | — (Check now / Open App / Quit) | 120 s poll, 300 s backoff on error, 50-build cap |
 
-Not supported (Apple has no public API or it's web-only): sales/finance reports, screenshot/asset upload, review-submission create/cancel, phased releases, in-app events (deep-linked to the portal instead), webhooks.
+Not supported (Apple has no public API or it's web-only): sales/finance reports, review-submission create/cancel, phased releases, in-app events (deep-linked to the portal instead), webhooks.
 
 ## Features
 
@@ -107,6 +107,14 @@ Not supported (Apple has no public API or it's web-only): sales/finance reports,
 - List internal/external groups (incl. public links), view testers, invite by email or from team users.
 - Add/remove testers, assign builds to groups, toggle auto-notify, submit external review and check its status.
 - Create internal or external groups from New Group (or +), and rename/delete existing groups. Internal testers must be App Store Connect team members with access to the app.
+
+### Screenshots and App Previews
+
+- App Info shows screenshots and preview videos for every device set in each version localization. Manage Screenshots & Videos uses the same data and refreshes it when opened.
+- Select a device size to view or create its set. The iPad 13-inch / 12.9-inch choice uses Apple’s `APP_IPAD_PRO_3GEN_129` screenshot type (`IPAD_PRO_3GEN_129` for videos).
+- Upload PNG/JPEG screenshots or MOV/MP4/M4V App Preview videos (15–30 seconds, up to 500 MB). Up to 10 images or 3 videos per device set. Uploads and deletion require an editable version.
+- Delivery labels come from Apple: Awaiting upload, Processing, Ready, Failed, or Status unavailable. Refresh checks the current status.
+- Interrupted uploads retain their reservation; selecting the same file retries that reservation. An unconfirmed reservation is reconciled before any retry, and existing filenames block accidental duplicate creation.
 
 ### App Info
 - General info (Apple ID, bundle ID, SKU, primary locale), app info state, age rating, categories, and export compliance.
@@ -204,5 +212,5 @@ Xcode unit tests live in `App Store Tests/` (API method construction, JSON:API d
 - Page sizes: 50 apps, 10 versions, and 10 builds per page (cursor-paginated with Load More); 50 reviews and 50 resources per page; build-status poll capped at 50 `PROCESSING` builds.
 - Apple metadata caps are enforced client-side (see App Info above); locale codes must match Apple's exact shortcodes.
 - Key-role gated writes return permission hints (see Setup).
-- Out of scope: sales/finance reports, screenshot/asset upload, review-submission create/cancel, phased releases, in-app events (deep-linked only), webhooks, and web-only App Store Connect actions.
+- Out of scope: sales/finance reports, review-submission create/cancel, phased releases, in-app events (deep-linked only), webhooks, and web-only App Store Connect actions.
 - Test writes on throwaway bundle IDs/devices/groups — device registrations count against your yearly limit.

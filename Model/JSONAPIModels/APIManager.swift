@@ -270,6 +270,7 @@ final class APIClient: @unchecked Sendable {
             throw APIError.apiError(error: "Upload rejected because the server URL was not secure")
         }
         var request = URLRequest(url: url)
+        request.timeoutInterval = AppConfigs.assetUploadTimeout
         request.httpMethod = method
         for (field, value) in headers {
             request.setValue(value, forHTTPHeaderField: field)
@@ -289,7 +290,7 @@ final class APIClient: @unchecked Sendable {
         } catch let urlError as URLError {
             // URLSession error descriptions embed the full presigned URL
             // (signature included) — never surface or log that verbatim.
-            throw APIError.apiError(error: "Upload failed: \(urlError.code.rawValue)")
+            throw APIError.apiError(error: FriendlyErrorMessage.message(for: urlError))
         } catch {
             throw APIError.apiError(error: "Upload failed")
         }
@@ -573,6 +574,8 @@ enum APIName: String {
     // PATCH {uploaded: true}. Verified in spec v4.3.1.
     case appScreenshotSets = "/appScreenshotSets"
     case appScreenshots = "/appScreenshots"
+    case appPreviewSets = "/appPreviewSets"
+    case appPreviews = "/appPreviews"
 }
 
 enum APIVersion: String {

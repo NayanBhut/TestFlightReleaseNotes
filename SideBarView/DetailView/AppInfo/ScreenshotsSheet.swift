@@ -1,15 +1,6 @@
-//
-//  ScreenshotsSheet.swift
-//  App Store
-//
-//  Batch J (F4): App Store screenshot manager for one version
-//  localization. Sets are listed/created per localization; images are
-//  uploaded through Apple's reserve → PUT operations → complete pipeline
-//  (see DetailViewModel.uploadScreenshot).
-//
-
 import SwiftUI
 import AppKit
+import AVKit
 import UniformTypeIdentifiers
 
 /// Same template resolution as the sidebar app icons
@@ -25,10 +16,8 @@ func screenshotThumbnailURL(_ template: String?, maxDimension: Int = 400) -> URL
     return URL(string: template)
 }
 
-private struct ScreenshotSheetTarget: Identifiable {
-    let id: String
-    let locale: String
-}
+
+private struct MediaSheetTarget: Identifiable { let id: String; let locale: String }
 
 struct ScreenshotsGroupView: View {
     let title: String
@@ -40,658 +29,303 @@ struct ScreenshotsGroupView: View {
     let retry: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.subheadline.weight(.medium))
             switch state {
-            case .idle, .loading:
-                HStack {
-                    Spacer()
-                    ProgressView().controlSize(.small)
-                    Spacer()
-                }
-            case .empty:
-                Text("No version localizations.")
-                    .font(.appCaption)
-                    .foregroundColor(.secondary)
+            case .idle, .loading: ProgressView().controlSize(.small)
+            case .empty: Text("No version localizations.").foregroundStyle(.secondary)
+            case .error(let message):
+                Text(message).foregroundStyle(.red)
+                Button("Retry", action: retry)
             case .loaded(let localizations):
                 ForEach(localizations, id: \.id) { localization in
-                    localeGroup(localization)
-                }
-            case .error(let message):
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(message)
-                        .font(.appCaption)
-                        .foregroundColor(.red)
-                    Button("Retry", action: retry)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    StoreMediaLocaleView(library: viewModel.storeMedia,
+                        localizationID: localization.id, locale: localization.locale ?? "Locale",
+                        primaryLocale: primaryLocale, platform: platform, isEditable: isEditable)
                 }
             }
         }
-        .onAppear { loadPreviews() }
-        .onChange(of: state.loadedValue?.map(\.id) ?? []) { _, _ in loadPreviews() }
     }
+}
 
-    private func loadPreviews() {
-        guard let localizations = state.loadedValue else { return }
-        for localization in localizations {
-            viewModel.loadLocalizationScreenshotPreview(localizationId: localization.id)
-        }
-    }
+struct StoreMediaLocaleView: View {
+    @ObservedObject var library: AppStoreMediaLibrary
+    let localizationID: String
+    let locale: String
+    let primaryLocale: String?
+    let platform: String?
+    let isEditable: Bool
+    @State private var target: MediaSheetTarget?
 
-    @ViewBuilder private func localeGroup(_ localization: AppStoreVersionLocalizationsModel) -> some View {
-        let locale = localization.locale ?? "Locale"
-        let fallback = fallbackLocale(for: localization)
-        VStack(alignment: .leading, spacing: 6) {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(locale)
-                    .font(.appBody)
-                if let fallback {
-                    StateChip(text: "USING \(fallback)")
-                }
+                Text(BetaLocalizationLocales.displayName(for: locale)).font(.appBody)
                 Spacer()
-                if let count = viewModel.localizationScreenshotPreviews[localization.id]?.loadedValue?.count,
-                   count > 0 {
-                    Text("\(count) image\(count == 1 ? "" : "s")")
-                        .font(.appCaption2)
-                        .foregroundColor(.secondary)
-                } else if let fallback {
-                    Text("\(fallbackImageCount(for: fallback) ?? 0) image\(fallbackImageCount(for: fallback) == 1 ? "" : "s") from \(fallback)")
-                        .font(.appCaption2)
-                        .foregroundColor(.secondary)
+                Button("Manage Screenshots & Videos") {
+                    target = MediaSheetTarget(id: localizationID, locale: locale)
                 }
-                Button("Manage") {
-                    sheetTarget = ScreenshotSheetTarget(id: localization.id, locale: locale)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .accessibilityLabel("Manage screenshots for \(locale)")
+                .accessibilityIdentifier("media.manage.\(locale)")
             }
-            screenshotStrip(localization, fallback: fallback)
-        }
-        .sheet(item: $sheetTarget) { target in
-            ScreenshotsSheet(
-                localizationId: target.id,
-                locale: target.locale,
-                viewModel: viewModel,
-                isEditable: isEditable,
-                primaryLocale: primaryLocale,
-                platform: platform
-            )
-        }
-    }
-
-    private func primaryImageCount(locale: String) -> Int? {
-        guard let localization = state.loadedValue?.first(where: { $0.locale == locale }) else { return nil }
-        return viewModel.localizationScreenshotPreviews[localization.id]?.loadedValue?.count
-    }
-
-    private func fallbackImageCount(for locale: String) -> Int? {
-        primaryImageCount(locale: locale)
-    }
-
-    private func fallbackLocale(for localization: AppStoreVersionLocalizationsModel) -> String? {
-        guard let primaryLocale,
-              !primaryLocale.isEmpty,
-              primaryLocale != localization.locale,
-              let count = primaryImageCount(locale: primaryLocale),
-              count > 0 else { return nil }
-        return primaryLocale
-    }
-
-    @ViewBuilder private func screenshotStrip(_ localization: AppStoreVersionLocalizationsModel,
-                                              fallback: String?) -> some View {
-        switch viewModel.localizationScreenshotPreviews[localization.id] {
-        case .some(.loading), .none:
-            HStack {
-                Spacer()
-                ProgressView().controlSize(.mini)
-                Spacer()
-            }
-        case .some(.error(let message)):
-            Text(message)
-                .font(.appCaption2)
-                .foregroundColor(.red)
-        case .some(.empty):
-            fallbackMessage(for: localization, fallback: fallback)
-        case .some(.loaded(let screenshots)):
-            if screenshots.isEmpty {
-                fallbackMessage(for: localization, fallback: fallback)
-            } else {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(screenshots, id: \.id) { screenshot in
-                            AsyncImage(url: screenshotThumbnailURL(screenshot.imageAsset?.templateUrl, maxDimension: 200)) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                case .failure:
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(AppTheme.secondaryBackground)
-                                        .overlay { Image(systemName: "photo").foregroundColor(.secondary) }
-                                default:
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(AppTheme.secondaryBackground)
-                                        .overlay { ProgressView().controlSize(.mini) }
+            ForEach(StoreMediaKind.allCases, id: \.self) { kind in
+                let entry = library.entry(localizationID, kind)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(kind.rawValue) · \(entry.allAssets.count)").font(.system(size: 12, weight: .medium))
+                    if entry.isLoading { ProgressView().controlSize(.small) }
+                    if let error = entry.error {
+                        Text(error).font(.appCaption).foregroundStyle(.red)
+                        Button("Retry \(kind.rawValue)") { Task { await library.refresh(localizationID: localizationID, kind: kind) } }
+                    }
+                    if entry.isLoaded && entry.allAssets.isEmpty {
+                        Text(emptyMessage(kind)).font(.appCaption).foregroundStyle(.secondary)
+                    }
+                    ForEach(entry.sets) { set in
+                        let assets = entry.assets[set.id] ?? []
+                        if !assets.isEmpty {
+                            Text("\(kind.displayName(set.displayType)) · \(assets.count)")
+                                .font(.appCaption).foregroundStyle(.secondary)
+                            ScrollView(.horizontal) {
+                                HStack(alignment: .top, spacing: 10) {
+                                    ForEach(assets) { asset in MediaAssetCard(asset: asset, compact: true) }
                                 }
                             }
-                            .frame(width: 96, height: 96)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .border(AppTheme.border, width: 1)
-                            .help(screenshot.fileName ?? "Screenshot")
+                            .frame(height: 150)
                         }
                     }
                 }
-                .frame(height: 104)
             }
-        case .some(.idle):
-            EmptyView()
+        }
+        .task(id: localizationID) { await refresh() }
+        .sheet(item: $target) { target in
+            ScreenshotsSheet(localizationId: target.id, locale: target.locale, library: library,
+                             isEditable: isEditable, platform: platform)
         }
     }
 
-    @ViewBuilder private func fallbackMessage(for localization: AppStoreVersionLocalizationsModel,
-                                             fallback: String?) -> some View {
-        let locale = localization.locale ?? "this locale"
-        VStack(alignment: .leading, spacing: 4) {
-            if let fallback {
-                Text("No \(locale) screenshots uploaded. The App Store is using the \(fallback) screenshots for this locale.")
-                    .font(.appCaption2)
-                    .foregroundColor(.secondary)
-                if isEditable {
-                    Text("Use Manage to upload \(locale) screenshots and replace the \(fallback) images.")
-                        .font(.appCaption2)
-                        .foregroundColor(.secondary)
-                }
-            } else {
-                Text(isEditable ? "No screenshots uploaded yet." : "No screenshots uploaded.")
-                    .font(.appCaption2)
-                    .foregroundColor(.secondary)
-            }
+    private func refresh() async {
+        for kind in StoreMediaKind.allCases {
+            guard !Task.isCancelled else { return }
+            await library.refresh(localizationID: localizationID, kind: kind)
         }
     }
-
-    @State private var sheetTarget: ScreenshotSheetTarget?
+    private func emptyMessage(_ kind: StoreMediaKind) -> String {
+        if let primaryLocale, primaryLocale != locale {
+            return "No \(kind.rawValue.lowercased()) uploaded for this locale. Check \(primaryLocale) for primary-locale media."
+        }
+        return "No \(kind.rawValue.lowercased()) uploaded."
+    }
 }
 
 struct ScreenshotsSheet: View {
     let localizationId: String
     let locale: String
-    @ObservedObject var viewModel: DetailViewModel
-    var isEditable: Bool = true
-    var primaryLocale: String?
+    @ObservedObject var library: AppStoreMediaLibrary
+    var isEditable = true
     var platform: String?
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var toastCenter: ShipyardToastCenter
-    @State private var newSetType: ScreenshotDisplayType = .iPhone67
-    @State private var creatingSet = false
-    @State private var screenshotToDelete: AppScreenshotModel?
+    @State private var kind: StoreMediaKind = .screenshots
+    @State private var displayType = ""
+    @State private var importing = false
+    @State private var uploadingBatch = false
+    @State private var assetToDelete: StoreMediaResource?
+
+    private var entry: AppStoreMediaLibrary.Entry { library.entry(localizationId, kind) }
+    private var selectedSet: StoreMediaResource? { entry.sets.first { $0.displayType == displayType } }
+    private var assets: [StoreMediaResource] { selectedSet.flatMap { entry.assets[$0.id] } ?? [] }
+    private var displayTypes: [String] {
+        var values = kind.displayTypes(platform: platform)
+        for set in entry.sets where !values.contains(set.displayType) { values.append(set.displayType) }
+        return values
+    }
+    private var busy: Bool { library.busy || uploadingBatch }
+    private var canUpload: Bool { isEditable && !busy && !entry.isLoading && entry.error == nil && selectedSet != nil }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-                .overlay(LaunchTheme.border)
-            if viewModel.screenshotSetsLoading {
-                LoadingStateView(text: "Loading screenshot sets…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        setsCard
-                        screenshotsCard
-                    }
-                    .padding(20)
-                }
-            }
-        }
-        .background(LaunchTheme.page)
-        .frame(minWidth: 640, minHeight: 480)
-        .onAppear {
-            reconcileNewSetType()
-            Task {
-                await viewModel.loadScreenshotSets(localizationId: localizationId)
-                if let setId = viewModel.selectedScreenshotSetId {
-                    await viewModel.loadScreenshots(setId: setId)
-                }
-            }
-        }
-        .onChange(of: platform) { _, _ in reconcileNewSetType() }
-    }
-
-    private var header: some View {
-        HStack {
-            Text("Screenshots — \(locale)")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(ShipyardTheme.title)
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(ShipyardTheme.body)
-                    .frame(width: 24, height: 24)
-                    .background(LaunchTheme.field)
-                    .clipShape(Circle())
-                    .overlay(
-                        Circle()
-                            .stroke(LaunchTheme.border, lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-            .help("Close (Esc)")
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel("Close")
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(LaunchTheme.page)
-    }
-
-    // MARK: - Sets
-
-    private var setsCard: some View {
-        ScreenshotManagerCard(title: "Screenshot Sets", systemImage: "photo.stack") {
-            VStack(alignment: .leading, spacing: 10) {
-                if viewModel.screenshotSets.isEmpty {
-                    if let primaryLocale, primaryLocale != locale {
-                        Text("No sets for \(locale) — the App Store is using the \(primaryLocale) screenshots for this locale.")
-                            .font(.system(size: 12))
-                            .foregroundColor(ShipyardTheme.body)
-                    } else {
-                        Text("No sets yet — create one for a device size first.")
-                            .font(.system(size: 12))
-                            .foregroundColor(ShipyardTheme.body)
-                    }
-                } else {
-                    ForEach(viewModel.screenshotSets, id: \.id) { set in
-                        HStack {
-                            Text(displayName(for: set))
-                                .font(.system(size: 13))
-                                .foregroundColor(ShipyardTheme.title)
-                            Spacer()
-                            if viewModel.selectedScreenshotSetId == set.id {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(ShipyardTheme.accent)
-                                    .font(.system(size: 12, weight: .semibold))
-                            } else {
-                                Button {
-                                    Task {
-                                        await viewModel.loadScreenshots(setId: set.id)
-                                    }
-                                } label: {
-                                    ScreenshotManagerButtonLabel("Select")
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        if set.id != viewModel.screenshotSets.last?.id {
-                            Divider()
-                                .overlay(ShipyardTheme.rowDivider)
-                        }
-                    }
-                }
-                if isEditable {
-                    HStack {
-                        Picker("Display type", selection: $newSetType) {
-                            ForEach(availableDisplayTypes, id: \.self) { type in
-                                Text(type.displayName).tag(type)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .font(.system(size: 11))
-                        .tint(ShipyardTheme.body)
-                        .frame(maxWidth: 200)
-                        Spacer()
-                        if creatingSet {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Button {
-                                creatingSet = true
-                                Task {
-                                    defer { creatingSet = false }
-                                    switch await viewModel.createScreenshotSet(
-                                        localizationId: localizationId, displayType: newSetType) {
-                                    case .success:
-                                        toastCenter.show("Screenshot set created", detail: newSetType.displayName, variant: .success)
-                                        if let setId = viewModel.selectedScreenshotSetId {
-                                            await viewModel.loadScreenshots(setId: setId)
-                                        }
-                                    case .failure(let message):
-                                        viewModel.screenshotError = message
-                                        toastCenter.show("Couldn't create screenshot set", detail: message, variant: .error)
-                                    case .ignored:
-                                        break
-                                    }
-                                }
-                            } label: {
-                                ScreenshotManagerButtonLabel("New Set", systemImage: "plus")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                } else {
-                    Text("Read-only: uploaded screenshots are shown, but new sets and uploads are disabled.")
-                        .font(.system(size: 12))
-                        .foregroundColor(ShipyardTheme.body)
-                }
-            }
-        }
-    }
-
-    private func displayName(for set: AppScreenshotSetModel) -> String {
-        if let raw = set.screenshotDisplayType,
-           let type = ScreenshotDisplayType(rawValue: raw) {
-            return type.displayName
-        }
-        return set.screenshotDisplayType ?? "Set"
-    }
-
-    private var availableDisplayTypes: [ScreenshotDisplayType] {
-        ScreenshotDisplayType.supported(for: platform)
-    }
-
-    private func reconcileNewSetType() {
-        guard !availableDisplayTypes.contains(newSetType),
-              let first = availableDisplayTypes.first else { return }
-        newSetType = first
-    }
-
-    // MARK: - Screenshots
-
-    private var screenshotsCard: some View {
-        ScreenshotManagerCard(title: "Screenshots", systemImage: "photo") {
-            VStack(alignment: .leading, spacing: 10) {
-                if viewModel.selectedScreenshotSetId == nil {
-                    Text("Select a set above to view its screenshots.")
-                        .font(.system(size: 12))
-                        .foregroundColor(ShipyardTheme.body)
-                } else if viewModel.screenshotsLoading {
-                    LoadingStateView(text: "Loading screenshots…")
-                } else {
-                    if viewModel.screenshots.isEmpty {
-                        Text("No screenshots in this set yet.")
-                            .font(.system(size: 12))
-                            .foregroundColor(ShipyardTheme.body)
-                    } else {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 12)], spacing: 12) {
-                            ForEach(viewModel.screenshots, id: \.id) { screenshot in
-                                screenshotCell(screenshot)
-                            }
-                        }
-                    }
-                    if isEditable {
-                        uploadRow
-                    }
-                }
-                if let error = viewModel.screenshotError {
-                    Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(ShipyardTheme.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .confirmationDialog(
-            "Delete Screenshot?",
-            isPresented: Binding(
-                get: { screenshotToDelete != nil },
-                set: { if !$0 { screenshotToDelete = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: screenshotToDelete
-        ) { screenshot in
-            Button("Delete", role: .destructive) {
-                Task {
-                    if await viewModel.deleteScreenshot(screenshot) {
-                        refreshPreviewStrip()
-                        toastCenter.show("Screenshot deleted", variant: .success)
-                    } else if let message = viewModel.screenshotError {
-                        toastCenter.show("Couldn't delete screenshot", detail: message, variant: .error)
-                    }
-                }
-            }
-        } message: { _ in
-            Text("The screenshot is removed from App Store Connect.")
-        }
-    }
-
-    @ViewBuilder private func screenshotCell(_ screenshot: AppScreenshotModel) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let url = thumbnailURL(screenshot.imageAsset?.templateUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                    case .failure:
-                        // A failed thumbnail must not sit on the spinner
-                        // forever looking like a slow load.
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(LaunchTheme.page)
-                            .frame(height: 120)
-                            .overlay {
-                                Image(systemName: "photo")
-                                    .font(.title2)
-                                    .foregroundColor(ShipyardTheme.body)
-                            }
-                    default:
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(LaunchTheme.page)
-                            .frame(height: 120)
-                            .overlay { ProgressView().controlSize(.small) }
-                    }
-                }
-                .frame(maxHeight: 220)
-                .cornerRadius(6)
-            }
-            Text(screenshot.fileName ?? "Screenshot")
-                .font(.system(size: 11))
-                .foregroundColor(ShipyardTheme.title)
-                .lineLimit(1)
-            HStack(spacing: 6) {
-                ScreenshotStatusPill(text: (screenshot.uploaded ?? false) ? "UPLOADED" : "PENDING")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Screenshots & App Previews — \(locale)").font(.title3.weight(.semibold))
                 Spacer()
-                if isEditable {
-                    if viewModel.deletingScreenshotIds.contains(screenshot.id) {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        Button {
-                            screenshotToDelete = screenshot
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(ShipyardTheme.danger)
-                                .frame(width: 22, height: 22)
-                                .background(LaunchTheme.field)
-                                .cornerRadius(5)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .stroke(LaunchTheme.border, lineWidth: 1)
-                                )
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await refresh() } }
+                    .disabled(busy || entry.isLoading)
+                    .accessibilityIdentifier("media.refresh")
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)
+            }
+            Picker("Media", selection: $kind) {
+                ForEach(StoreMediaKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(busy)
+            .accessibilityIdentifier("media.kind")
+            HStack {
+                Picker("Device size", selection: $displayType) {
+                    ForEach(displayTypes, id: \.self) { raw in Text(kind.displayName(raw)).tag(raw) }
+                }
+                .disabled(busy || entry.isLoading)
+                .accessibilityIdentifier("media.display-type")
+                if selectedSet == nil {
+                    Button("Create Set") {
+                        Task { await library.createSet(localizationID: localizationId, kind: kind, displayType: displayType) }
+                    }
+                    .disabled(!isEditable || busy || entry.isLoading || displayType.isEmpty || entry.error != nil)
+                    .accessibilityIdentifier("media.create-set")
+                }
+            }
+            if !isEditable {
+                Text("This version is read-only. You can view media; uploads and deletion require an editable version.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            if kind == .previews {
+                Text("Up to 3 videos per device size and locale. MOV, MP4, or M4V; 15–30 seconds; up to 500 MB.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            if entry.isLoading { ProgressView("Refreshing media…").controlSize(.small) }
+            if let error = entry.error { Text(error).foregroundStyle(.red).font(.callout) }
+            if let error = library.actionError { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
+            Text("\(kind.displayName(displayType)) · \(assets.count) \(kind == .screenshots ? "images" : "videos")")
+                .font(.callout.weight(.medium))
+                .accessibilityIdentifier("media.count")
+            ScrollView {
+                if assets.isEmpty && !entry.isLoading {
+                    ContentUnavailableView(selectedSet == nil ? "No Set for This Device Size" : "No Media in This Set",
+                        systemImage: kind == .screenshots ? "photo" : "video",
+                        description: Text(selectedSet == nil ? "Choose an existing device size or create a set." : "Use the upload button to add media."))
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 165), spacing: 14)], alignment: .leading) {
+                        ForEach(assets) { asset in
+                            VStack(alignment: .leading, spacing: 6) {
+                                MediaAssetCard(asset: asset)
+                                if isEditable {
+                                    Button("Delete", role: .destructive) { assetToDelete = asset }
+                                        .disabled(busy || entry.isLoading)
+                                        .accessibilityIdentifier("media.delete.\(asset.id)")
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .help("Delete screenshot")
                     }
                 }
             }
-        }
-        .padding(8)
-        .background(LaunchTheme.field)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(LaunchTheme.border, lineWidth: 1)
-        )
-    }
-
-    private var uploadRow: some View {
-        HStack {
-            if let fileName = viewModel.uploadingFileName {
-                ProgressView(value: viewModel.screenshotUploadProgress ?? 0)
-                    .progressViewStyle(.linear)
-                    .tint(ShipyardTheme.accent)
-                    .animation(
-                        .linear(duration: 0.15),
-                        value: viewModel.screenshotUploadProgress
-                    )
-                    .frame(maxWidth: 200)
-                Text("Uploading \(fileName)…")
-                    .font(.system(size: 12))
-                    .foregroundColor(ShipyardTheme.body)
-                    .lineLimit(1)
-            } else {
-                Button {
-                    pickAndUpload()
-                } label: {
-                    ScreenshotManagerButtonLabel("Upload Image", systemImage: "square.and.arrow.up", isPrimary: true)
+            HStack {
+                Button(kind == .screenshots ? "Upload Image" : "Upload Video", systemImage: "square.and.arrow.up") {
+                    importing = true
                 }
-                .buttonStyle(.plain)
-                .disabled(viewModel.selectedScreenshotSetId == nil)
+                .disabled(!canUpload)
+                .accessibilityIdentifier("media.upload")
+                if let name = library.uploadingName {
+                    ProgressView(value: library.progress ?? 0).frame(width: 130)
+                    Text("Uploading \(name)…").font(.callout).lineLimit(1)
+                }
+                Spacer()
+                Text("Status comes from App Store Connect. Refresh to check processing.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func pickAndUpload() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.png, .jpeg]
-        panel.prompt = "Upload"
-        guard panel.runModal() == .OK, !panel.urls.isEmpty,
-              let setId = viewModel.selectedScreenshotSetId else { return }
-        upload(panel.urls, to: setId)
-    }
-
-    private func upload(_ fileURLs: [URL], to setId: String) {
-        Task {
-            var uploadedCount = 0
-            for fileURL in fileURLs {
-                switch await viewModel.uploadScreenshot(setId: setId, fileURL: fileURL) {
-                case .success:
-                    uploadedCount += 1
-                    refreshPreviewStrip()
-                case .failure(let message):
-                    viewModel.screenshotError = message
-                    toastCenter.show(
-                        "Couldn't upload \(fileURL.lastPathComponent)",
-                        detail: message,
-                        variant: .error
-                    )
-                    return
-                case .ignored:
+        .padding(22)
+        .frame(minWidth: 720, minHeight: 540)
+        .interactiveDismissDisabled(busy)
+        .task(id: localizationId) {
+            library.actionError = nil
+            reconcileSelection()
+            await refresh()
+            reconcileSelection(keepCurrent: true)
+        }
+        .onChange(of: kind) { _, _ in library.actionError = nil; reconcileSelection() }
+        .onChange(of: entry.sets.map(\.id)) { _, _ in reconcileSelection(keepCurrent: true) }
+        .fileImporter(isPresented: $importing,
+            allowedContentTypes: kind == .screenshots ? [.png, .jpeg] : [.quickTimeMovie, .mpeg4Movie, UTType(filenameExtension: "m4v") ?? .movie],
+            allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result, let setID = selectedSet?.id else {
+                    if case .failure(let error) = result { library.actionError = error.localizedDescription }
                     return
                 }
+                let uploadingKind = kind
+                uploadingBatch = true
+                Task { @MainActor in
+                    defer { uploadingBatch = false }
+                    for url in urls {
+                        guard await library.upload(localizationID: localizationId, kind: uploadingKind, setID: setID, fileURL: url) else { return }
+                    }
+                }
             }
-            if uploadedCount > 0 {
-                toastCenter.show(
-                    uploadedCount == 1 ? "Screenshot uploaded" : "Screenshots uploaded",
-                    detail: uploadedCount == 1
-                        ? fileURLs[0].lastPathComponent
-                        : "\(uploadedCount) images",
-                    variant: .success
-                )
-            }
+        .confirmationDialog("Delete \(assetToDelete?.attributes?.fileName ?? "media")?", isPresented: Binding(
+            get: { assetToDelete != nil }, set: { if !$0 { assetToDelete = nil } }), presenting: assetToDelete) { asset in
+                Button("Delete", role: .destructive) {
+                    Task { await library.delete(localizationID: localizationId, kind: kind, asset: asset) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in Text("This removes the asset from App Store Connect.") }
+    }
+
+    private func refresh() async {
+        for kind in StoreMediaKind.allCases {
+            guard !Task.isCancelled else { return }
+            await library.refresh(localizationID: localizationId, kind: kind)
         }
     }
-
-    private func refreshPreviewStrip() {
-        viewModel.localizationScreenshotPreviews[localizationId] =
-            viewModel.screenshots.isEmpty ? .empty : .loaded(viewModel.screenshots)
-    }
-
-    /// Same template resolution as the sidebar app icons
-    /// ({w}x{h}bb / {w}x{h} / {w} / {h} placeholders, {f} → png).
-    private func thumbnailURL(_ template: String?) -> URL? {
-        screenshotThumbnailURL(template)
+    private func reconcileSelection(keepCurrent: Bool = false) {
+        if keepCurrent, displayTypes.contains(displayType) { return }
+        displayType = entry.sets.first?.displayType ?? displayTypes.first ?? ""
     }
 }
 
-private struct ScreenshotManagerCard<Content: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder var content: Content
+private struct MediaAssetCard: View {
+    let asset: StoreMediaResource
+    var compact = false
+    @State private var playing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(ShipyardTheme.title)
-            } icon: {
-                Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(ShipyardTheme.body)
+        VStack(alignment: .leading, spacing: 5) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(AppTheme.secondaryBackground)
+                if let url = screenshotThumbnailURL(asset.thumbnail, maxDimension: compact ? 200 : 400) {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image { image.resizable().scaledToFit() }
+                        else if phase.error != nil { Image(systemName: "photo").foregroundStyle(.secondary) }
+                        else { ProgressView().controlSize(.small) }
+                    }
+                } else {
+                    Image(systemName: asset.type == "appPreviews" ? "video" : "photo").foregroundStyle(.secondary)
+                }
+                if asset.videoURL != nil {
+                    Button { playing = true } label: {
+                        Image(systemName: "play.circle.fill").font(.system(size: 30))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Play \(asset.attributes?.fileName ?? "App Preview")")
+                    .accessibilityIdentifier("media.play.\(asset.id)")
+                }
             }
-            content
+            .frame(height: compact ? 90 : 150)
+            Text(asset.attributes?.fileName ?? asset.id).font(.caption).lineLimit(1)
+                .help(asset.attributes?.fileName ?? asset.id)
+            Text(asset.delivery.label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(asset.delivery.state == "FAILED" ? Color.red : Color.secondary)
+                .accessibilityIdentifier("media.status.\(asset.id)")
+            if let details = asset.delivery.details { Text(details).font(.caption).foregroundStyle(.secondary) }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ShipyardTheme.tableBackground)
-        .cornerRadius(10)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(LaunchTheme.border, lineWidth: 1)
-        )
-    }
-}
-
-private struct ScreenshotManagerButtonLabel: View {
-    let title: String
-    var systemImage: String?
-    var isPrimary = false
-
-    init(_ title: String, systemImage: String? = nil, isPrimary: Bool = false) {
-        self.title = title
-        self.systemImage = systemImage
-        self.isPrimary = isPrimary
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
+        .frame(width: compact ? 140 : nil, alignment: .leading)
+        .padding(compact ? 0 : 8)
+        .background(compact ? Color.clear : AppTheme.secondaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .sheet(isPresented: $playing) {
+            if let url = asset.videoURL { MediaVideoPlayer(url: url) }
         }
-        .foregroundColor(isPrimary ? .white : ShipyardTheme.body)
-        .padding(.horizontal, 9)
-        .frame(height: 24)
-        .background(isPrimary ? ShipyardTheme.accent : LaunchTheme.field)
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(isPrimary ? ShipyardTheme.accent : LaunchTheme.border, lineWidth: 1)
-        )
     }
 }
 
-private struct ScreenshotStatusPill: View {
-    let text: String
-
-    private var color: Color {
-        text == "UPLOADED" ? ShipyardTheme.success : ShipyardTheme.warning
-    }
-
+private struct MediaVideoPlayer: View {
+    @State private var player: AVPlayer
+    @Environment(\.dismiss) private var dismiss
+    init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
     var body: some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.14))
-            .cornerRadius(4)
+        VStack {
+            HStack { Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
+            VideoPlayer(player: player)
+        }
+        .padding()
+        .frame(minWidth: 700, minHeight: 450)
+        .onAppear { player.play() }
+        .onDisappear { player.pause() }
     }
-}
-
-#Preview {
-    ScreenshotsSheet(localizationId: "preview", locale: "en-US", viewModel: DetailViewModel(sidebarViewModel: SideBarViewModel()))
 }
