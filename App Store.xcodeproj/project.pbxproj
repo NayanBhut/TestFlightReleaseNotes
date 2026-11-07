@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7055EEC72A0241499B15E06A /* SubmissionIssuesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC775DF404EF44559B564D12 /* SubmissionIssuesTests.swift */; };
+		7E90271D34414077ACE510B7 /* SubmissionTestFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD242ACB125648C2BA973A27 /* SubmissionTestFixtures.swift */; };
+		59CEFDE3715147DDAEA71150 /* SubmissionIssuesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCBD700FFE5B44DAA8DFF125 /* SubmissionIssuesSheet.swift */; };
+		2D69CDC8264C4FCD8BC803B8 /* SubmissionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36F2D4D32C93477A81CD1A30 /* SubmissionCoordinator.swift */; };
+		6E1F1E9F7BED4B08A8E908C9 /* SubmissionIssues.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1C69862FB54402B46DCA3C /* SubmissionIssues.swift */; };
 		FD67C33911DB452F804F1DC6 /* ReviewSubmissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22DD23B0DCFF4AB28F3A00AA /* ReviewSubmissionUITests.swift */; };
 		FD84C43F26D0419B822228A9 /* ReviewSubmissionUITestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 419AFA6271974F1DAC3E2FB2 /* ReviewSubmissionUITestHost.swift */; };
 		20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */; };
@@ -126,6 +131,11 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		FC775DF404EF44559B564D12 /* SubmissionIssuesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmissionIssuesTests.swift; sourceTree = "<group>"; };
+		CD242ACB125648C2BA973A27 /* SubmissionTestFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmissionTestFixtures.swift; sourceTree = "<group>"; };
+		BCBD700FFE5B44DAA8DFF125 /* SubmissionIssuesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmissionIssuesSheet.swift; sourceTree = "<group>"; };
+		36F2D4D32C93477A81CD1A30 /* SubmissionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmissionCoordinator.swift; sourceTree = "<group>"; };
+		5C1C69862FB54402B46DCA3C /* SubmissionIssues.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmissionIssues.swift; sourceTree = "<group>"; };
 		22DD23B0DCFF4AB28F3A00AA /* ReviewSubmissionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewSubmissionUITests.swift; sourceTree = "<group>"; };
 		419AFA6271974F1DAC3E2FB2 /* ReviewSubmissionUITestHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewSubmissionUITestHost.swift; sourceTree = "<group>"; };
 		C4349810F6EB4B759C5BB0B7 /* App Store UI Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "App Store UI Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -359,6 +369,9 @@
 				C47A0054C47A0054001A9E54 /* ReleaseTabView.swift */,
 				C47A0058C47A0058001A9E58 /* ChooseBuildSheet.swift */,
 				C47A005BD47A005B001A9E5B /* ReleaseComponents.swift */,
+				36F2D4D32C93477A81CD1A30 /* SubmissionCoordinator.swift */,
+				BCBD700FFE5B44DAA8DFF125 /* SubmissionIssuesSheet.swift */,
+				CD242ACB125648C2BA973A27 /* SubmissionTestFixtures.swift */,
 				C47A005CD47A005C001A9E5C /* ReleaseDialogs.swift */,
 				C47A005DD47A005D001A9E5D /* ReleasePrepareView.swift */,
 				C47A005ED47A005E001A9E5E /* ReleaseStatusViews.swift */,
@@ -489,6 +502,7 @@
 				5E92A8BA04174C6EBC468548 /* BetaFeedbackModels.swift */,
 				492BECBCE3D2450CA94FA5F6 /* PricingModels.swift */,
 				130A12C54A3543A9880C7DA0 /* AgeRatingModels.swift */,
+				5C1C69862FB54402B46DCA3C /* SubmissionIssues.swift */,
 				8DBB60842DD3864F00111A9E /* APIManager.swift */,
 				B47A0002B47A0002001A9E02 /* BetaModels.swift */,
 				B47A0010B47A0010001A9E10 /* ResourceModels.swift */,
@@ -510,6 +524,7 @@
 			children = (
 				DC0E15D8A22F0488C7836041 /* ViewStateTests.swift */,
 				8A16A19C399E5309EAABF97F /* BuildDisplayHelperTests.swift */,
+				FC775DF404EF44559B564D12 /* SubmissionIssuesTests.swift */,
 				4C4D5A196EF3EA84E17D74B9 /* APIMethodTests.swift */,
 				609D7304EF5D757ECC0E6C5C /* JSONDecodingTests.swift */,
 				1A140ECDF2574EACAFE48A0F /* AgeRatingTests.swift */,
@@ -682,6 +697,7 @@
 				FE2E5F9AA0A9880B683B75E3 /* ViewStateTests.swift in Sources */,
 				9F1BB80B84C929D5710B4031 /* BuildDisplayHelperTests.swift in Sources */,
 				696D69A94C9314D7469E03FF /* APIMethodTests.swift in Sources */,
+				7055EEC72A0241499B15E06A /* SubmissionIssuesTests.swift in Sources */,
 				20EBADE468DAC4DD3BDFAB4C /* JSONDecodingTests.swift in Sources */,
 				4CBB0833AC0F41758CDA28C0 /* AgeRatingTests.swift in Sources */,
 				41C496BD1CEA48FBBD9BF93E /* BetaFeedbackTests.swift in Sources */,
@@ -701,6 +717,7 @@
 				CD9DD4C22BE3ECE000820E2F /* ECPrivateKey.swift in Sources */,
 				CD9DD4942BE3DDB400820E2F /* ContentView.swift in Sources */,
 				8DBB60852DD3865500111A9E /* APIManager.swift in Sources */,
+				6E1F1E9F7BED4B08A8E908C9 /* SubmissionIssues.swift in Sources */,
 				CD9DD4C62BE3ECE000820E2F /* JWTDecoder.swift in Sources */,
 				CD9DD4C72BE3ECE000820E2F /* JWT.swift in Sources */,
 				8DB576912DD7535E005A9CA0 /* NavigationManager.swift in Sources */,
@@ -765,6 +782,9 @@
 				C47A0059C47A0059001A9E59 /* ChooseBuildSheet.swift in Sources */,
 				C47A005BC47A005B001A9E5B /* ReleaseComponents.swift in Sources */,
 				C47A005CC47A005C001A9E5C /* ReleaseDialogs.swift in Sources */,
+				7E90271D34414077ACE510B7 /* SubmissionTestFixtures.swift in Sources */,
+				59CEFDE3715147DDAEA71150 /* SubmissionIssuesSheet.swift in Sources */,
+				2D69CDC8264C4FCD8BC803B8 /* SubmissionCoordinator.swift in Sources */,
 				C47A005DC47A005D001A9E5D /* ReleasePrepareView.swift in Sources */,
 				C47A005EC47A005E001A9E5E /* ReleaseStatusViews.swift in Sources */,
 				C47A0060C47A0060001A9E60 /* UserPermissionViews.swift in Sources */,

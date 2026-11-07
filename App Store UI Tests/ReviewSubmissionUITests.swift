@@ -504,6 +504,105 @@ final class ReviewSubmissionUITests: XCTestCase {
         XCTAssertTrue(pause.waitUntilEnabled(timeout: interactionTimeout))
     }
 
+    func testSubmissionIssuesShowAllAppleDetailsAndSuggestedSolutions() {
+        openSubmissionIssues("submissionIssues")
+        let sheet = app.sheets.firstMatch
+        for text in [
+            "Social media answer is required.", "Violence answer is required.",
+            "Description is required.", "Review email is required.",
+            "Build is not eligible.", "Encryption answer is required.",
+            "Apple original unknown detail: Ω.", "This resource cannot be reviewed",
+            "Open App Information → Age Ratings and answer the Social Media question.",
+            "Complete and save the Age Rating questionnaire.",
+            "Complete What’s New, description, keywords, URLs, and required localizations.",
+            "Add review contact information and any required demo credentials.",
+            "Select an eligible processed build for this version.",
+            "Answer the build’s export-compliance questions.",
+            "Refresh the version because its state may have changed, then resolve any associated validation errors."
+        ] {
+            XCTAssertTrue(sheet.staticTexts[text].firstMatch.exists, text)
+        }
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "/data/attributes/socialMedia")).firstMatch.exists)
+        XCTAssertFalse(button("submission.retry").isEnabled)
+        XCTAssertTrue(button("submission.copy").isEnabled)
+        button("submission.copy").click()
+        let technical = button("submission.technical.0")
+        technical.click()
+        XCTAssertTrue(sheet.staticTexts["Code: ENTITY_ERROR.ATTRIBUTE.REQUIRED"].firstMatch.waitForExistence(timeout: interactionTimeout))
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "structured-submission-issues"; capture.lifetime = .keepAlways; add(capture)
+    }
+
+    func testSubmissionRetryRequiresRefreshAndKeepsGateAfterDismissal() {
+        openSubmissionIssues("submissionRetry")
+        XCTAssertFalse(button("submission.retry").isEnabled)
+        button("submission.dismiss").click()
+        button("review.submit").click()
+        XCTAssertTrue(element("submission.issues.title").waitForExistence(timeout: interactionTimeout))
+        XCTAssertFalse(button("submission.retry").isEnabled)
+        button("submission.refresh").click()
+        XCTAssertTrue(button("submission.retry").waitUntilEnabled(timeout: interactionTimeout))
+        XCTAssertTrue(textValue(element("submission.validation")).contains("local validation passed"))
+        button("submission.retry").click()
+        XCTAssertTrue(element("submission.issues.title").waitForNonExistence(timeout: interactionTimeout))
+        XCTAssertFalse(button("review.submit").exists)
+    }
+
+    func testSubmissionRateLimitShowsDelayAndDisablesRetryAndRefresh() {
+        openSubmissionIssues("submissionRateLimited")
+        XCTAssertTrue(textValue(element("submission.retryAfter")).contains("120"))
+        XCTAssertTrue(app.sheets.firstMatch.staticTexts["Too many submission requests."].exists)
+        XCTAssertFalse(button("submission.retry").isEnabled)
+        XCTAssertFalse(button("submission.refresh").isEnabled)
+        button("submission.dismiss").click()
+        button("review.submit").click()
+        XCTAssertFalse(button("submission.retry").isEnabled)
+        XCTAssertFalse(button("submission.refresh").isEnabled)
+    }
+
+    func testSubmissionFailedRefreshAndUnknownFieldCannotEnableRetry() {
+        for scenario in ["submissionRefreshFails", "submissionUnknownPointer"] {
+            openSubmissionIssues(scenario)
+            button("submission.refresh").click()
+            XCTAssertTrue(element("submission.validation").waitForExistence(timeout: interactionTimeout))
+            XCTAssertFalse(button("submission.retry").isEnabled)
+            XCTAssertTrue(button("submission.refresh").isEnabled)
+            if scenario == "submissionUnknownPointer" {
+                XCTAssertTrue(app.sheets.firstMatch.staticTexts["An unknown field is required."].exists)
+                XCTAssertTrue(textValue(element("submission.validation")).contains("futureRequiredField"))
+            }
+            app.terminate()
+        }
+    }
+
+    func testSubmissionAuthenticationPermissionsAndStateGuidance() {
+        for (scenario, solution) in [
+            ("submissionUnauthorized", "Check whether the API key was revoked and verify the Key ID, Issuer ID, and private key."),
+            ("submissionForbidden", "The selected API key lacks permission. Submission normally requires App Manager or broader access."),
+            ("submissionStateOnly", "The version’s current state does not permit this action. Refresh the version because its state may have changed, then resolve any associated validation errors.")
+        ] {
+            openSubmissionIssues(scenario)
+            XCTAssertTrue(app.sheets.firstMatch.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", solution, solution)).firstMatch.exists)
+            XCTAssertTrue(app.sheets.firstMatch.staticTexts["Apple access or state error."].exists)
+            XCTAssertFalse(button("submission.retry").isEnabled)
+            app.terminate()
+        }
+    }
+
+    private func textValue(_ element: XCUIElement) -> String {
+        (element.value as? String) ?? element.label
+    }
+
+    private func openSubmissionIssues(_ scenario: String) {
+        launch(scenario)
+        button("review.version.ui-test-version-primary").click()
+        XCTAssertTrue(button("review.submit").waitForExistence(timeout: interactionTimeout))
+        button("review.submit").click()
+        XCTAssertTrue(button("review.submit.confirm").waitForExistence(timeout: interactionTimeout))
+        button("review.submit.confirm").click()
+        XCTAssertTrue(element("submission.issues.title").waitForExistence(timeout: interactionTimeout))
+    }
+
     private func launch(_ scenario: String) {
         app = XCUIApplication()
         app.launchEnvironment["SHIPYARD_REVIEW_UI_TESTS"] = "1"

@@ -203,6 +203,19 @@ final class ReviewsViewModel: ObservableObject {
     private let appStoreVersionsRequest: AppStoreVersionsRequest
     private let cacheNow: () -> Date
     private var appStoreVersionsLoadedAt: Date?
+    private var submissionCoordinators: [String: SubmissionCoordinator] = [:]
+
+    func submissionCoordinator(for versionId: String) -> SubmissionCoordinator {
+        if let coordinator = submissionCoordinators[versionId] { return coordinator }
+        let coordinator = SubmissionCoordinator()
+        submissionCoordinators[versionId] = coordinator
+        return coordinator
+    }
+
+    private func resetSubmissionCoordinators() {
+        submissionCoordinators.values.forEach { $0.reset() }
+        submissionCoordinators.removeAll()
+    }
 
     init(appStoreVersionsRequest: @escaping AppStoreVersionsRequest = { method in
         guard let request = APIClient.shared.getRequest(api: method) else {
@@ -355,6 +368,10 @@ final class ReviewsViewModel: ObservableObject {
 
     func configureForUITesting(scenario: ReviewSubmissionUITestScenario, app: AppsData) {
         uiTestScenario = scenario
+        if let mode = scenario.submissionErrorMode {
+            let server = SubmissionTestServer(mode)
+            submissionCoordinators["ui-test-version-primary"] = SubmissionCoordinator(request: { try await server.request($0) })
+        }
         currentAppId = app.id
         reviewsLoadedAppId = app.id
         submissionsLoadedAppId = app.id
@@ -711,6 +728,7 @@ final class ReviewsViewModel: ObservableObject {
             reviewsGeneration += 1
             submissionsGeneration += 1
             reviewSubmissionWorkflowGeneration += 1
+            resetSubmissionCoordinators()
             versionReleaseRequestGeneration += 1
             createVersionGeneration += 1
             attachBuildGeneration += 1
@@ -802,6 +820,7 @@ final class ReviewsViewModel: ObservableObject {
         reviewsGeneration += 1
         submissionsGeneration += 1
         reviewSubmissionWorkflowGeneration += 1
+        resetSubmissionCoordinators()
         versionReleaseRequestGeneration += 1
         createVersionGeneration += 1
         attachBuildGeneration += 1
@@ -2196,107 +2215,63 @@ final class ReviewsViewModel: ObservableObject {
     /// `versionId` is required — the UI disables submit without one.
     func submitForReview(appId: String, versionId: String) async -> Bool {
 #if DEBUG
-        if uiTestScenario != nil {
+        if let scenario = uiTestScenario, scenario.submissionErrorMode == nil {
             return await simulateUISubmit(appId: appId, versionId: versionId)
         }
 #endif
         guard !submittingReview,
               !reviewStatusSyncState.isActive,
-              currentAppId == appId,
+              currentAppId == appId, selectedAppStoreVersionId == versionId,
               let version = appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }),
               Self.isPendingApprovalVersion(version),
               isVersionEditable(appStoreState: version.appStoreState ?? version.appVersionState),
               version.build != nil else { return false }
+        let submissionCoordinator = submissionCoordinator(for: versionId)
         let generation = reviewSubmissionWorkflowGeneration
         submittingReview = true
         defer {
             if generation == reviewSubmissionWorkflowGeneration { submittingReview = false }
         }
 
-        // Step 1: create the submission (platform omitted — the server
-        // derives it from the linked version's app).
-        let body = ReviewSubmissionCreateRequest(
-            data: ReviewSubmissionCreateData(
-                attributes: nil,
-                relationships: ReviewSubmissionAppLinkage(
-                    app: ReviewSubmissionAppRef(
-                        data: ReviewSubmissionAppRefData(id: appId)))
-            )
-        )
-        guard let data = try? JSONEncoder().encode(body),
-              let request = APIClient.shared.getRequest(
-                api: .post(name: .getReviewSubmissions, body: data),
-                apiVersion: .v1) else {
-            writeError = APIError.jsonConversionFailure.details
-            return false
-        }
-
-        do {
-            let responseData = try await APIClient.shared.callAPI(with: request)
-            guard !Task.isCancelled,
-                  generation == reviewSubmissionWorkflowGeneration,
-                  currentAppId == appId else { return false }
-            let submission = try getDecoder().decode(ReviewSubmissionModel.self, from: responseData)
-
-            // Step 2: link the version as the item under review.
-            let item = ReviewSubmissionItemCreateRequest(
-                data: ReviewSubmissionItemCreateData(
-                    relationships: ReviewSubmissionItemRelationships(
-                        reviewSubmission: ReviewSubmissionItemRef(
-                            data: ReviewSubmissionItemRefData(id: submission.id)),
-                        appStoreVersion: ReviewSubmissionItemVersionRef(
-                            data: ReviewSubmissionItemVersionRefData(id: versionId))
-                    )
-                )
-            )
-            guard let itemData = try? JSONEncoder().encode(item),
-                  let itemRequest = APIClient.shared.getRequest(
-                    api: .post(name: .reviewSubmissionItems, body: itemData),
-                    apiVersion: .v1) else {
-                writeError = APIError.jsonConversionFailure.details
-                return false
+        let succeeded = await submissionCoordinator.submit(app: appId, version: versionId)
+        guard !Task.isCancelled, generation == reviewSubmissionWorkflowGeneration,
+              currentAppId == appId else { return false }
+        if succeeded {
+#if DEBUG
+            if uiTestScenario?.submissionErrorMode != nil {
+                submissionCoordinator.reset()
+                submissionsState = .loaded([Self.uiTestSubmission(state: "READY_FOR_REVIEW", version: version)])
+                scheduleUITestStatusTransition(versionId: versionId, includeReadyState: true)
+                return true
             }
-            _ = try await APIClient.shared.callAPI(with: itemRequest)
-            guard !Task.isCancelled,
-                  generation == reviewSubmissionWorkflowGeneration,
-                  currentAppId == appId else { return false }
-
-            // Step 3: flip submitted=true — this actually sends it.
-            let update = ReviewSubmissionUpdateRequest(
-                data: ReviewSubmissionUpdateData(
-                    id: submission.id,
-                    attributes: ReviewSubmissionUpdateAttributes(submitted: true, canceled: nil)
-                )
-            )
-            guard let updateData = try? JSONEncoder().encode(update),
-                  let updateRequest = APIClient.shared.getRequest(
-                    api: .patch(name: .getReviewSubmissions, body: updateData, path: submission.id),
-                    apiVersion: .v1) else {
-                writeError = APIError.jsonConversionFailure.details
-                return false
-            }
-            _ = try await APIClient.shared.callAPI(with: updateRequest)
-            guard !Task.isCancelled,
-                  generation == reviewSubmissionWorkflowGeneration,
-                  currentAppId == appId else { return false }
-
-            // Invalidate so the next load refetches with the new row.
+#endif
+            submissionCoordinator.reset()
+            writeError = nil
             submissionsLoadedAppId = nil
             submissionsGeneration += 1
             let fetchGeneration = submissionsGeneration
             submissionsFetchTask = Task { await fetchSubmissions(appId: appId, generation: fetchGeneration) }
-            beginReviewStatusSync(
-                appId: appId,
-                versionId: versionId,
+            beginReviewStatusSync(appId: appId, versionId: versionId,
                 initialState: version.appStoreState ?? version.appVersionState)
-            return true
-        } catch {
-            guard !Task.isCancelled,
-                  generation == reviewSubmissionWorkflowGeneration,
-                  currentAppId == appId else { return false }
-            reviewsLogger.error("Failed to submit for review: \(error.localizedDescription)")
-            writeError = writeMessage(for: error)
-            return false
+        } else {
+            writeError = "Submission failed. Review the Submission Issues for details."
+        }
+        return succeeded
+    }
+
+    func refreshSubmissionVersion(appId: String, versionId: String) async {
+        guard currentAppId == appId, selectedAppStoreVersionId == versionId,
+              let version = appStoreVersionsState.loadedValue?.first(where: { $0.id == versionId }) else { return }
+        let submissionCoordinator = submissionCoordinator(for: versionId)
+        let generation = reviewSubmissionWorkflowGeneration
+        await submissionCoordinator.refresh(app: appId, version: versionId,
+            requiresWhatsNew: ReleaseSubmissionRequirements.requiresWhatsNew(for: version,
+                allVersions: appStoreVersionsState.loadedValue ?? []))
+        guard !Task.isCancelled, generation == reviewSubmissionWorkflowGeneration,
+              currentAppId == appId, selectedAppStoreVersionId == versionId else { return }
+        if let data = submissionCoordinator.refreshedVersionData,
+           let model = try? getDecoder().decode(AppStoreVersionsModel.self, from: data) {
+            mergeVersionSnapshot(model, versionId: versionId)
         }
     }
 

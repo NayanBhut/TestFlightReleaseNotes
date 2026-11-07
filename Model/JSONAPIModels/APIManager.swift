@@ -92,36 +92,11 @@ final class APIClient: @unchecked Sendable {
         return token
     }
 
-    /// Single error-mapping helper for every HTTP path (legacy
-    /// completion shim + async callAPI). Parses errors[] detail/title,
-    /// then maps 401/429/500 with the same copy everywhere. Pass the
-    /// HTTPURLResponse so Retry-After uses the framework's case-insensitive
-    /// header lookup instead of a manual reimplementation.
-    private static func apiError(statusCode: Int, data: Data?, response: HTTPURLResponse?) -> APIError {
-        var errorMessage = ""
-        if let data = data,
-           let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-           let errors = json["errors"] as? [[String: Any]] {
-            errorMessage = errors.compactMap { $0["detail"] as? String ?? $0["title"] as? String }.joined(separator: "; ")
-        }
-        switch statusCode {
-        case 401:
-            errorMessage = errorMessage.isEmpty ? "Invalid credentials" : errorMessage
-        case 429:
-            // Only mention Retry-After when the header is present —
-            // otherwise the message ends with a dangling "Retry after ".
-            let retryAfter = response?.value(forHTTPHeaderField: "Retry-After") ?? ""
-            if !retryAfter.isEmpty {
-                errorMessage = errorMessage.isEmpty ? "Rate limited. Retry after \(retryAfter)s" : "\(errorMessage). Retry after \(retryAfter)s"
-            } else if errorMessage.isEmpty {
-                errorMessage = "Rate limited"
-            }
-        case 500:
-            errorMessage = errorMessage.isEmpty ? "Server error" : errorMessage
-        default:
-            errorMessage = errorMessage.isEmpty ? HTTPURLResponse.localizedString(forStatusCode: statusCode) : errorMessage
-        }
-        return .apiErrorWithCode(error: errorMessage, statusCode)
+    /// Preserve the complete JSON:API error document on both legacy and async paths.
+    /// HTTPURLResponse performs a case-insensitive Retry-After header lookup.
+    static func apiError(statusCode: Int, data: Data?, response: HTTPURLResponse?) -> APIError {
+        .structured(SubmissionFailure(status: statusCode, data: data,
+            retryAfter: response?.value(forHTTPHeaderField: "Retry-After")))
     }
 
     private func decodingTask(with request: URLRequest, completionHandler completion: @escaping JSONTaskCompletionHandler) -> URLSessionDataTask {
@@ -402,6 +377,7 @@ extension Data {
 }
 
 enum APIError: Error {
+    case structured(SubmissionFailure)
     case requestFailed
     case jsonConversionFailure
     case invalidData
@@ -416,6 +392,8 @@ enum APIError: Error {
 
     var details: String {
         switch self {
+        case .structured(let failure):
+            return failure.summary
         case .requestFailed:
             return "Request Failed"
         case .invalidData:
@@ -443,6 +421,8 @@ enum APIError: Error {
 
     var statusCode: Int? {
         switch self {
+        case .structured(let failure):
+            return failure.httpStatus
         case .apiErrorWithCode(_, let code, _):
             return code
         case .httpError(let code):

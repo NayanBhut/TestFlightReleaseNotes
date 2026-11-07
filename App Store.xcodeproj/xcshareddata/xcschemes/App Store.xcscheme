@@ -40,7 +40,16 @@
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES">
+      shouldUseLaunchSchemeArgsEnv = "NO">
+      <CommandLineArguments>
+         <CommandLineArgument argument = "--review-ui-test-scenario" isEnabled = "YES"/>
+         <CommandLineArgument argument = "draft" isEnabled = "YES"/>
+         <CommandLineArgument argument = "-ApplePersistenceIgnoreState" isEnabled = "YES"/>
+         <CommandLineArgument argument = "YES" isEnabled = "YES"/>
+      </CommandLineArguments>
+      <EnvironmentVariables>
+         <EnvironmentVariable key = "SHIPYARD_REVIEW_UI_TESTS" value = "1" isEnabled = "YES"/>
+      </EnvironmentVariables>
       <Testables>
          <TestableReference
             skipped = "NO"

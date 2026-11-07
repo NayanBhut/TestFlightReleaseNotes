@@ -238,6 +238,22 @@ enum ReviewSubmissionUITestScenario: String {
     case delayed
     case unrelatedSubmission
     case staleVersionRecovery
+    case submissionIssues, submissionRetry, submissionRateLimited, submissionRefreshFails, submissionUnknownPointer
+    case submissionUnauthorized, submissionForbidden, submissionStateOnly
+
+    var submissionErrorMode: SubmissionTestServer.Mode? {
+        switch self {
+        case .submissionUnauthorized: return .unauthorized
+        case .submissionForbidden: return .forbidden
+        case .submissionStateOnly: return .stateOnly
+        case .submissionIssues: return .allIssues
+        case .submissionRetry: return .retryReady
+        case .submissionRateLimited: return .rateLimited
+        case .submissionRefreshFails: return .refreshFails
+        case .submissionUnknownPointer: return .unknownPointer
+        default: return nil
+        }
+    }
 
     static var current: Self? {
         guard ReviewSubmissionUITestSafety.isEnabled else { return nil }
@@ -250,7 +266,7 @@ enum ReviewSubmissionUITestScenario: String {
 
     var versionState: String {
         switch self {
-        case .draft, .delayed, .staleVersionRecovery:
+        case .draft, .delayed, .staleVersionRecovery, .submissionIssues, .submissionRetry, .submissionRateLimited, .submissionRefreshFails, .submissionUnknownPointer, .submissionUnauthorized, .submissionForbidden, .submissionStateOnly:
             return "PREPARE_FOR_SUBMISSION"
         case .ready: return "READY_FOR_REVIEW"
         case .waiting, .unrelatedSubmission: return "WAITING_FOR_REVIEW"
@@ -274,7 +290,7 @@ enum ReviewSubmissionUITestScenario: String {
     /// post-submit screen. Draft-only scenarios intentionally have none.
     var submissionState: String? {
         switch self {
-        case .draft, .delayed, .staleVersionRecovery:
+        case .draft, .delayed, .staleVersionRecovery, .submissionIssues, .submissionRetry, .submissionRateLimited, .submissionRefreshFails, .submissionUnknownPointer, .submissionUnauthorized, .submissionForbidden, .submissionStateOnly:
             return nil
         case .ready:
             return "READY_FOR_REVIEW"

@@ -26,8 +26,36 @@ struct SubmitReviewDialog: View {
     @EnvironmentObject private var toastCenter: ShipyardToastCenter
     @State private var submitting = false
     @State private var error: String?
+    @ObservedObject private var submissionCoordinator: SubmissionCoordinator
+
+    init(appId: String, appName: String, version: AppStoreVersionsModel, phasedState: String?, reviewsVM: ReviewsViewModel, onSubmitted: @escaping () -> Void) {
+        self.appId = appId; self.appName = appName; self.version = version
+        self.phasedState = phasedState; self.reviewsVM = reviewsVM; self.onSubmitted = onSubmitted
+        self.submissionCoordinator = reviewsVM.submissionCoordinator(for: version.id)
+    }
 
     var body: some View {
+        if submissionCoordinator.matches(app: appId, version: version.id), submissionCoordinator.failure != nil {
+            SubmissionIssuesSheet(coordinator: submissionCoordinator,
+                refresh: { await reviewsVM.refreshSubmissionVersion(appId: appId, versionId: version.id) },
+                retry: { await submit() }, dismiss: { dismiss() })
+        } else {
+            confirmation
+        }
+    }
+
+    private func submit() async {
+        submitting = true; error = nil
+        defer { submitting = false }
+        if await reviewsVM.submitForReview(appId: appId, versionId: version.id) {
+            onSubmitted(); dismiss()
+        } else {
+            error = reviewsVM.writeError ?? "Submission failed."
+            toastCenter.show("Couldn't submit for review", detail: "Open Submission Issues for details.", variant: .error)
+        }
+    }
+
+    private var confirmation: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Submit version \(version.versionString ?? "") for review?")
@@ -60,19 +88,7 @@ struct SubmitReviewDialog: View {
                 }
                 .buttonStyle(.launchSecondary)
                 Button {
-                    Task {
-                        submitting = true
-                        error = nil
-                        defer { submitting = false }
-                        if await reviewsVM.submitForReview(appId: appId, versionId: version.id) {
-                            onSubmitted()
-                            dismiss()
-                        } else {
-                            let message = reviewsVM.writeError ?? "Submission failed. Try again."
-                            error = message
-                            toastCenter.show("Couldn't submit for review", detail: message, variant: .error)
-                        }
-                    }
+                    Task { await submit() }
                 } label: {
                     if submitting {
                         ProgressView()
