@@ -1,0 +1,17 @@
+name: Approval demo
+
+# Manual only. Configure required reviewers on approval-demo before running.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: approval-demo
+    steps:
+      - name: Confirm approval
+        run: echo "Approval received"
